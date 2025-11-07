@@ -1,8 +1,8 @@
-use std::{collections::HashSet, io::Read, path::Path, process::Child, sync::{atomic::Ordering, Arc}};
+use std::{collections::HashSet, io::Read, path::Path, process::Child, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::Instant};
 
 use anyhow::Context;
 use base64::Engine;
-use bridge::{instance::{InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, message::{AtomicBridgeDataLoadState, BridgeDataLoadState, MessageToFrontend}};
+use bridge::{instance::{InstanceID, InstanceModID, InstanceModSummary, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, message::{AtomicBridgeDataLoadState, BridgeDataLoadState, MessageToFrontend}};
 use schema::loader::Loader;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -10,19 +10,7 @@ use tokio::task::JoinHandle;
 
 use ustr::Ustr;
 
-#[derive(Debug)]
-enum WorldsLoadState {
-    Unloaded,
-    Loading(JoinHandle<Arc<[InstanceWorldSummary]>>),
-    Loaded(Arc<[InstanceWorldSummary]>),
-}
-
-#[derive(Debug)]
-enum ServersLoadState {
-    Unloaded,
-    Loading(JoinHandle<Arc<[InstanceServerSummary]>>),
-    Loaded(Arc<[InstanceServerSummary]>),
-}
+use crate::mod_metadata::ModMetadataManager;
 
 #[derive(Debug)]
 pub struct Instance {
@@ -30,6 +18,7 @@ pub struct Instance {
     pub root_path: Arc<Path>,
     pub server_dat_path: Arc<Path>,
     pub saves_path: Arc<Path>,
+    pub mods_path: Arc<Path>,
     pub name: Ustr,
     pub version: Ustr,
     pub loader: Loader,
@@ -38,11 +27,19 @@ pub struct Instance {
     
     pub worlds_state: Arc<AtomicBridgeDataLoadState>,
     pub dirty_worlds: HashSet<Arc<Path>>,
-    worlds: WorldsLoadState,
+    worlds_loading: Option<(Arc<AtomicBool>, JoinHandle<Arc<[InstanceWorldSummary]>>)>,
+    worlds: Option<Arc<[InstanceWorldSummary]>>,
     
     pub servers_state: Arc<AtomicBridgeDataLoadState>,
     pub dirty_servers: bool,
-    servers: ServersLoadState,
+    servers_loading: Option<(Arc<AtomicBool>, JoinHandle<Arc<[InstanceServerSummary]>>)>,
+    servers: Option<Arc<[InstanceServerSummary]>>,
+    
+    pub mods_state: Arc<AtomicBridgeDataLoadState>,
+    pub dirty_mods: HashSet<Arc<Path>>,
+    mods_generation: usize,
+    mods_loading: Option<(Arc<AtomicBool>, JoinHandle<Vec<InstanceModSummary>>)>,
+    mods: Option<Arc<[InstanceModSummary]>>,
 }
 
 #[derive(Error, Debug)]
@@ -63,16 +60,23 @@ pub enum StartLoadResult {
 }
 
 impl Instance {
+    pub fn try_get_mod(&self, id: InstanceModID) -> Option<&InstanceModSummary> {
+        if id.generation != self.mods_generation {
+            return None;
+        }
+        self.mods.as_ref().and_then(|mods| mods.get(id.index))
+    }
+    
     pub async fn finish_loading_worlds(&mut self) -> Option<Arc<[InstanceWorldSummary]>> {
-        let WorldsLoadState::Loading(join_handle) = &self.worlds else {
+        let Some((finished, _)) = &self.worlds_loading else {
             return None;
         };
         
-        if !join_handle.is_finished() {
+        if !finished.load(Ordering::SeqCst) {
             return None;
         }
         
-        let WorldsLoadState::Loading(join_handle) = std::mem::replace(&mut self.worlds, WorldsLoadState::Unloaded) else {
+        let Some((_, join_handle)) = self.worlds_loading.take() else {
             unreachable!();
         };
         
@@ -85,20 +89,20 @@ impl Instance {
         self.worlds_state.store(new_state, std::sync::atomic::Ordering::SeqCst);
         
         let result = join_handle.await.unwrap();
-        self.worlds = WorldsLoadState::Loaded(result.clone());
+        self.worlds = Some(result.clone());
         Some(result)
     }
     
     pub async fn finish_loading_servers(&mut self) -> Option<Arc<[InstanceServerSummary]>> {
-        let ServersLoadState::Loading(join_handle) = &self.servers else {
+        let Some((finished, _)) = &self.servers_loading else {
             return None;
         };
         
-        if !join_handle.is_finished() {
+        if !finished.load(Ordering::SeqCst) {
             return None;
         }
         
-        let ServersLoadState::Loading(join_handle) = std::mem::replace(&mut self.servers, ServersLoadState::Unloaded) else {
+        let Some((_, join_handle)) = self.servers_loading.take() else {
             unreachable!();
         };
         
@@ -111,27 +115,71 @@ impl Instance {
         self.servers_state.store(new_state, std::sync::atomic::Ordering::SeqCst);
         
         let result = join_handle.await.unwrap();
-        self.servers = ServersLoadState::Loaded(result.clone());
+        self.servers = Some(result.clone());
         Some(result)
     }
     
-    pub fn start_load_worlds(&mut self) -> StartLoadResult {
-        if let WorldsLoadState::Unloaded = self.worlds {
-            self.load_worlds_initial();
-            StartLoadResult::Initial
-        } else if let WorldsLoadState::Loaded(loaded) = &self.worlds && !self.dirty_worlds.is_empty() {
-            self.load_worlds_dirty(Arc::clone(loaded));
-            StartLoadResult::Reload
-        } else {
-            StartLoadResult::None
+    pub async fn finish_loading_mods(&mut self) -> Option<Arc<[InstanceModSummary]>> {
+        let Some((finished, _)) = &self.mods_loading else {
+            return None;
+        };
+        
+        if !finished.load(Ordering::SeqCst) {
+            return None;
         }
+        
+        let Some((_, join_handle)) = self.mods_loading.take() else {
+            unreachable!();
+        };
+        
+        // Note: load state is only updated by backend, so no race condition
+        let new_state = match self.mods_state.load(std::sync::atomic::Ordering::SeqCst) {
+            BridgeDataLoadState::LoadingDirty => BridgeDataLoadState::LoadedDirty,
+            BridgeDataLoadState::Loading => BridgeDataLoadState::Loaded,
+            _ => unreachable!(),
+        };
+        self.mods_state.store(new_state, std::sync::atomic::Ordering::SeqCst);
+        
+        let mut result = join_handle.await.unwrap();
+        
+        self.mods_generation = self.mods_generation.wrapping_add(1);
+        for (index, summary) in result.iter_mut().enumerate() {
+            summary.id = InstanceModID {
+                index,
+                generation: self.mods_generation,
+            };
+        }
+        
+        let result: Arc<[InstanceModSummary]> = result.into();
+        self.mods = Some(result.clone());
+        Some(result)
     }
     
-    fn load_worlds_initial(&mut self) {
+    pub fn start_load_worlds(&mut self, notify_tick: &Arc<tokio::sync::Notify>) -> StartLoadResult {
+        if self.worlds_loading.is_some() {
+            return StartLoadResult::None;
+        }
+        
+        let Some(previous) = &self.worlds else {
+            self.load_worlds_initial(Arc::clone(notify_tick));
+            return StartLoadResult::Initial;
+        };
+        
+        if !self.dirty_worlds.is_empty() {
+            self.load_worlds_dirty(Arc::clone(notify_tick), Arc::clone(previous));
+            return StartLoadResult::Reload;
+        }
+        
+        StartLoadResult::None
+    }
+    
+    fn load_worlds_initial(&mut self, notify_tick: Arc<tokio::sync::Notify>) {
         self.worlds_state.store(BridgeDataLoadState::Loading, std::sync::atomic::Ordering::SeqCst);
         
         let saves = self.saves_path.clone();
         
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished2 = Arc::clone(&finished);
         let task = tokio::task::spawn_blocking(move || {
             let mut count = 0;
             let mut summaries = Vec::with_capacity(64);
@@ -166,16 +214,21 @@ impl Instance {
             
             summaries.shrink_to_fit();
             
+            finished.store(true, Ordering::SeqCst);
+            notify_tick.notify_one();
+            
             summaries.into()
         });
-        self.worlds = WorldsLoadState::Loading(task);
+        self.worlds_loading = Some((finished2, task));
     }
     
-    fn load_worlds_dirty(&mut self, last: Arc<[InstanceWorldSummary]>) {
+    fn load_worlds_dirty(&mut self, notify_tick: Arc<tokio::sync::Notify>, last: Arc<[InstanceWorldSummary]>) {
         self.worlds_state.store(BridgeDataLoadState::Loading, std::sync::atomic::Ordering::SeqCst);
         
         let dirty = std::mem::take(&mut self.dirty_worlds);
         
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished2 = Arc::clone(&finished);
         let task = tokio::task::spawn_blocking(move || {
             let mut summaries = Vec::with_capacity(64);
             
@@ -215,46 +268,193 @@ impl Instance {
             }
             summaries.shrink_to_fit();
             
+            finished.store(true, Ordering::SeqCst);
+            notify_tick.notify_one();
+            
             summaries.into()
         });
-        self.worlds = WorldsLoadState::Loading(task);
+        self.worlds_loading = Some((finished2, task));
     }
     
-    pub fn start_load_servers(&mut self) -> StartLoadResult {
-        if let ServersLoadState::Unloaded = self.servers {
-            self.load_servers();
-            StartLoadResult::Initial
-        } else if let ServersLoadState::Loaded(_) = &self.servers && self.dirty_servers {
-            self.load_servers();
-            StartLoadResult::Reload
-        } else {
-            StartLoadResult::None
+    pub fn start_load_servers(&mut self, notify_tick: &Arc<tokio::sync::Notify>) -> StartLoadResult {
+        if self.servers_loading.is_some() {
+            return StartLoadResult::None;
         }
+        
+        let Some(_previous) = &self.servers else {
+            self.load_servers(Arc::clone(notify_tick));
+            return StartLoadResult::Initial;
+        };
+        
+        if self.dirty_servers {
+            self.load_servers(Arc::clone(notify_tick));
+            return StartLoadResult::Reload;
+        }
+        
+        StartLoadResult::None
     }
     
-    fn load_servers(&mut self) {
+    fn load_servers(&mut self, notify_tick: Arc<tokio::sync::Notify>) {
         self.servers_state.store(BridgeDataLoadState::Loading, std::sync::atomic::Ordering::SeqCst);
         
         self.dirty_servers = false;
         let server_dat_path = self.server_dat_path.clone();
         
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished2 = Arc::clone(&finished);
         let task = tokio::task::spawn_blocking(move || {
             if !server_dat_path.is_file() {
                 return Arc::from([]);
             }
             
-            match load_servers_summary(&server_dat_path) {
+            let result = match load_servers_summary(&server_dat_path) {
                 Ok(mut summaries) => {
                     summaries.shrink_to_fit();
-                    return summaries.into();
+                    summaries.into()
                 },
                 Err(err) => {
                     eprintln!("Error loading servers: {:?}", err);
-                    return Arc::from([]);
+                    Arc::from([])
                 },
-            }
+            };
+            
+            finished.store(true, Ordering::SeqCst);
+            notify_tick.notify_one();
+            
+            result
         });
-        self.servers = ServersLoadState::Loading(task);
+        self.servers_loading = Some((finished2, task));
+    }
+    
+    pub fn start_load_mods(&mut self, notify_tick: &Arc<tokio::sync::Notify>, mod_metadata_manager: &Arc<ModMetadataManager>) -> StartLoadResult {
+        if self.mods_loading.is_some() {
+            return StartLoadResult::None;
+        }
+        
+        let Some(previous) = &self.mods else {
+            self.load_mods_initial(Arc::clone(notify_tick), Arc::clone(mod_metadata_manager));
+            return StartLoadResult::Initial;
+        };
+        
+        if !self.dirty_mods.is_empty() {
+            self.load_mods_dirty(Arc::clone(notify_tick), Arc::clone(mod_metadata_manager), Arc::clone(previous));
+            return StartLoadResult::Reload;
+        }
+        
+        StartLoadResult::None
+    }
+    
+    fn load_mods_initial(&mut self, notify_tick: Arc<tokio::sync::Notify>, mod_metadata_manager: Arc<ModMetadataManager>) {
+        self.mods_state.store(BridgeDataLoadState::Loading, std::sync::atomic::Ordering::SeqCst);
+        
+        let mods = self.mods_path.clone();
+        
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished2 = Arc::clone(&finished);
+        let task = tokio::task::spawn_blocking(move || {
+            let mut summaries = Vec::with_capacity(32);
+            
+            for entry in std::fs::read_dir(&mods).unwrap() {
+                let Ok(entry) = entry else {
+                    eprintln!("Error reading file in mods folder: {:?}", entry.unwrap_err());
+                    continue;
+                };
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let enabled = if file_name.ends_with(".jar.disabled") {
+                    false
+                } else if file_name.ends_with(".jar") {
+                    true
+                } else {
+                    continue;
+                };
+                let Ok(mut file) = std::fs::File::open(&path) else {
+                    continue;
+                };
+                
+                if let Some(summary) = mod_metadata_manager.get(&mut file) {
+                    summaries.push(InstanceModSummary {
+                        mod_summary: summary,
+                        id: InstanceModID::dangling(),
+                        file_name: file_name.into(),
+                        path: path.into(),
+                        enabled,
+                    });
+                }
+            }
+            
+            summaries.sort_by_key(|s| Arc::clone(&s.mod_summary.id));
+            
+            summaries.shrink_to_fit();
+            
+            finished.store(true, Ordering::SeqCst);
+            notify_tick.notify_one();
+            
+            summaries
+        });
+        self.mods_loading = Some((finished2, task));
+    }
+    
+    fn load_mods_dirty(&mut self, notify_tick: Arc<tokio::sync::Notify>, mod_metadata_manager: Arc<ModMetadataManager>, last: Arc<[InstanceModSummary]>) {
+        self.mods_state.store(BridgeDataLoadState::Loading, std::sync::atomic::Ordering::SeqCst);
+        
+        let dirty = std::mem::take(&mut self.dirty_mods);
+        
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished2 = Arc::clone(&finished);
+        let task = tokio::task::spawn_blocking(move || {
+            let mut summaries = Vec::with_capacity(32);
+            
+            for path in dirty.iter() {
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let enabled = if file_name.ends_with(".jar.disabled") {
+                    false
+                } else if file_name.ends_with(".jar") {
+                    true
+                } else {
+                    continue;
+                };
+                let Ok(mut file) = std::fs::File::open(&path) else {
+                    continue;
+                };
+                
+                if let Some(summary) = mod_metadata_manager.get(&mut file) {
+                    summaries.push(InstanceModSummary {
+                        mod_summary: summary,
+                        id: InstanceModID::dangling(),
+                        file_name: file_name.into(),
+                        path: path.clone(),
+                        enabled,
+                    });
+                }
+            }
+            
+            for old_summary in &*last {
+                if !dirty.contains(&old_summary.path) && old_summary.path.exists() {
+                    summaries.push(old_summary.clone());
+                }
+            }
+            
+            summaries.sort_by_key(|s| Arc::clone(&s.mod_summary.id));
+            
+            summaries.shrink_to_fit();
+            
+            finished.store(true, Ordering::SeqCst);
+            notify_tick.notify_one();
+            
+            summaries
+        });
+        self.mods_loading = Some((finished2, task));
     }
     
     pub async fn load_from_folder(path: impl AsRef<Path>) -> Result<Self, InstanceLoadError> {
@@ -275,6 +475,10 @@ impl Instance {
         saves_path.push(".minecraft");
         saves_path.push("saves");
         
+        let mut mods_path = path.to_owned();
+        mods_path.push(".minecraft");
+        mods_path.push("mods");
+        
         let mut server_dat_path = path.to_owned();
         server_dat_path.push(".minecraft");
         server_dat_path.push("servers.dat");
@@ -284,6 +488,7 @@ impl Instance {
             root_path: path.into(),
             server_dat_path: server_dat_path.into(),
             saves_path: saves_path.into(),
+            mods_path: mods_path.into(),
             name: path.file_name().unwrap().to_string_lossy().into_owned().into(),
             version: instance_info.minecraft_version,
             loader: instance_info.loader,
@@ -292,11 +497,19 @@ impl Instance {
             
             worlds_state: Arc::new(AtomicBridgeDataLoadState::new(BridgeDataLoadState::Unloaded)),
             dirty_worlds: HashSet::new(),
-            worlds: WorldsLoadState::Unloaded,
+            worlds_loading: None,
+            worlds: None,
             
             servers_state: Arc::new(AtomicBridgeDataLoadState::new(BridgeDataLoadState::Unloaded)),
             dirty_servers: false,
-            servers: ServersLoadState::Unloaded,
+            servers_loading: None,
+            servers: None,
+            
+            mods_state: Arc::new(AtomicBridgeDataLoadState::new(BridgeDataLoadState::Unloaded)),
+            dirty_mods: HashSet::new(),
+            mods_generation: 0,
+            mods_loading: None,
+            mods: None,
         })
     }
     
@@ -323,6 +536,19 @@ impl Instance {
             },
             BridgeDataLoadState::Loaded => {
                 self.servers_state.store(BridgeDataLoadState::LoadedDirty, Ordering::SeqCst);
+            },
+            _ => {}
+        }
+    }
+    
+    pub fn mark_mods_state_dirty(&mut self) {
+        let state = self.mods_state.load(Ordering::SeqCst);
+        match state {
+            BridgeDataLoadState::Loading => {
+                self.mods_state.store(BridgeDataLoadState::LoadingDirty, Ordering::SeqCst);
+            },
+            BridgeDataLoadState::Loaded => {
+                self.mods_state.store(BridgeDataLoadState::LoadedDirty, Ordering::SeqCst);
             },
             _ => {}
         }

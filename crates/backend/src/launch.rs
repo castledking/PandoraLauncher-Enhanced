@@ -1,5 +1,6 @@
 use std::{borrow::Cow, cmp::Ordering, collections::{HashMap, HashSet}, ffi::{OsStr, OsString}, io::Write, path::{Path, PathBuf}, process::{Child, Stdio}, sync::{atomic::AtomicBool, Arc, OnceLock}};
 
+use auth::{models::MinecraftAccessToken};
 use bridge::{handle::FrontendHandle, message::QuickPlayLaunch, modal_action::{ModalAction, ProgressTracker, ProgressTrackers}};
 use futures::{FutureExt, TryFutureExt};
 use lzma::LzmaError;
@@ -7,8 +8,9 @@ use regex::Regex;
 use schema::{assets_index::AssetsIndex, fabric_launch::FabricLaunch, java_runtime_component::{JavaRuntimeComponentFile, JavaRuntimeComponentManifest}, loader::Loader, version::{GameLibrary, GameLibraryArtifact, GameLibraryDownloads, GameLibraryExtractOptions, GameLogging, LaunchArgument, LaunchArgumentValue, MinecraftVersion, OsArch, OsName, Rule, RuleAction}};
 use sha1::{Digest, Sha1};
 use ustr::Ustr;
+use uuid::Uuid;
 
-use crate::{directories::LauncherDirectories, instance::Instance, launch_wrapper, log_reader, metadata::manager::{AssetsIndexMetadata, FabricLaunchMetadata, FabricLoaderManifestMetadata, MetaLoadError, MetadataManager, MinecraftVersionManifestMetadata, MinecraftVersionMetadata, MojangJavaRuntimeComponentMetadata, MojangJavaRuntimesMetadata}};
+use crate::{account::MinecraftLoginInfo, directories::LauncherDirectories, instance::Instance, launch_wrapper, log_reader, metadata::manager::{AssetsIndexMetadata, FabricLaunchMetadata, FabricLoaderManifestMetadata, MetaLoadError, MetadataManager, MinecraftVersionManifestMetadata, MinecraftVersionMetadata, MojangJavaRuntimeComponentMetadata, MojangJavaRuntimesMetadata}};
 
 pub struct Launcher {
     meta: Arc<MetadataManager>,
@@ -41,7 +43,7 @@ impl Launcher {
          }
     }
 
-    pub async fn launch(&self, http_client: &reqwest::Client, instance: &mut Instance, quick_play: Option<QuickPlayLaunch>, launch_tracker: &ProgressTracker, modal_action: &ModalAction) -> Result<Child, LaunchError> {
+    pub async fn launch(&self, http_client: &reqwest::Client, instance: &mut Instance, quick_play: Option<QuickPlayLaunch>, login_info: MinecraftLoginInfo, launch_tracker: &ProgressTracker, modal_action: &ModalAction) -> Result<Child, LaunchError> {
         launch_tracker.set_total(6);
         
         let version_info = self.create_launch_version(&launch_tracker, instance).await?;
@@ -156,6 +158,7 @@ impl Launcher {
             classpath,
             log_configuration,
             rule_context: launch_rule_context,
+            login_info,
         };
 
         let child = launch_context.launch(&version_info);
@@ -1261,6 +1264,7 @@ pub struct LaunchContext {
     pub classpath: OsString,
     pub log_configuration: Option<OsString>,
     pub rule_context: LaunchRuleContext,
+    pub login_info: MinecraftLoginInfo,
 }
 
 impl LaunchContext {
@@ -1392,21 +1396,21 @@ impl LaunchContext {
             ArgumentExpansionKey::LauncherName => OsStr::new("PandoraLauncher").into(),
             ArgumentExpansionKey::LauncherVersion => OsStr::new("1.0.0").into(),
             ArgumentExpansionKey::Classpath => self.classpath.as_os_str().into(),
-            ArgumentExpansionKey::AuthPlayerName => OsStr::new("Moulberry").into(),
+            ArgumentExpansionKey::AuthPlayerName => OsStr::new(&*self.login_info.username).into(),
             ArgumentExpansionKey::VersionName => OsStr::new("1.21.10").into(),
             ArgumentExpansionKey::GameDirectory => self.game_dir.as_os_str().into(),
             ArgumentExpansionKey::AssetsRoot => self.assets_root.as_os_str().into(),
             ArgumentExpansionKey::AssetsIndexName => OsStr::new(&self.assets_index_name).into(),
-            ArgumentExpansionKey::AuthUuid => OsStr::new("d0e05de7-6067-454d-beae-c6d19d886191").into(),
-            ArgumentExpansionKey::AuthAccessToken => OsStr::new("").into(),
-            ArgumentExpansionKey::Clientid => OsStr::new("").into(),
-            ArgumentExpansionKey::AuthXuid => OsStr::new("").into(),
+            ArgumentExpansionKey::AuthUuid => OsString::from(self.login_info.uuid.as_hyphenated().to_string()).into(),
+            ArgumentExpansionKey::AuthAccessToken => OsStr::new(self.login_info.access_token.secret()).into(),
+            ArgumentExpansionKey::Clientid => OsStr::new("").into(), // These are just used for telemetry
+            ArgumentExpansionKey::AuthXuid => OsStr::new("").into(), // These are just used for telemetry
             ArgumentExpansionKey::VersionType => OsStr::new("release").into(),
             ArgumentExpansionKey::QuickPlayPath => OsStr::new("quickPlay/log.json").into(),
             ArgumentExpansionKey::UserProperties => OsStr::new("{}").into(),
             ArgumentExpansionKey::UserType => OsStr::new("msa").into(),
-            ArgumentExpansionKey::ResolutionWidth => OsString::from(&format!("{}", self.rule_context.custom_resolution.unwrap().0)).into(),
-            ArgumentExpansionKey::ResolutionHeight => OsString::from(&format!("{}", self.rule_context.custom_resolution.unwrap().1)).into(),
+            ArgumentExpansionKey::ResolutionWidth => OsString::from(format!("{}", self.rule_context.custom_resolution.unwrap().0)).into(),
+            ArgumentExpansionKey::ResolutionHeight => OsString::from(format!("{}", self.rule_context.custom_resolution.unwrap().1)).into(),
             ArgumentExpansionKey::QuickPlaySingleplayer => {
                 if let Some(QuickPlayLaunch::Singleplayer(target)) = &self.rule_context.quick_play {
                     target.into()

@@ -6,3 +6,4 @@ pub mod version;
 pub mod fabric_loader_manifest;
 pub mod fabric_launch;
 pub mod loader;
+pub mod modrinth;

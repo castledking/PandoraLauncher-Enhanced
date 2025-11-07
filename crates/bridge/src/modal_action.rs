@@ -17,10 +17,16 @@ impl Deref for ModalAction {
     }
 }
 
+pub struct ModalActionVisitUrl {
+    pub message: Arc<str>,
+    pub url: Arc<str>,
+}
+
 #[derive(Default)]
 pub struct ModalActionInner {
     pub finished_at: AtomicOptionInstant,
     pub error: RwLock<Option<Arc<str>>>,
+    pub visit_url: RwLock<Option<ModalActionVisitUrl>>,
     pub trackers: ProgressTrackers,
 }
 
@@ -35,6 +41,14 @@ impl ModalActionInner {
     
     pub fn set_error_message(&self, error: Arc<str>) {
         *self.error.write().unwrap() = Some(error);
+    }
+    
+    pub fn set_visit_url(&self, visit_url: ModalActionVisitUrl) {
+        *self.visit_url.write().unwrap() = Some(visit_url);
+    }
+    
+    pub fn unset_visit_url(&self) {
+        *self.visit_url.write().unwrap() = None;
     }
 }
 
@@ -56,6 +70,10 @@ pub struct ProgressTrackers {
 impl ProgressTrackers {
     pub fn push(&self, tracker: ProgressTracker) {
         self.trackers.write().unwrap().push(tracker);
+    }
+    
+    pub fn clear(&self) {
+        self.trackers.write().unwrap().clear();
     }
 }
 

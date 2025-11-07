@@ -1,21 +1,19 @@
 [workspace]
 resolver = "3"
-members = ["crates/backend", "crates/bridge","crates/frontend", "crates/pandora_launcher", "crates/nbt", "crates/schema", "crates/auth"]
+members = ["crates/backend", "crates/bridge", "crates/reqwest_client", "crates/frontend", "crates/pandora_launcher", "crates/nbt", "crates/schema", "crates/auth"]
 
 default-members = ["crates/pandora_launcher"]
 
 [workspace.package]
 edition = "2024"
 
-# Enable for more accurate flamegraphs
-# [profile.release]
-# debug = true
-# debug-assertions = true
-
 [profile.release]
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+# Enable for more accurate flamegraphs
+# debug = true
+# debug-assertions = true
 
 [profile.dev.package."*"]
 opt-level = 3
@@ -27,6 +25,7 @@ bridge = { path = "crates/bridge" }
 frontend = { path = "crates/frontend" }
 schema = { path = "crates/schema" }
 nbt = { path = "crates/nbt" }
+reqwest_client = { path = "crates/reqwest_client" }
 
 anyhow = "1.0.100"
 atomic-time = "0.1.5"
@@ -41,8 +40,8 @@ flate2 = "1.1.5"
 ftree = { path = "../ftree"}
 futures = "0.3.31"
 futures-util = "0.3.31"
-gpui = "0.2.1"
-gpui-component = { version = "0.3.0", features = ["webview"] }
+gpui = "0.2.2"
+gpui-component = { path = "../gpui-component/crates/ui" }
 hex = "0.4.3"
 image = "0.25.8"
 indexmap = { version = "2.12.0", features = ["serde"] }
@@ -75,7 +74,7 @@ ustr = { version = "1.1.0", features = ["serde"] }
 zip = "6.0.0"
 base64 = "0.22.1"
 cvlib = "0.1.2"
-oauth2 = "5.0.0"
+oauth2 = { version = "5.0.0", features = ["reqwest"] }
 p256 = "0.13.2"
 base64ct = "1.8.0"
 sha2 = "0.10.9"
@@ -84,3 +83,8 @@ nt-time = { version = "0.12.1", features = ["chrono"] }
 obfstr = "0.4.4"
 uuid = "1.18.1"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
+tiny_http = "0.12.0"
+oo7 = { version = "0.5.0", default-features = false, features = ["native_crypto", "async-std"] }
+xmlparser = "0.13.6"
+heapless = "0.9.1"
+intrusive-collections = "0.9.7"

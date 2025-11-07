@@ -1,0 +1,145 @@
+_version: 2
+
+# Modrinth categories
+bungeecord:
+  en: BungeeCord
+liteloader:
+  en: LiteLoader
+forge:
+  en: Forge
+neoforge:
+  en: NeoForge
+fabric:
+  en: Fabric
+babric:
+  en: Babric
+quilt:
+  en: Quilt
+cursed:
+  en: Cursed
+technology:
+  en: Technology
+challenging:
+  en: Challenging
+decoration:
+  en: Decoration
+library:
+  en: Library
+adventure:
+  en: Adventure
+path-tracing:
+  en: Path Tracing
+realistic:
+  en: Realistic
+low:
+  en: Low
+medium:
+  en: Medium
+high:
+  en: High
+atmosphere:
+  en: Atmosphere
+fantasy:
+  en: Fantasy
+foliage:
+  en: Foliage
+bloom:
+  en: Bloom
+vanilla-like:
+  en: Vanilla-like
+cartoon:
+  en: Cartoon
+potato:
+  en: Potato
+shadows:
+  en: Shadows
+pbr:
+  en: PBR
+semi-realistic:
+  en: Semi-realistic
+reflections:
+  en: Reflections
+screenshot:
+  en: Screenshot
+colored-lighting:
+  en: Colored Lighting
+economy:
+  en: Economy
+management:
+  en: Management
+optimization:
+  en: Optimization
+mobs:
+  en: Mobs
+transportation:
+  en: Transportation
+kitchen-sink:
+  en: Kitchen sink
+blocks:
+  en: Blocks
+audio:
+  en: Audio
+combat:
+  en: Combat
+modded:
+  en: Modded
+environment:
+  en: Environment
+entities:
+  en: Entities
+game-mechanics:
+  en: Game Mechanics
+utility:
+  en: Utility
+core-shaders:
+  en: Core Shaders
+tweaks:
+  en: Tweaks
+items:
+  en: Items
+models:
+  en: Models
+equipment:
+  en: Equipment
+fonts:
+  en: Fonts
+simplistic:
+  en: Simplistic
+themed:
+  en: Themed
+magic:
+  en: Magic
+storage:
+  en: Storage
+food:
+  en: Food
+gui:
+  en: GUI
+worldgen:
+  en: World Generation
+multiplayer:
+  en: Multiplayer
+quests:
+  en: Quests
+lightweight:
+  en: Lightweight
+social:
+  en: Social
+minigame:
+  en: Minigame
+
+# Modrinth environments
+client_and_server:
+  en: Client and server
+client_only:
+  en: Client only
+client_only_server_optional:
+  en: Client (server optional)
+server_only:
+  en: Server only
+server_only_client_optional:
+  en: Server (client optional)
+client_or_server:
+  en: Client or server
+unknown_environment:
+  en: Unknown environment

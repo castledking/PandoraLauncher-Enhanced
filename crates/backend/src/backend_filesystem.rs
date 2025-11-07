@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::{HashMap, HashSet}, path::Path, sync::Arc};
 
+use bridge::instance::InstanceID;
 use notify::{event::{CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode}, EventKind};
 
 use crate::{BackendState, WatchTarget};
@@ -25,10 +26,18 @@ impl FilesystemEvent {
     }
 }
 
+struct AfterDebounceEffects {
+    reload_mods: HashSet<InstanceID>,
+}
+
 impl BackendState {
     pub async fn handle_filesystem(&mut self, result: notify_debouncer_full::DebounceEventResult) {
         match result {
             Ok(events) => {
+                let mut after_debounce_effects = AfterDebounceEffects {
+                    reload_mods: HashSet::new(),
+                };
+                
                 let mut last_event: Option<FilesystemEvent> = None;
                 for event in events {
                     let Some(next_event) = get_simple_event(event.event) else {
@@ -37,14 +46,21 @@ impl BackendState {
                     
                     if let Some(last_event) = last_event.take() {
                         if last_event.change_or_remove_path() != next_event.change_or_remove_path() {
-                            self.handle_filesystem_event(last_event).await;
+                            self.handle_filesystem_event(last_event, &mut after_debounce_effects).await;
                         }
                     }
                     
                     last_event = Some(next_event);
                 }
                 if let Some(last_event) = last_event.take() {
-                    self.handle_filesystem_event(last_event).await;
+                    self.handle_filesystem_event(last_event, &mut after_debounce_effects).await;
+                }
+                for id in after_debounce_effects.reload_mods {
+                    if let Some(instance) = self.instances.get_mut(id.index) {
+                        if instance.id == id {
+                            instance.start_load_mods(&self.notify_tick, &self.mod_metadata_manager);
+                        }
+                    }
                 }
             },
             Err(_) => {
@@ -54,8 +70,7 @@ impl BackendState {
         }
     }
     
-    async fn handle_filesystem_event(&mut self, event: FilesystemEvent) {
-        dbg!(&event);
+    async fn handle_filesystem_event(&mut self, event: FilesystemEvent, after_debounce_effects: &mut AfterDebounceEffects) {
         match event {
             FilesystemEvent::Changed { path, maybe_is_file, maybe_is_folder } => {
                 if let Some(watch_target) = self.watching.get(&path) {
@@ -114,6 +129,16 @@ impl BackendState {
                         }
                     },
                     WatchTarget::ServersDat { .. } => {},
+                    WatchTarget::InstanceModsDir { id } => {
+                        if let Some(instance) = self.instances.get_mut(id.index) {
+                            if instance.id == *id && instance.dirty_mods.insert(path.into()) {
+                                instance.mark_mods_state_dirty();
+                                if let Some(reload_immediately) = self.reload_mods_immediately.take(&instance.id) {
+                                    after_debounce_effects.reload_mods.insert(reload_immediately);
+                                }
+                            }
+                        }
+                    }
                 }
             },
             FilesystemEvent::Remove(path) => {
@@ -147,6 +172,9 @@ impl BackendState {
                             if self.watcher.watch(&path, notify::RecursiveMode::NonRecursive).is_ok() {
                                 self.watching.insert(path, watch_target);
                             }
+                        },
+                        WatchTarget::InstanceModsDir { id } => {
+                            // Mods dir deleted... umm...
                         },
                     }
                 } else {
@@ -182,58 +210,101 @@ impl BackendState {
                                 }
                             }
                         },
+                        WatchTarget::InstanceModsDir { id } => {
+                            if let Some(instance) = self.instances.get_mut(id.index) {
+                                if instance.id == *id && instance.dirty_mods.insert(path.into()) {
+                                    instance.mark_mods_state_dirty();
+                                    if let Some(reload_immediately) = self.reload_mods_immediately.take(&instance.id) {
+                                        after_debounce_effects.reload_mods.insert(reload_immediately);
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
             },
             FilesystemEvent::Rename(from, to) => {
-                let Some(watch_target) = self.watching.remove(&from) else {
-                    return;
-                };
-                
-                match watch_target {
-                    WatchTarget::InstancesDir => {
-                        self.send.send_error("Instances folder has been removed! What?!").await;
-                    },
-                    WatchTarget::InstanceDir { id } => {
-                        if let Some(instance) = self.instances.get_mut(id.index) {
-                            if instance.id == id {
-                                if !parent_is_instances_dir(&self.watching, &to) {
-                                    self.remove_instance(id).await;
-                                    return;
+                if let Some(watch_target) = self.watching.remove(&from) {
+                    match watch_target {
+                        WatchTarget::InstancesDir => {
+                            self.send.send_error("Instances folder has been removed! What?!").await;
+                        },
+                        WatchTarget::InstanceDir { id } => {
+                            if let Some(instance) = self.instances.get_mut(id.index) {
+                                if instance.id == id {
+                                    if !parent_is_instances_dir(&self.watching, &to) {
+                                        self.remove_instance(id).await;
+                                        return;
+                                    }
+                                    
+                                    let old_name = instance.name.clone();
+                                    instance.name = to.file_name().unwrap().to_string_lossy().into_owned().into();
+                                    
+                                    self.watching.insert(to, WatchTarget::InstanceDir { id });
+                                    
+                                    self.send.send_info(format!("Instance '{}' renamed to '{}'", old_name, instance.name)).await;
+                                    self.send.send(instance.create_modify_message()).await;
                                 }
-                                
-                                let old_name = instance.name.clone();
-                                instance.name = to.file_name().unwrap().to_string_lossy().into_owned().into();
-                                
-                                self.watching.insert(to, WatchTarget::InstanceDir { id });
-                                
-                                self.send.send_info(format!("Instance '{}' renamed to '{}'", old_name, instance.name)).await;
-                                self.send.send(instance.create_modify_message()).await;
                             }
-                        }
-                    },
-                    WatchTarget::InvalidInstanceDir => {
-                        if parent_is_instances_dir(&self.watching, &to) && !self.watching.contains_key(&to) {
-                            self.watch_filesystem(&to, WatchTarget::InvalidInstanceDir).await;
-                        }
-                    },
-                    WatchTarget::InstanceLevelDir { id } => {
-                        if let Some(instance) = self.instances.get_mut(id.index) {
-                            if instance.id == id {
-                                instance.dirty_worlds.insert(from.clone());
-                                if to.parent() == from.parent() {
-                                    instance.dirty_worlds.insert(to.clone());
+                        },
+                        WatchTarget::InvalidInstanceDir => {
+                            if parent_is_instances_dir(&self.watching, &to) && !self.watching.contains_key(&to) {
+                                self.watch_filesystem(&to, WatchTarget::InvalidInstanceDir).await;
+                            }
+                        },
+                        WatchTarget::InstanceLevelDir { id } => {
+                            if let Some(instance) = self.instances.get_mut(id.index) {
+                                if instance.id == id {
+                                    instance.dirty_worlds.insert(from.clone());
+                                    if to.parent() == from.parent() {
+                                        instance.dirty_worlds.insert(to.clone());
+                                    }
+                                    instance.mark_world_state_dirty();
                                 }
-                                instance.mark_world_state_dirty();
                             }
+                        },
+                        WatchTarget::InstanceSavesDir { id: _ } => {
+                            // Saves dir renamed... um...
+                        },
+                        WatchTarget::ServersDat { .. } => {},
+                        WatchTarget::InstanceModsDir { id: _ } => {
+                            // Mods dir renamed... um...
                         }
-                    },
-                    WatchTarget::InstanceSavesDir { id: _ } => {
-                        // Saves dir renamed... um...
-                    },
-                    WatchTarget::ServersDat { .. } => {},
+                    }
+                } else {
+                    if let Some(from_parent_path) = from.parent() && let Some(parent_watch_target) = self.watching.get(from_parent_path) {
+                        match parent_watch_target {
+                            WatchTarget::InstanceModsDir { id } => {
+                                if let Some(instance) = self.instances.get_mut(id.index) {
+                                    if instance.id == *id && instance.dirty_mods.insert(from.into()) {
+                                        instance.mark_mods_state_dirty();
+                                        if let Some(reload_immediately) = self.reload_mods_immediately.take(&instance.id) {
+                                            after_debounce_effects.reload_mods.insert(reload_immediately);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(to_parent_path) = to.parent() && let Some(parent_watch_target) = self.watching.get(to_parent_path) {
+                        match parent_watch_target {
+                            WatchTarget::InstanceModsDir { id } => {
+                                if let Some(instance) = self.instances.get_mut(id.index) {
+                                    if instance.id == *id && instance.dirty_mods.insert(to.into()) {
+                                        instance.mark_mods_state_dirty();
+                                        if let Some(reload_immediately) = self.reload_mods_immediately.take(&instance.id) {
+                                            after_debounce_effects.reload_mods.insert(reload_immediately);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
+                
             },
         }
     }

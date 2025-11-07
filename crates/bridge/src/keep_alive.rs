@@ -23,6 +23,7 @@ impl Drop for KeepAlive {
     }
 }
 
+#[derive(Debug)]
 pub struct KeepAliveHandle {
     alive: Arc<AtomicBool>
 }

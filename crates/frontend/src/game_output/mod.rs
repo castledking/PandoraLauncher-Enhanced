@@ -3,7 +3,7 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, num::NonZeroUsize, o
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, ContextModal, Icon, IconName, Root, Selectable, Sizable, StyledExt, button::Button, dropdown::Dropdown, h_flex, input::{InputEvent, InputState, Search, TextInput}, list::{List, ListDelegate, ListItem}, resizable::{ResizableState, h_resizable, resizable_panel}, scroll::{ScrollHandleOffsetable, Scrollbar, ScrollbarState}, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem}, tab::TabBar, table::{Column, ColumnFixed, ColumnSort, Table, TableDelegate}, v_flex, v_virtual_list
+    button::Button, h_flex, input::{Input, InputEvent, InputState}, scroll::{ScrollHandleOffsetable, Scrollbar, ScrollbarState}, v_flex, ActiveTheme as _, Icon, IconName, Sizable
 };
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
@@ -398,7 +398,8 @@ impl Element for GameOutputList {
                 cx,
                 |_, window, cx| {
                     let visible_bounds = bounds;
-                    let bounds = bounds.inset(px(12.0));
+                    let mut bounds = bounds.inset(px(12.0));
+                    bounds.size.width += px(12.0);
                     
                     cx.update_entity(&self.game_output, |game_output, cx| {
                         game_output.apply_pending(window, cx);
@@ -408,8 +409,8 @@ impl Element for GameOutputList {
                         let font_size = text_style.font_size.to_pixels(window.rem_size());
                         let line_height = font_size * 1.25;
                         
-                        let text_width = bounds.size.width - game_output.time_column_width - game_output.level_column_width;
-                        let wrap_width = text_width.max(font_size * 5);
+                        let text_width = bounds.size.width - game_output.time_column_width - game_output.thread_column_width - game_output.level_column_width;
+                        let wrap_width = text_width.max(font_size * 30);
                         
                         let mut line_wrapper = window.text_system().line_wrapper(game_output.font.clone(), font_size);
                         
@@ -688,22 +689,24 @@ fn paint_lines<'a, const REVERSE: bool>(
         
         let line_count = lines.len().max(1);
         
-        // let item_bounds = Bounds {
-        //     origin: if REVERSE {
-        //         let mut item_origin = text_origin.clone();
-        //         item_origin.y -= (line_count - 1) * line_height;
-        //         item_origin
-        //     } else {
-        //         text_origin
-        //     },
-        //     size: Size::new(bounds.size.width, line_count * line_height),
-        // };
-        // let item_background_color = if item.index & 1 == 0 {
-        //     Hsla { h: 0.0, s: 0.0, l: 0.06, a: 0.5 }
-        // } else {
-        //     Hsla { h: 0.0, s: 0.0, l: 0.12, a: 0.5 }
-        // };
-        // window.paint_quad(fill(item_bounds,item_background_color));
+        /*
+        let item_bounds = Bounds {
+            origin: if REVERSE {
+                let mut item_origin = line_origin.clone();
+                item_origin.y -= (line_count - 1) * line_height;
+                item_origin
+            } else {
+                line_origin
+            },
+            size: Size::new(wrap_width, line_count * line_height),
+        };
+        let item_background_color = if item.index & 1 == 0 {
+            Hsla { h: 0.0, s: 0.0, l: 0.06, a: 0.5 }
+        } else {
+            Hsla { h: 0.0, s: 0.0, l: 0.12, a: 0.5 }
+        };
+        window.paint_quad(fill(item_bounds,item_background_color));
+        */
         
         let mut line_origin = text_origin.clone();
         line_origin.x += *time_column_width + *thread_column_width + level_column_width;
@@ -1063,7 +1066,7 @@ impl GameOutputRoot {
 
 impl Render for GameOutputRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let search = TextInput::new(&self.search_state)
+        let search = Input::new(&self.search_state)
             .prefix(Icon::new(IconName::Search).small());
         
         let bar = h_flex()
@@ -1092,7 +1095,7 @@ impl Render for GameOutputRoot {
                         interactivity: Interactivity::new(),
                         game_output: self.game_output.clone(),
                     })
-                    .child(div().w_12().h_full().border_y_12().child(Scrollbar::vertical(&self.scrollbar_state, &self.scroll_handler)))
+                    .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scrollbar_state, &self.scroll_handler)))
             ).on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
                 let state = root.scroll_handler.state.borrow();
                 let delta = event.delta.pixel_delta(state.line_height).y;

@@ -1,16 +1,17 @@
 use std::{collections::HashMap, sync::Arc};
 
-use bridge::{instance::{InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, message::AtomicBridgeDataLoadState};
+use bridge::{instance::{InstanceID, InstanceModSummary, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, message::AtomicBridgeDataLoadState};
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Window};
+use indexmap::IndexMap;
 use schema::loader::Loader;
 
 pub struct InstanceEntries {
-    pub entries: HashMap<InstanceID, Entity<InstanceEntry>>,
+    pub entries: IndexMap<InstanceID, Entity<InstanceEntry>>,
 }
 
 impl InstanceEntries {
     pub fn add<C: AppContext>(entity: &Entity<Self>, id: InstanceID, name: SharedString, version: SharedString, loader: Loader,
-        worlds_state: Arc<AtomicBridgeDataLoadState>, servers_state: Arc<AtomicBridgeDataLoadState>, cx: &mut C
+        worlds_state: Arc<AtomicBridgeDataLoadState>, servers_state: Arc<AtomicBridgeDataLoadState>, mods_state: Arc<AtomicBridgeDataLoadState>, cx: &mut C
     ) {
         entity.update(cx, |entries, cx| {
             let instance = InstanceEntry {
@@ -23,6 +24,8 @@ impl InstanceEntries {
                 worlds: cx.new(|_| [].into()),
                 servers_state,
                 servers: cx.new(|_| [].into()),
+                mods_state,
+                mods: cx.new(|_| [].into()),
             };
             
             entries.entries.insert(id, cx.new(|_| instance.clone()));
@@ -34,7 +37,7 @@ impl InstanceEntries {
 
     pub fn remove<C: AppContext>(entity: &Entity<Self>, id: InstanceID, cx: &mut C) {
         entity.update(cx, |entries, cx| {
-            if let Some(_) = entries.entries.remove(&id) {
+            if let Some(_) = entries.entries.shift_remove(&id) {
                 cx.emit(InstanceRemovedEvent { id });
             }
         });
@@ -85,6 +88,19 @@ impl InstanceEntries {
              }
         });
     }
+    
+    pub fn set_mods<C: AppContext>(entity: &Entity<Self>, id: InstanceID, mods: Arc<[InstanceModSummary]>, cx: &mut C) {
+        entity.update(cx, |entries, cx| {
+             if let Some(instance) = entries.entries.get_mut(&id) {
+                 instance.update(cx, |instance, cx| {
+                     instance.mods.update(cx, |existing_mods, cx| {
+                         *existing_mods = mods;
+                         cx.notify();
+                     })
+                 });
+             }
+        });
+    }
 }
 
 #[derive(Clone)]
@@ -98,6 +114,8 @@ pub struct InstanceEntry {
     pub worlds: Entity<Arc<[InstanceWorldSummary]>>,
     pub servers_state: Arc<AtomicBridgeDataLoadState>,
     pub servers: Entity<Arc<[InstanceServerSummary]>>,
+    pub mods_state: Arc<AtomicBridgeDataLoadState>,
+    pub mods: Entity<Arc<[InstanceModSummary]>>,
 }
 
 impl InstanceEntry {

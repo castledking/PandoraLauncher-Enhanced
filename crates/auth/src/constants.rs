@@ -1,0 +1,10 @@
+pub const CLIENT_ID: &'static str = "e5226706-5096-431d-9516-ae48fe263401";
+pub const AUTH_URL: &'static str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+pub const TOKEN_URL: &'static str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+pub const REDIRECT_URL_BASE: &'static str = "http://localhost:3160";
+pub const REDIRECT_URL: &'static str = "http://localhost:3160/auth";
+pub const SERVER_ADDRESS: &'static str = "0.0.0.0:3160";
+pub const XBOX_AUTHENTICATE_URL: &'static str = "https://user.auth.xboxlive.com/user/authenticate";
+pub const XSTS_AUTHORIZE_URL: &'static str = "https://xsts.auth.xboxlive.com/xsts/authorize";
+pub const MINECRAFT_LOGIN_WITH_XBOX_URL: &'static str = "https://api.minecraftservices.com/authentication/login_with_xbox";
+pub const MINECRAFT_PROFILE_URL: &'static str = "https://api.minecraftservices.com/minecraft/profile";

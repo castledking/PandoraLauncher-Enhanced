@@ -18,6 +18,9 @@ pub struct LauncherDirectories {
     
     pub temp_dir: PathBuf,
     pub temp_natives_base_dir: PathBuf,
+    
+    pub accounts_json: PathBuf,
+    pub accounts_json_backup: PathBuf,
 }
 
 impl LauncherDirectories {
@@ -40,6 +43,9 @@ impl LauncherDirectories {
         let temp_dir = launcher_dir.join("temp");
         let temp_natives_base_dir = temp_dir.join("natives");
         
+        let accounts_json = launcher_dir.join("accounts.json");
+        let accounts_json_backup = launcher_dir.join("accounts.json.old");
+        
         Self {
             instances_dir,
             
@@ -56,6 +62,9 @@ impl LauncherDirectories {
             
             temp_dir,
             temp_natives_base_dir,
+            
+            accounts_json,
+            accounts_json_backup,
         }
     }
 }

@@ -2,7 +2,7 @@
 use bridge::handle::BackendHandle;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::{Button, ButtonVariants}, h_flex, table::{Column, ColumnSort, Table, TableDelegate}, Sizable
+    button::{Button, ButtonVariants}, h_flex, table::{Column, ColumnSort, Table, TableDelegate, TableState}, Sizable
 };
 use schema::loader::Loader;
 
@@ -18,11 +18,11 @@ pub struct InstanceList {
 }
 
 impl InstanceList {
-    pub fn create_table(data: &DataEntities, window: &mut Window, cx: &mut App) -> Entity<Table<Self>> {
+    pub fn create_table(data: &DataEntities, window: &mut Window, cx: &mut App) -> Entity<TableState<Self>> {
         let instances = data.instances.clone();
-        let items = instances.read(cx).entries.values().map(|i| i.read(cx).clone()).collect();
+        let items = instances.read(cx).entries.values().rev().map(|i| i.read(cx).clone()).collect();
         cx.new(|cx| {
-            let _instance_added_subscription = cx.subscribe::<_, InstanceAddedEvent>(&instances, |table: &mut Table<InstanceList>, _, event, cx| {
+            let _instance_added_subscription = cx.subscribe::<_, InstanceAddedEvent>(&instances, |table: &mut TableState<InstanceList>, _, event, cx| {
                 table.delegate_mut().items.insert(0, event.instance.clone());
                 cx.notify();
             });
@@ -66,7 +66,7 @@ impl InstanceList {
                 _instance_removed_subscription,
                 _instance_modified_subscription,
             };
-            Table::new(instance_list, window, cx).border(false)
+            TableState::new(instance_list, window, cx)
         })
     }
 }
@@ -89,7 +89,7 @@ impl TableDelegate for InstanceList {
             col_ix: usize,
             sort: gpui_component::table::ColumnSort,
             window: &mut Window,
-            cx: &mut Context<Table<Self>>,
+            cx: &mut Context<TableState<Self>>,
         ) {
         if let Some(col) = self.columns.get_mut(col_ix) {
             match col.key.as_ref() {
@@ -111,7 +111,7 @@ impl TableDelegate for InstanceList {
         row_ix: usize,
         col_ix: usize,
         window: &mut Window,
-        cx: &mut Context<gpui_component::table::Table<Self>>,
+        cx: &mut App,
     ) -> impl IntoElement {
         let item = &self.items[row_ix];
         if let Some(col) = self.columns.get(col_ix) {

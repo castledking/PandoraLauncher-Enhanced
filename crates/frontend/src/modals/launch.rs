@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use bridge::modal_action::ModalAction;
 use gpui::{prelude::*, *};
-use gpui_component::{v_flex, ContextModal};
+use gpui_component::{button::{Button, ButtonVariants}, v_flex, WindowExt};
 
 use crate::component::{error_alert::ErrorAlert, progress_bar::{ProgressBar, ProgressBarColor}};
 
@@ -67,6 +69,14 @@ pub fn show_launching_modal(window: &mut Window, cx: &mut App, name: SharedStrin
             progress_entries.push(div().gap_3().child(SharedString::from(title)).child(progress_bar).opacity(opacity));
         }
         drop(trackers);
+        
+        if let Some(visit_url) = &*modal_action.visit_url.read().unwrap() {
+            let message = SharedString::new(Arc::clone(&visit_url.message));
+            let url = Arc::clone(&visit_url.url);
+            progress_entries.push(div().p_3().child(Button::new("visit").success().label(message).on_click(move |_, _, cx| {
+                cx.open_url(&url);
+            })));
+        }
 
         let progress = v_flex().gap_2().children(progress_entries);
 

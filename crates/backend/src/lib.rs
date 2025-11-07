@@ -15,6 +15,9 @@ mod launch;
 mod launch_wrapper;
 mod directories;
 mod log_reader;
+mod mod_metadata;
+mod modrinth;
+mod account;
 
 pub(crate) fn is_single_component_path(path: &str) -> bool {
     let path = std::path::Path::new(path);

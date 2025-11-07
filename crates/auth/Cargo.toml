@@ -20,3 +20,6 @@ nt-time.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
 keyring.workspace = true
+obfstr.workspace = true
+tiny_http.workspace = true
+oo7.workspace = true

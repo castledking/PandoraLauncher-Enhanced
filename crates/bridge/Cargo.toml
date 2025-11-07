@@ -9,3 +9,4 @@ atomic_enum.workspace = true
 schema.workspace = true
 ustr.workspace = true
 tokio.workspace = true
+uuid.workspace = true

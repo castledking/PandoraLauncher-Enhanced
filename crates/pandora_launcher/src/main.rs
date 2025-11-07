@@ -17,6 +17,8 @@ fn main() {
     let (frontend_send, frontend_recv) = tokio::sync::mpsc::channel(64);
     let (backend_send, backend_recv) = tokio::sync::mpsc::channel(64);
     
-    backend::start(FrontendHandle::from(frontend_send), backend_recv);
-    frontend::start(panic_message, BackendHandle::from(backend_send), frontend_recv);
+    let backend_handle = BackendHandle::from(backend_send);
+    
+    backend::start(FrontendHandle::from(frontend_send), backend_handle.clone(), backend_recv);
+    frontend::start(panic_message, backend_handle.clone(), frontend_recv);
 }

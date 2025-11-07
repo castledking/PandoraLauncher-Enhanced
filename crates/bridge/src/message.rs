@@ -1,9 +1,10 @@
 use std::{error::Error, ffi::OsString, sync::Arc};
 
-use schema::{loader::Loader, version_manifest::MinecraftVersionManifest};
+use schema::{loader::Loader, modrinth::{ModrinthError, ModrinthRequest, ModrinthResult}, version_manifest::MinecraftVersionManifest};
 use ustr::Ustr;
+use uuid::Uuid;
 
-use crate::{game_output::GameOutputLogLevel, instance::{InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, keep_alive::KeepAlive, modal_action::ModalAction};
+use crate::{account::Account, game_output::GameOutputLogLevel, instance::{InstanceID, InstanceModID, InstanceModSummary, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, keep_alive::{KeepAlive, KeepAliveHandle}, modal_action::ModalAction};
 
 #[derive(Debug)]
 pub enum MessageToBackend {
@@ -29,6 +30,22 @@ pub enum MessageToBackend {
     RequestLoadServers {
         id: InstanceID
     },
+    RequestLoadMods {
+        id: InstanceID
+    },
+    SetModEnabled {
+        id: InstanceID,
+        mod_id: InstanceModID,
+        enabled: bool,
+    },
+    RequestModrinth {
+        request: ModrinthRequest,
+    },
+    UpdateAccountHeadPng {
+        uuid: Uuid,
+        head_png: Arc<[u8]>,
+        head_png_32x: Arc<[u8]>,
+    },
     DownloadAllMetadata
 }
 
@@ -42,6 +59,7 @@ pub enum MessageToFrontend {
         loader: Loader,
         worlds_state: Arc<AtomicBridgeDataLoadState>,
         servers_state: Arc<AtomicBridgeDataLoadState>,
+        mods_state: Arc<AtomicBridgeDataLoadState>,
     },
     InstanceRemoved {
         id: InstanceID,
@@ -61,6 +79,10 @@ pub enum MessageToFrontend {
         id: InstanceID,
         servers: Arc<[InstanceServerSummary]>,
     },
+    InstanceModsUpdated {
+        id: InstanceID,
+        mods: Arc<[InstanceModSummary]>,
+    },
     CreateGameOutputWindow {
         id: usize,
         keep_alive: KeepAlive,
@@ -75,6 +97,15 @@ pub enum MessageToFrontend {
     AddNotification {
         notification_type: BridgeNotificationType,
         message: Arc<str>,
+    },
+    ModrinthDataUpdated {
+        request: ModrinthRequest,
+        result: Result<ModrinthResult, ModrinthError>,
+        alive_handle: KeepAliveHandle,
+    },
+    AccountsUpdated {
+        accounts: Arc<[Account]>,
+        selected_account: Option<Uuid>,
     },
     Refresh
 }

@@ -12,6 +12,18 @@ impl InstanceID {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InstanceModID {
+    pub index: usize,
+    pub generation: usize,
+}
+
+impl InstanceModID {
+    pub fn dangling() -> Self {
+        Self { index: usize::MAX, generation: usize::MAX }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstanceStatus {
     NotRunning,
@@ -32,5 +44,23 @@ pub struct InstanceWorldSummary {
 pub struct InstanceServerSummary {
     pub name: Arc<str>,
     pub ip: Arc<str>,
+    pub png_icon: Option<Arc<[u8]>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstanceModSummary {
+    pub mod_summary: Arc<ModSummary>,
+    pub id: InstanceModID,
+    pub file_name: Arc<str>,
+    pub path: Arc<Path>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModSummary {
+    pub id: Arc<str>,
+    pub name: Arc<str>,
+    pub version_str: Arc<str>,
+    pub authors: Arc<str>,
     pub png_icon: Option<Arc<[u8]>>,
 }

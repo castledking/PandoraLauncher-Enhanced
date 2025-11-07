@@ -9,3 +9,4 @@ indexmap.workspace = true
 serde.workspace = true
 serde-untagged.workspace = true
 ustr.workspace = true
+thiserror.workspace = true

@@ -3,7 +3,7 @@ use std::{ffi::OsString, sync::{atomic::{AtomicBool, AtomicU32, AtomicUsize, Ord
 use bridge::{handle::BackendHandle, instance::{InstanceID, InstanceServerSummary, InstanceWorldSummary}, message::{AtomicBridgeDataLoadState, MessageToBackend, QuickPlayLaunch}};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dropdown::{Dropdown, DropdownDelegate, DropdownItem, DropdownState, SearchableVec}, form::form_field, group_box::GroupBox, h_flex, input::{InputEvent, InputState, TextInput}, resizable::{h_resizable, resizable_panel, ResizableState}, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem}, skeleton::Skeleton, tab::{Tab, TabBar}, table::{Column, ColumnFixed, ColumnSort, Table, TableDelegate}, v_flex, ActiveTheme as _, ContextModal, Icon, IconName, IndexPath, List, ListDelegate, ListItem, Root, Selectable, Sizable, StyledExt
+    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, form::form_field, group_box::GroupBox, h_flex, input::{Input, InputEvent, InputState}, list::{List, ListDelegate, ListItem, ListState}, resizable::{h_resizable, resizable_panel, ResizableState}, select::{SearchableVec, Select, SelectDelegate, SelectItem, SelectState}, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem}, skeleton::Skeleton, tab::{Tab, TabBar}, table::{Column, ColumnFixed, ColumnSort, Table, TableDelegate}, v_flex, ActiveTheme as _, Icon, IconName, IndexPath, Root, Selectable, Sizable, StyledExt
 };
 
 use crate::{entity::instance::InstanceEntry, png_render_cache, root};
@@ -12,9 +12,9 @@ pub struct InstanceQuickplaySubpage {
     instance: InstanceID,
     backend_handle: BackendHandle,
     worlds_state: Arc<AtomicBridgeDataLoadState>,
-    world_list: Entity<List<WorldsListDelegate>>,
+    world_list: Entity<ListState<WorldsListDelegate>>,
     servers_state: Arc<AtomicBridgeDataLoadState>,
-    server_list: Entity<List<ServersListDelegate>>,
+    server_list: Entity<ListState<ServersListDelegate>>,
 }
 
 impl InstanceQuickplaySubpage {
@@ -46,7 +46,7 @@ impl InstanceQuickplaySubpage {
         
         let window2 = &mut window;
         let world_list = cx.new(move |cx| {
-            cx.observe(&worlds, |list: &mut List<WorldsListDelegate>, worlds, cx| {
+            cx.observe(&worlds, |list: &mut ListState<WorldsListDelegate>, worlds, cx| {
                 let worlds = (&*worlds.read(cx)).to_vec();
                 let delegate = list.delegate_mut();
                 delegate.worlds = worlds.clone();
@@ -54,11 +54,11 @@ impl InstanceQuickplaySubpage {
                 cx.notify();
             }).detach();
             
-            List::new(worlds_list_delegate, *window2, cx).selectable(false)
+            ListState::new(worlds_list_delegate, window2, cx).selectable(false).searchable(true)
         });
         
         let server_list = cx.new(move |cx| {
-            cx.observe(&servers, |list: &mut List<ServersListDelegate>, servers, cx| {
+            cx.observe(&servers, |list: &mut ListState<ServersListDelegate>, servers, cx| {
                 let servers = (&*servers.read(cx)).to_vec();
                 let delegate = list.delegate_mut();
                 delegate.servers = servers.clone();
@@ -66,7 +66,7 @@ impl InstanceQuickplaySubpage {
                 cx.notify();
             }).detach();
             
-            List::new(servers_list_delegate, window, cx).selectable(false)
+            ListState::new(servers_list_delegate, window, cx).selectable(false).searchable(true)
         });
         
         Self {
@@ -130,12 +130,12 @@ impl ListDelegate for WorldsListDelegate {
         &self,
         ix: IndexPath,
         window: &mut Window,
-        cx: &mut Context<List<Self>>,
+        cx: &mut App,
     ) -> Option<Self::Item> {
         let summary = self.searched.get(ix.row)?;
         
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
-            png_render_cache::render(Arc::clone(png_icon))
+            png_render_cache::render(Arc::clone(png_icon), cx)
         } else {
             gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
         };
@@ -154,11 +154,11 @@ impl ListDelegate for WorldsListDelegate {
             .p_1()
             .child(h_flex()
                 .gap_1()
+                .child(div().child(Button::new(ix).success().icon(play_icon).on_click(move |_, window, cx| {
+                    root::start_instance(id, name.clone(), Some(QuickPlayLaunch::Singleplayer(target.clone())), &backend_handle, window, cx);
+                })).px_2())
                 .child(icon.size_16().min_w_16().min_h_16())
                 .child(description)
-                .child(div().absolute().right_4().child(Button::new(ix).success().icon(play_icon).on_click(move |_, window, cx| {
-                    root::start_instance(id, name.clone(), Some(QuickPlayLaunch::Singleplayer(target.clone())), &backend_handle, window, cx);
-                })))
             );
         
         Some(item)
@@ -168,7 +168,7 @@ impl ListDelegate for WorldsListDelegate {
         &mut self,
         ix: Option<IndexPath>,
         window: &mut Window,
-        cx: &mut Context<List<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) {
     }
     
@@ -176,7 +176,7 @@ impl ListDelegate for WorldsListDelegate {
         &mut self,
         query: &str,
         window: &mut Window,
-        cx: &mut Context<List<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) -> Task<()> {
         self.searched = self.worlds.iter()
             .filter(|w| w.title.contains(query))
@@ -206,12 +206,12 @@ impl ListDelegate for ServersListDelegate {
         &self,
         ix: IndexPath,
         window: &mut Window,
-        cx: &mut Context<List<Self>>,
+        cx: &mut App,
     ) -> Option<Self::Item> {
         let summary = self.searched.get(ix.row)?;
         
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
-            png_render_cache::render(Arc::clone(png_icon))
+            png_render_cache::render(Arc::clone(png_icon), cx)
         } else {
             gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
         };
@@ -230,11 +230,11 @@ impl ListDelegate for ServersListDelegate {
             .p_1()
             .child(h_flex()
                 .gap_1()
+                .child(div().child(Button::new(ix).success().icon(play_icon).on_click(move |_, window, cx| {
+                    root::start_instance(id, name.clone(), Some(QuickPlayLaunch::Multiplayer(target.clone())), &backend_handle, window, cx);
+                })).px_2())
                 .child(icon.size_16().min_w_16().min_h_16())
                 .child(description)
-                .child(div().absolute().right_4().child(Button::new(ix).success().icon(play_icon).on_click(move |_, window, cx| {
-                    root::start_instance(id, name.clone(), Some(QuickPlayLaunch::Multiplayer(target.clone())), &backend_handle, window, cx);
-                })))
             );
         
         Some(item)
@@ -244,7 +244,7 @@ impl ListDelegate for ServersListDelegate {
         &mut self,
         ix: Option<IndexPath>,
         window: &mut Window,
-        cx: &mut Context<List<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) {
     }
     
@@ -252,7 +252,7 @@ impl ListDelegate for ServersListDelegate {
         &mut self,
         query: &str,
         window: &mut Window,
-        cx: &mut Context<List<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) -> Task<()> {
         self.searched = self.servers.iter()
             .filter(|w| w.name.contains(query))

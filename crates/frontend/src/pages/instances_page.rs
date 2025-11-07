@@ -3,14 +3,14 @@ use std::sync::{atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering}, Arc, Mut
 use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dropdown::{Dropdown, DropdownDelegate, DropdownItem, DropdownState, SearchableVec}, form::form_field, h_flex, input::{InputEvent, InputState, TextInput}, resizable::{h_resizable, resizable_panel, ResizableState}, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem}, skeleton::Skeleton, table::{Column, ColumnFixed, ColumnSort, Table, TableDelegate}, tooltip::Tooltip, v_flex, ActiveTheme as _, ContextModal, Disableable, Icon, IconName, IndexPath, Root, Selectable, StyledExt
+    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, form::form_field, h_flex, input::{Input, InputEvent, InputState}, resizable::{h_resizable, resizable_panel, ResizableState}, select::{SearchableVec, Select, SelectDelegate, SelectItem, SelectState}, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem}, skeleton::Skeleton, table::{Column, ColumnFixed, ColumnSort, Table, TableDelegate, TableState}, tooltip::Tooltip, v_flex, ActiveTheme as _, Disableable, Icon, IconName, IndexPath, Root, Selectable, StyledExt, WindowExt
 };
 use schema::{loader::Loader, version_manifest::MinecraftVersionType};
 
 use crate::{component::instance_list::InstanceList, entity::{instance::InstanceEntries, version::VersionEntries, DataEntities}, ui};
 
 pub struct InstancesPage {
-    instance_table: Entity<Table<InstanceList>>,
+    instance_table: Entity<TableState<InstanceList>>,
 
     versions: Entity<VersionEntries>,
     instances: Entity<InstanceEntries>,
@@ -33,8 +33,6 @@ impl InstancesPage {
 
 impl Render for InstancesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        
         let create_instance = Button::new("create_instance")
             .success()
             .icon(IconName::Plus)
@@ -45,7 +43,7 @@ impl Render for InstancesPage {
         );
         
         ui::page(cx, h_flex().gap_8().child("Instances").child(create_instance))
-            .child(self.instance_table.clone())
+            .child(Table::new(&self.instance_table).bordered(false))
     }
 }
 
@@ -55,7 +53,7 @@ pub struct VersionList {
     pub matched_versions: Vec<SharedString>,
 }
 
-impl DropdownDelegate for VersionList {
+impl SelectDelegate for VersionList {
     type Item = SharedString;
 
     fn items_count(&self, _section: usize) -> usize {
@@ -68,7 +66,7 @@ impl DropdownDelegate for VersionList {
 
     fn position<V>(&self, value: &V) -> Option<IndexPath>
     where
-        Self::Item: gpui_component::dropdown::DropdownItem<Value = V>,
+        Self::Item: gpui_component::select::SelectItem<Value = V>,
         V: PartialEq
     {
 
@@ -81,11 +79,7 @@ impl DropdownDelegate for VersionList {
         None
     }
 
-    fn searchable(&self) -> bool {
-        true
-    }
-
-    fn perform_search(&mut self, query: &str, _window: &mut Window, _: &mut App) -> Task<()> {
+    fn perform_search(&mut self, query: &str, _window: &mut Window, _: &mut Context<SelectState<Self>>) -> Task<()> {
         let lower_query = query.to_lowercase();
 
         self.matched_versions = self
@@ -110,7 +104,7 @@ impl InstancesPage {
         let instance_names: Arc<[SharedString]> = self.instances.read(cx).entries.iter().map(|(_, v)| v.read(cx).name.clone()).collect();
 
         let minecraft_version_dropdown = cx.new(|cx| {
-            DropdownState::new(VersionList::default(), None, window, cx)
+            SelectState::new(VersionList::default(), None, window, cx).searchable(true)
         });
         
         let unnamed_instance_name = SharedString::new_static("Unnamed Instance");
@@ -306,7 +300,7 @@ impl InstancesPage {
             let loader_button_group;
 
             if !loaded_versions.load(Ordering::Relaxed) {
-                version_dropdown = Dropdown::new(&minecraft_version_dropdown).w_full().disabled(true).placeholder("Loading Minecraft Versions...");
+                version_dropdown = Select::new(&minecraft_version_dropdown).w_full().disabled(true).placeholder("Loading Minecraft Versions...");
                 show_snapshots_button = Skeleton::new().w_full().min_h_4().max_h_4().rounded_md().into_any_element();
                 loader_button_group = Skeleton::new().w_full().min_h_8().max_h_8().rounded_md().into_any_element();
             } else {
@@ -316,7 +310,7 @@ impl InstancesPage {
                 let show_snapshots = Arc::clone(&show_snapshots);
                 let show_snapshots_value = show_snapshots.load(Ordering::Relaxed);
                 
-                version_dropdown = Dropdown::new(&minecraft_version_dropdown).title_prefix("Minecraft Version: ");
+                version_dropdown = Select::new(&minecraft_version_dropdown).title_prefix("Minecraft Version: ");
                 show_snapshots_button = Checkbox::new("show_snapshots")
                                 .checked(show_snapshots_value)
                                 .label("Show Snapshots")
@@ -337,16 +331,16 @@ impl InstancesPage {
                                 .label("Fabric")
                                 .selected(selected_loader_value == Loader::Fabric),
                         )
-                        .child(
-                            Button::new("loader-forge")
-                                .label("Forge")
-                                .selected(selected_loader_value == Loader::Forge),
-                        )
-                        .child(
-                            Button::new("loader-neoforge")
-                                .label("NeoForge")
-                                .selected(selected_loader_value == Loader::NeoForge),
-                        )
+                        // .child(
+                        //     Button::new("loader-forge")
+                        //         .label("Forge")
+                        //         .selected(selected_loader_value == Loader::Forge),
+                        // )
+                        // .child(
+                        //     Button::new("loader-neoforge")
+                        //         .label("NeoForge")
+                        //         .selected(selected_loader_value == Loader::NeoForge),
+                        // )
                         .on_click(move |selected, _, _| {
                             match selected.first() {
                                 Some(0) => selected_loader.store(0, Ordering::Relaxed),
@@ -364,7 +358,7 @@ impl InstancesPage {
             
             let content = v_flex()
                     .gap_3()
-                    .child(labelled("Name", TextInput::new(&name_input_state)
+                    .child(labelled("Name", Input::new(&name_input_state)
                         .when(name_is_invalid, |this| this.border_color(cx.theme().danger))))
                     .child(labelled("Version", v_flex().gap_2()
                         .child(version_dropdown)

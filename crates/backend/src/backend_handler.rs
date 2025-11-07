@@ -1,9 +1,11 @@
-use std::sync::Arc;
+use std::{ffi::OsStr, str::FromStr, sync::Arc, time::Duration};
 
+use auth::{credentials::AccountCredentials, secret::PlatformSecretStorage};
 use bridge::{instance::InstanceStatus, message::MessageToBackend, modal_action::ProgressTracker};
 use schema::version::{LaunchArgument, LaunchArgumentValue};
+use uuid::Uuid;
 
-use crate::{instance::{InstanceInfo, StartLoadResult}, launch::ArgumentExpansionKey, log_reader, metadata::manager::{AssetsIndexMetadata, MinecraftVersionManifestMetadata, MinecraftVersionMetadata, MojangJavaRuntimeComponentMetadata, MojangJavaRuntimesMetadata}, BackendState, WatchTarget};
+use crate::{account::{BackendAccount, MinecraftLoginInfo}, instance::{InstanceInfo, StartLoadResult}, launch::ArgumentExpansionKey, log_reader, metadata::manager::{AssetsIndexMetadata, MinecraftVersionManifestMetadata, MinecraftVersionMetadata, MojangJavaRuntimeComponentMetadata, MojangJavaRuntimesMetadata}, BackendState, WatchTarget};
 
 impl BackendState {
     pub async fn handle_message(&mut self, message: MessageToBackend) {
@@ -18,7 +20,7 @@ impl BackendState {
             MessageToBackend::RequestLoadWorlds { id } => {
                 if let Some(instance) = self.instances.get_mut(id.index) {
                     if instance.id == id {
-                        if instance.start_load_worlds() == StartLoadResult::Initial {
+                        if instance.start_load_worlds(&self.notify_tick) == StartLoadResult::Initial {
                             let saves = instance.saves_path.clone();
                             
                             if self.watcher.watch(&saves, notify::RecursiveMode::NonRecursive).is_ok() {
@@ -33,11 +35,26 @@ impl BackendState {
             MessageToBackend::RequestLoadServers { id } => {
                 if let Some(instance) = self.instances.get_mut(id.index) {
                     if instance.id == id {
-                        if instance.start_load_servers() == StartLoadResult::Initial {
+                        if instance.start_load_servers(&self.notify_tick) == StartLoadResult::Initial {
                             let server_dat = instance.server_dat_path.clone();
                             
                             if self.watcher.watch(&server_dat, notify::RecursiveMode::NonRecursive).is_ok() {
                                 self.watching.insert(server_dat.into(), WatchTarget::ServersDat {
+                                    id: instance.id,
+                                });
+                            }
+                        }
+                    }
+                }
+            },
+            MessageToBackend::RequestLoadMods { id } => {
+                if let Some(instance) = self.instances.get_mut(id.index) {
+                    if instance.id == id {
+                        if instance.start_load_mods(&self.notify_tick, &self.mod_metadata_manager) == StartLoadResult::Initial {
+                            let server_dat = instance.mods_path.clone();
+                            
+                            if self.watcher.watch(&server_dat, notify::RecursiveMode::NonRecursive).is_ok() {
+                                self.watching.insert(server_dat.into(), WatchTarget::InstanceModsDir {
                                     id: instance.id,
                                 });
                             }
@@ -94,6 +111,79 @@ impl BackendState {
                 self.send.send_error("Can't kill instance, unknown id").await;
             }
             MessageToBackend::StartInstance { id, quick_play, modal_action } => {
+                let secret_storage = self.secret_storage.get_or_init(PlatformSecretStorage::new).await;
+                
+                let mut credentials = if let Some(selected_account) = self.account_info.selected_account {
+                    secret_storage.read_credentials(selected_account).await.ok().flatten().unwrap_or_default()
+                } else {
+                    AccountCredentials::default()
+                };
+                
+                let login_tracker = ProgressTracker::new(Arc::from("Logging in"), self.send.clone());
+                modal_action.trackers.push(login_tracker.clone());
+                
+                let login_result = self.login(&mut credentials, &login_tracker, &modal_action).await;
+                
+                let secret_storage = self.secret_storage.get_or_init(PlatformSecretStorage::new).await;
+                
+                let (profile, access_token) = match login_result {
+                    Ok(login_result) => {
+                        login_tracker.set_finished(false);
+                        login_tracker.notify().await;
+                        login_result
+                    },
+                    Err(ref err) => {
+                        if let Some(selected_account) = self.account_info.selected_account {
+                            let _ = secret_storage.delete_credentials(selected_account).await;
+                        }
+                        
+                        modal_action.set_error_message(format!("Error logging in: {}", &err).into());
+                        login_tracker.set_finished(true);
+                        login_tracker.notify().await;
+                        modal_action.set_finished();
+                        return;
+                    },
+                };
+                
+                if let Some(selected_account) = self.account_info.selected_account && profile.id != selected_account {
+                    let _ = secret_storage.delete_credentials(selected_account).await;
+                }
+                
+                let mut update_account_json = false;
+                
+                if let Some(account) = self.account_info.accounts.get_mut(&profile.id) {
+                    if !account.downloaded_head {
+                        account.downloaded_head = true;
+                        self.update_profile_head(&profile);
+                    }
+                } else {
+                    let mut account = BackendAccount::new_from_profile(&profile);
+                    account.downloaded_head = true;
+                    self.account_info.accounts.insert(profile.id, account);
+                    self.update_profile_head(&profile);
+                    update_account_json = true;
+                }
+                
+                if self.account_info.selected_account != Some(profile.id) {
+                    self.account_info.selected_account = Some(profile.id);
+                    update_account_json = true;
+                }
+                
+                if secret_storage.write_credentials(profile.id, &credentials).await.is_err() {
+                    self.send.send_warning("Unable to write credentials to keychain. You might need to fully log in again next time").await;
+                }
+                
+                if update_account_json {
+                    self.write_account_info().await;
+                    self.send.send(self.account_info.create_update_message()).await;
+                }
+                
+                let login_info = MinecraftLoginInfo {
+                    uuid: profile.id,
+                    username: profile.name.clone(),
+                    access_token,
+                };
+                
                 if let Some(instance) = self.instances.get_mut(id.index) {
                     if instance.id == id {
                         if instance.child.is_some() {
@@ -108,7 +198,7 @@ impl BackendState {
                         let launch_tracker = ProgressTracker::new(Arc::from("Launching"), self.send.clone());
                         modal_action.trackers.push(launch_tracker.clone());
                         
-                        let result = self.launcher.launch(&self.http_client, instance, quick_play, &launch_tracker, &modal_action).await;
+                        let result = self.launcher.launch(&self.http_client, instance, quick_play, login_info, &launch_tracker, &modal_action).await;
                         
                         let is_err = result.is_err();
                         match result {
@@ -136,6 +226,52 @@ impl BackendState {
                 self.send.send_error("Can't launch instance, unknown id").await;
                 modal_action.set_error_message("Can't launch instance, unknown id".into());
                 modal_action.set_finished();
+            },
+            MessageToBackend::SetModEnabled { id, mod_id, enabled } => {
+                if let Some(instance) = self.instances.get_mut(id.index) {
+                    if instance.id == id {
+                        if let Some(instance_mod) = instance.try_get_mod(mod_id) {
+                            let Some(file_name) = instance_mod.path.file_name() else {
+                                return;
+                            };
+                            
+                            if instance_mod.enabled == enabled {
+                                return;
+                            }
+                            
+                            let new_path = if instance_mod.enabled {
+                                let mut file_name = file_name.to_owned();
+                                file_name.push(".disabled");
+                                instance_mod.path.with_file_name(file_name)
+                            } else {
+                                let file_name = file_name.to_str().unwrap();
+                                
+                                assert!(file_name.ends_with(".disabled"));
+                                
+                                let without_disabled = &file_name[..file_name.len()-".disabled".len()];
+                                
+                                instance_mod.path.with_file_name(without_disabled)
+                            };
+                            
+                            self.reload_mods_immediately.insert(id);
+                            let _ = std::fs::rename(&instance_mod.path, new_path);
+                        }
+                    }
+                }
+            },
+            MessageToBackend::RequestModrinth { request } => {
+                self.modrinth_data.frontend_request(request).await;
+            },
+            MessageToBackend::UpdateAccountHeadPng { uuid, head_png, head_png_32x } => {
+                if let Some(account) = self.account_info.accounts.get_mut(&uuid) {
+                    let head_png = Some(head_png);
+                    if &account.head != &head_png {
+                        account.head = head_png;
+                        account.head_32x = Some(head_png_32x);
+                        self.send.send(self.account_info.create_update_message()).await;
+                        self.write_account_info().await;
+                    }
+                }
             },
             MessageToBackend::DownloadAllMetadata => {
                 self.download_all_metadata().await;

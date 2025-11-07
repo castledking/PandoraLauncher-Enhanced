@@ -1,13 +1,14 @@
 #![deny(unused_must_use)]
 
-use std::{borrow::Cow, collections::HashMap, sync::{Arc, RwLock}};
+use std::{collections::HashMap, sync::{Arc, RwLock}};
 
 use bridge::{handle::BackendHandle, message::{BridgeNotificationType, MessageToFrontend}};
-use gpui::{prelude::*, *};
-use gpui_component::{ContextModal, Root, ThemeMode, notification::{Notification, NotificationType}};
+use gpui::{http_client::HttpClient, prelude::*, *};
+use gpui_component::{notification::{Notification, NotificationType}, Root, ThemeMode, WindowExt};
+use indexmap::IndexMap;
 use tokio::sync::mpsc::Receiver;
 
-use crate::{entity::{instance::InstanceEntries, version::VersionEntries, DataEntities}, game_output::{GameOutput, GameOutputRoot}, root::{LauncherRoot, LauncherRootGlobal}};
+use crate::{entity::{account::AccountEntries, instance::InstanceEntries, modrinth::FrontendModrinthData, version::VersionEntries, DataEntities}, game_output::{GameOutput, GameOutputRoot}, root::{LauncherRoot, LauncherRootGlobal}};
 
 pub mod root;
 pub mod ui;
@@ -17,6 +18,15 @@ pub mod pages;
 pub mod game_output;
 pub mod modals;
 pub mod png_render_cache;
+
+rust_i18n::i18n!("locales");
+
+macro_rules! ts {
+    ($($all:tt)*) => {
+        SharedString::new_static(ustr::ustr(&*rust_i18n::t!($($all)*)).as_str())
+    };
+}
+pub(crate) use ts;
 
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../assets"]
@@ -44,7 +54,11 @@ impl AssetSource for Assets {
 }
 
 pub fn start(panic_message: Arc<RwLock<Option<String>>>, backend_handle: BackendHandle, mut recv: Receiver<MessageToFrontend>) {
-    Application::new().with_assets(Assets).run(|cx: &mut App| {
+    let http_client = std::sync::Arc::new(
+        reqwest_client::ReqwestClient::user_agent("PandoraLauncher/0.1.0 (https://github.com/Moulberry/PandoraLauncher)").unwrap(),
+    );
+    
+    Application::new().with_http_client(http_client).with_assets(Assets).run(|cx: &mut App| {
         let _ = cx.text_system()
             .add_fonts(vec![
                 Assets.load("fonts/inter/Inter-Regular.ttf").unwrap().unwrap(),
@@ -69,15 +83,24 @@ pub fn start(panic_message: Arc<RwLock<Option<String>>>, backend_handle: Backend
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(300.0), px(200.0))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(SharedString::new_static("Pandora")),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             |window, cx| {
-                let instances = cx.new(|_| InstanceEntries { entries: HashMap::new() });
+                let instances = cx.new(|_| InstanceEntries { entries: IndexMap::new() });
                 let versions = cx.new(|_| VersionEntries::new(backend_handle.clone()));
+                let modrinth = cx.new(|_| FrontendModrinthData::new(backend_handle.clone()));
+                let accounts = cx.new(|_| AccountEntries::default());
                 let data = DataEntities {
                     instances,
                     versions,
-                    backend_handle
+                    backend_handle,
+                    modrinth,
+                    accounts,
                 };
                 
                 {
@@ -90,8 +113,11 @@ pub fn start(panic_message: Arc<RwLock<Option<String>>>, backend_handle: Backend
                                 MessageToFrontend::VersionManifestUpdated(result) => {
                                     VersionEntries::set(&data.versions, result, cx);
                                 },
-                                MessageToFrontend::InstanceAdded { id, name, version, loader, worlds_state, servers_state } => {
-                                    InstanceEntries::add(&data.instances, id, name.as_str().into(), version.as_str().into(), loader, worlds_state, servers_state, cx);
+                                MessageToFrontend::AccountsUpdated { accounts, selected_account } => {
+                                    AccountEntries::set(&data.accounts, accounts, selected_account, cx);
+                                },
+                                MessageToFrontend::InstanceAdded { id, name, version, loader, worlds_state, servers_state, mods_state } => {
+                                    InstanceEntries::add(&data.instances, id, name.as_str().into(), version.as_str().into(), loader, worlds_state, servers_state, mods_state, cx);
                                 },
                                 MessageToFrontend::InstanceRemoved { id } => {
                                     InstanceEntries::remove(&data.instances, id, cx);
@@ -104,6 +130,9 @@ pub fn start(panic_message: Arc<RwLock<Option<String>>>, backend_handle: Backend
                                 },
                                 MessageToFrontend::InstanceServersUpdated { id, servers } => {
                                     InstanceEntries::set_servers(&data.instances, id, servers, cx);
+                                },
+                                MessageToFrontend::InstanceModsUpdated { id, mods } => {
+                                    InstanceEntries::set_mods(&data.instances, id, mods, cx);
                                 },
                                 MessageToFrontend::AddNotification { notification_type, message } => {
                                     window_handle.update(cx, |_, window, cx| {
@@ -144,11 +173,16 @@ pub fn start(panic_message: Arc<RwLock<Option<String>>>, backend_handle: Backend
                                             window.refresh();
                                         });
                                     }
-                                }
+                                },
+                                MessageToFrontend::ModrinthDataUpdated { request, result, alive_handle } => {
+                                    FrontendModrinthData::set(&data.modrinth, request, result, alive_handle, cx);
+                                },
                             }
                         }
                     }).detach();
                 }
+                
+                window.set_window_title("Pandora");
                 
                 let launcher_root = cx.new(|cx| LauncherRoot::new(&data, panic_message, window, cx));
                 cx.set_global(LauncherRootGlobal {

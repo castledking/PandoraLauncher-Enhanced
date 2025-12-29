@@ -9,7 +9,7 @@ on:
       - "v*"
 
 jobs:
-  release:
+  build:
     strategy:
       fail-fast: true
       matrix:
@@ -22,6 +22,10 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             binext: .exe
+          - os_name: MacOS-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            binext: ""
 
     runs-on: ${{ matrix.platform.os }}
     steps:
@@ -48,9 +52,25 @@ jobs:
       - name: Strip debug information
         run: strip target/${{ matrix.platform.target }}/release/pandora_launcher${{ matrix.platform.binext }}
 
+      - name: Rename Output
+        shell: pwsh
+        run: Move-Item -Path 'target/${{ matrix.platform.target }}/release/pandora_launcher${{ matrix.platform.binext }}' -Destination 'PandoraLauncher-${{ matrix.platform.os_name }}${{ matrix.platform.binext }}'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          path: PandoraLauncher-${{ matrix.platform.os_name }}${{ matrix.platform.binext }}
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: target/${{ matrix.platform.target }}/release/pandora_launcher${{ matrix.platform.binext }}
+          files: ./artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

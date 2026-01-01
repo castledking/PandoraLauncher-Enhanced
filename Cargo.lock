@@ -574,6 +574,7 @@ dependencies = [
  "os_info",
  "parking_lot",
  "quick-xml 0.38.3",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "rustc-hash 2.1.1",

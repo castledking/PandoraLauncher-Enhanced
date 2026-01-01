@@ -4,6 +4,7 @@ mod backend;
 use std::{ffi::OsString, io::{Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 
 pub use backend::*;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
@@ -69,6 +70,7 @@ pub(crate) fn write_safe(path: &Path, content: &[u8]) -> std::io::Result<()> {
     }
 
     let mut temp = path.to_path_buf();
+    temp.add_extension(format!("{}", rand::thread_rng().next_u32()));
     temp.add_extension("new");
 
     let mut temp_file = std::fs::File::create(&temp)?;

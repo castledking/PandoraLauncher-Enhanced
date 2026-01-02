@@ -231,7 +231,8 @@ impl Render for LauncherUI {
         let (account_head, account_name) = if let Some(account) = &accounts.selected_account {
             let account_name = SharedString::new(account.username.clone());
             let head = if let Some(head) = &account.head {
-                png_render_cache::render(Arc::clone(head), cx)
+                let resize = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
+                png_render_cache::render_with_transform(Arc::clone(head), resize, cx)
             } else {
                 gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into())))
             };
@@ -270,7 +271,8 @@ impl Render for LauncherUI {
 
                         let items = accounts.iter().map(|account| {
                             let head = if let Some(head) = &account.head {
-                                png_render_cache::render(Arc::clone(head), cx)
+                                let resize = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
+                                png_render_cache::render_with_transform(Arc::clone(head), resize, cx)
                             } else {
                                 gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into())))
                             };

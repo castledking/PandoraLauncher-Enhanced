@@ -84,32 +84,4 @@ impl LauncherDirectories {
             accounts_json: accounts_json.into(),
         }
     }
-
-    pub fn read_config(&self) -> Result<BackendConfig, IoOrSerializationError> {
-        let data = std::fs::read(&self.config_json)?;
-        Ok(serde_json::from_slice(&data)?)
-    }
-
-    pub fn write_config(&self, config: &BackendConfig) -> Result<(), IoOrSerializationError> {
-        let data = serde_json::to_vec(config)?;
-        Ok(crate::write_safe(&self.config_json, &data)?)
-    }
-
-    pub fn read_accounts(&self) -> Result<BackendAccountInfo, IoOrSerializationError> {
-        let data = std::fs::read(&self.accounts_json)?;
-        Ok(serde_json::from_slice(&data)?)
-    }
-
-    pub fn write_accounts(&self, account_info: &BackendAccountInfo) -> Result<(), IoOrSerializationError> {
-        let data = serde_json::to_vec(account_info)?;
-        Ok(crate::write_safe(&self.accounts_json, &data)?)
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum IoOrSerializationError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
 }

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet}, io::Cursor, path::{Path, PathBuf}, sync::{atomic::AtomicUsize, Arc}, thread, time::{Duration, SystemTime}
+    collections::{HashMap, HashSet}, io::Cursor, path::{Path, PathBuf}, sync::Arc, thread, time::{Duration, SystemTime}
 };
 
 use auth::{
@@ -16,13 +16,15 @@ use enumset::EnumSet;
 use image::imageops::FilterType;
 use parking_lot::RwLock;
 use reqwest::{StatusCode, redirect::Policy};
+use rustc_hash::FxHashMap;
 use schema::{loader::Loader, modrinth::ModrinthSideRequirement};
 use sha1::{Digest, Sha1};
 use tokio::sync::{mpsc::Receiver, OnceCell};
 use ustr::Ustr;
+use uuid::Uuid;
 
 use crate::{
-    account::BackendAccountInfo, config::BackendConfig, directories::LauncherDirectories, id_slab::IdSlab, instance::{Instance, InstanceInfo}, launch::Launcher, metadata::{items::MinecraftVersionManifestMetadataItem, manager::MetadataManager}, mod_metadata::ModMetadataManager
+    account::BackendAccountInfo, config::BackendConfig, directories::LauncherDirectories, id_slab::IdSlab, instance::{Instance, InstanceInfo}, launch::Launcher, metadata::{items::MinecraftVersionManifestMetadataItem, manager::MetadataManager}, mod_metadata::ModMetadataManager, persistent::Persistent
 };
 
 pub fn start(send: FrontendHandle, self_handle: BackendHandle, recv: BackendReceiver) {
@@ -81,13 +83,10 @@ pub fn start(send: FrontendHandle, self_handle: BackendHandle, recv: BackendRece
     state_file_watching.try_watch_filesystem(&directories.root_launcher_dir, WatchTarget::RootDir);
 
     // Load accounts
-    let mut account_info = directories.read_accounts().unwrap_or_default();
-    for account in account_info.accounts.values_mut() {
-        account.try_load_head_32x_from_head();
-    }
+    let mut account_info = Persistent::load(directories.accounts_json.clone());
 
     // Load config
-    let config = directories.read_config().unwrap_or_default();
+    let config = Persistent::load(directories.config_json.clone());
 
     let state = BackendState {
         self_handle,
@@ -103,6 +102,7 @@ pub fn start(send: FrontendHandle, self_handle: BackendHandle, recv: BackendRece
         account_info: Arc::new(RwLock::new(account_info)),
         config: Arc::new(RwLock::new(config)),
         secret_storage: Arc::new(OnceCell::new()),
+        head_cache: Default::default(),
     };
 
     runtime.spawn(state.start(recv, watcher_rx));
@@ -147,9 +147,20 @@ pub struct BackendState {
     pub directories: Arc<LauncherDirectories>,
     pub launcher: Launcher,
     pub mod_metadata_manager: Arc<ModMetadataManager>,
-    pub account_info: Arc<RwLock<BackendAccountInfo>>,
-    pub config: Arc<RwLock<BackendConfig>>,
+    pub account_info: Arc<RwLock<Persistent<BackendAccountInfo>>>,
+    pub config: Arc<RwLock<Persistent<BackendConfig>>>,
     pub secret_storage: Arc<OnceCell<Result<PlatformSecretStorage, SecretStorageError>>>,
+    pub head_cache: Arc<RwLock<FxHashMap<Arc<str>, HeadCacheEntry>>>
+}
+
+pub enum HeadCacheEntry {
+    Pending {
+        accounts: Vec<Uuid>,
+    },
+    Success {
+        head: Arc<[u8]>,
+    },
+    Failed,
 }
 
 impl BackendState {
@@ -157,7 +168,7 @@ impl BackendState {
         // Pre-fetch version manifest
         self.meta.load(&MinecraftVersionManifestMetadataItem).await;
 
-        self.send.send(self.account_info.read().create_update_message());
+        self.send.send(self.account_info.write().get().create_update_message());
 
         self.load_all_instances().await;
 
@@ -505,17 +516,45 @@ impl BackendState {
             return;
         };
 
-        let handle = self.self_handle.clone();
+        let mut head_cache = self.head_cache.write();
+        if let Some(existing) = head_cache.get_mut(&skin.url) {
+            match existing {
+                HeadCacheEntry::Pending { accounts } => {
+                    accounts.push(profile.id);
+                },
+                HeadCacheEntry::Success { head } => {
+                    let head = head.clone();
+                    drop(head_cache);
+                    self.account_info.write().modify(move |account_info| {
+                        if let Some(account) = account_info.accounts.get_mut(&profile.id) {
+                            account.head = Some(head);
+                        }
+                    });
+                },
+                HeadCacheEntry::Failed => {}
+            }
+            return;
+        }
+
+        head_cache.insert(skin.url.clone(), HeadCacheEntry::Pending { accounts: vec![profile.id] });
+
+        let head_cache = self.head_cache.clone();
+        let account_info = self.account_info.clone();
+        let skin_url = skin.url;
+
         let http_client = self.http_client.clone();
-        let uuid = profile.id;
+
         tokio::task::spawn(async move {
-            let Ok(response) = http_client.get(&*skin.url).send().await else {
+            let Ok(response) = http_client.get(&*skin_url).send().await else {
+                head_cache.write().insert(skin_url.clone(), HeadCacheEntry::Failed);
                 return;
             };
             let Ok(bytes) = response.bytes().await else {
+                head_cache.write().insert(skin_url.clone(), HeadCacheEntry::Failed);
                 return;
             };
             let Ok(mut image) = image::load_from_memory(&bytes) else {
+                head_cache.write().insert(skin_url.clone(), HeadCacheEntry::Failed);
                 return;
             };
 
@@ -524,29 +563,34 @@ impl BackendState {
             let mut head_bytes = Vec::new();
             let mut cursor = Cursor::new(&mut head_bytes);
             if head.write_to(&mut cursor, image::ImageFormat::Png).is_err() {
+                head_cache.write().insert(skin_url.clone(), HeadCacheEntry::Failed);
                 return;
             }
 
             let head_png: Arc<[u8]> = Arc::from(head_bytes);
 
-            let head_png_32x = if head.width() != 32 || head.height() != 32 {
-                let resized = head.resize_exact(32, 32, FilterType::Nearest);
+            let accounts = {
+                let mut head_cache = head_cache.write();
+                let previous = head_cache.insert(skin_url.clone(), HeadCacheEntry::Success { head: head_png.clone() });
 
-                let mut head_png_32x = Vec::new();
-                let mut cursor = Cursor::new(&mut head_png_32x);
-                if resized.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
-                    head_png_32x.into()
+                if let Some(HeadCacheEntry::Pending { accounts }) = previous {
+                    accounts
                 } else {
-                    head_png.clone()
+                    Vec::new()
                 }
-            } else {
-                head_png.clone()
             };
 
-            handle.send(MessageToBackend::UpdateAccountHeadPng {
-                uuid,
-                head_png,
-                head_png_32x,
+            if accounts.is_empty() {
+                return;
+            }
+
+            let mut account_info = account_info.write();
+            account_info.modify(move |info| {
+                for uuid in accounts {
+                    if let Some(account) = info.accounts.get_mut(&uuid) {
+                        account.head = Some(head_png.clone());
+                    }
+                }
             });
         });
     }
@@ -563,7 +607,7 @@ impl BackendState {
             return;
         };
 
-        crate::syncing::apply_to_instance(self.config.read().sync_targets, &self.directories, path);
+        crate::syncing::apply_to_instance(self.config.write().get().sync_targets, &self.directories, path);
     }
 
     pub async fn prelaunch_apply_modpacks(&self, id: InstanceID, modal_action: &ModalAction) -> Vec<PathBuf> {

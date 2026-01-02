@@ -61,11 +61,6 @@ pub enum MessageToBackend {
         id: InstanceID,
         mod_id: InstanceModID,
     },
-    UpdateAccountHeadPng {
-        uuid: Uuid,
-        head_png: Arc<[u8]>,
-        head_png_32x: Arc<[u8]>,
-    },
     InstallContent {
         content: ContentInstall,
         modal_action: ModalAction,

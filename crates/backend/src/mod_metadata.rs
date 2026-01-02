@@ -338,7 +338,7 @@ fn load_icon<R: Read + Seek>(mut icon_file: ZipFile<'_, &mut R>) -> Option<Arc<[
 
     let width = image.width();
     let height = image.height();
-    if image.width() != 64 || image.height() != 64 {
+    if width != 64 || height != 64 {
         let filter = if width > 64 || height > 64 {
             FilterType::Lanczos3
         } else {

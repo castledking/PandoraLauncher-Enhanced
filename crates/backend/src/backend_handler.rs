@@ -88,7 +88,7 @@ impl BackendState {
                 quick_play,
                 modal_action,
             } => {
-                let selected_account = self.account_info.read().selected_account;
+                let selected_account = self.account_info.write().get().selected_account;
                 let Some((profile, access_token)) = self.login_flow(&modal_action, selected_account).await else {
                     return;
                 };
@@ -210,22 +210,6 @@ impl BackendState {
                             let error = format!("Error occured while updating child state: {error}");
                             self.send.send_error(error);
                         },
-                    }
-                }
-            },
-            MessageToBackend::UpdateAccountHeadPng {
-                uuid,
-                head_png,
-                head_png_32x,
-            } => {
-                let mut account_info = self.account_info.write();
-                if let Some(account) = account_info.accounts.get_mut(&uuid) {
-                    let head_png = Some(head_png);
-                    if account.head != head_png {
-                        account.head = head_png;
-                        account.head_32x = Some(head_png_32x);
-                        self.send.send(account_info.create_update_message());
-                        _ = self.directories.write_accounts(&*account_info);
                     }
                 }
             },
@@ -629,7 +613,7 @@ impl BackendState {
                 }
             },
             MessageToBackend::GetSyncState { channel } => {
-                let result = crate::syncing::get_sync_state(self.config.read().sync_targets, &self.directories);
+                let result = crate::syncing::get_sync_state(self.config.write().get().sync_targets, &self.directories);
 
                 match result {
                     Ok(state) => {
@@ -663,12 +647,14 @@ impl BackendState {
                 }
 
                 if value {
-                    write.sync_targets.insert(target);
+                    write.modify(|config| {
+                        config.sync_targets.insert(target);
+                    });
                 } else {
-                    write.sync_targets.remove(target);
+                    write.modify(|config| {
+                        config.sync_targets.remove(target);
+                    });
                 }
-
-                _ = self.directories.write_config(&write);
             },
             MessageToBackend::CleanupOldLogFiles { instance: id } => {
                 let mut deleted = 0;
@@ -841,16 +827,14 @@ impl BackendState {
             MessageToBackend::SelectAccount { uuid } => {
                 let mut account_info = self.account_info.write();
 
-                if account_info.selected_account == Some(uuid) {
+                let info = account_info.get();
+                if info.selected_account == Some(uuid) || !info.accounts.contains_key(&uuid) {
                     return;
                 }
 
-                if account_info.accounts.contains_key(&uuid) {
+                account_info.modify(|account_info| {
                     account_info.selected_account = Some(uuid);
-                }
-
-                self.send.send(account_info.create_update_message());
-                _ = self.directories.write_accounts(&*account_info);
+                });
             }
         }
     }
@@ -935,31 +919,26 @@ impl BackendState {
     }
 
     pub fn update_account_info_with_profile(&self, profile: &MinecraftProfileResponse) {
-        let mut update_account_json = false;
-
         let mut account_info = self.account_info.write();
-        if let Some(account) = account_info.accounts.get_mut(&profile.id) {
-            if !account.downloaded_head {
-                account.downloaded_head = true;
-                self.update_profile_head(profile);
+
+        let info = account_info.get();
+        if info.accounts.contains_key(&profile.id) && info.selected_account == Some(profile.id) {
+            drop(account_info);
+            self.update_profile_head(&profile);
+            return;
+        }
+
+        account_info.modify(|info| {
+            if !info.accounts.contains_key(&profile.id) {
+                let account = BackendAccount::new_from_profile(profile);
+                info.accounts.insert(profile.id, account);
             }
-        } else {
-            let mut account = BackendAccount::new_from_profile(profile);
-            account.downloaded_head = true;
-            account_info.accounts.insert(profile.id, account);
-            self.update_profile_head(profile);
-            update_account_json = true;
-        }
 
-        if account_info.selected_account != Some(profile.id) {
-            account_info.selected_account = Some(profile.id);
-            update_account_json = true;
-        }
+            info.selected_account = Some(profile.id);
+        });
 
-        if update_account_json {
-            self.send.send(account_info.create_update_message());
-            _ = self.directories.write_accounts(&*account_info);
-        }
+        drop(account_info);
+        self.update_profile_head(&profile);
     }
 
     pub async fn download_all_metadata(&self) {

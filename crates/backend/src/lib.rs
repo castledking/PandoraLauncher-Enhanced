@@ -8,8 +8,6 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use crate::directories::IoOrSerializationError;
-
 mod backend_filesystem;
 mod backend_handler;
 
@@ -25,6 +23,7 @@ mod log_reader;
 mod metadata;
 mod mod_metadata;
 mod id_slab;
+mod persistent;
 mod syncing;
 
 pub(crate) fn is_single_component_path(path: &str) -> bool {
@@ -62,6 +61,19 @@ pub(crate) fn check_sha1_hash(path: &Path, expected_hash: [u8; 20]) -> std::io::
     let actual_hash = hasher.finalize();
 
     Ok(expected_hash == *actual_hash)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum IoOrSerializationError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+}
+
+pub(crate) fn read_json<T: for <'de> Deserialize<'de>>(path: &Path) -> Result<T, IoOrSerializationError> {
+    let data = std::fs::read(path)?;
+    Ok(serde_json::from_slice(&data)?)
 }
 
 pub(crate) fn write_safe(path: &Path, content: &[u8]) -> std::io::Result<()> {

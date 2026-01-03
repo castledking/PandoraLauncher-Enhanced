@@ -171,7 +171,7 @@ pub fn start(
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                cx.new(|cx| Root::new(launcher_root.into(), window, cx))
+                cx.new(|cx| Root::new(launcher_root, window, cx))
             },
         ).unwrap();
 

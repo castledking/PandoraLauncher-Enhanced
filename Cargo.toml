@@ -38,8 +38,8 @@ directories = "6.0.0"
 flate2 = "1.1.5"
 ftree = { path = "crates/ftree"}
 futures = "0.3.31"
-gpui = "0.2.2"
-gpui-component = { git = "https://github.com/Moulberry/gpui-component.git", rev = "6525ac151af1bdd3f294f89b0ec2c259abbe73c4" }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "c3ca1e287b71aa4cf7cb76a341f78ce5d952a7bf" }
 hex = { version = "0.4.3", features = ["serde"] }
 image = "0.25.8"
 indexmap = { version = "2.12.0", features = ["serde"] }
@@ -66,7 +66,7 @@ sha1 = "0.10.6"
 slab = "0.4.11"
 thiserror = "2.0.17"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net"] }
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 ustr = { version = "1.1.0", features = ["serde"] }
 zip = "6.0.0"
 base64 = "0.22.1"

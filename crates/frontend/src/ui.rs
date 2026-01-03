@@ -350,7 +350,7 @@ impl Render for LauncherUI {
 
                         sheet
                             .title("Accounts")
-                            .margin_top(crate::root::sheet_margin_top(window))
+                            .overlay_top(crate::root::sheet_margin_top(window))
                             .gap_2()
                             .child(Button::new("Add account").h_10().success().icon(IconName::Plus).label("Add account").on_click({
                                 let backend_handle = backend_handle.clone();
@@ -382,8 +382,8 @@ impl Render for LauncherUI {
             });
 
         let sidebar = Sidebar::left()
-            .width(relative(1.))
-            .border_width(px(0.))
+            .w(relative(1.))
+            .border_0()
             .header(
                 h_flex()
                     .p_2()

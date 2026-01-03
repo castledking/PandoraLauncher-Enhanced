@@ -7,7 +7,7 @@ use bridge::{handle::BackendHandle, message::{MessageToBackend, SyncState, SyncT
 use enumset::EnumSet;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, scroll::ScrollbarAxis, select::{Select, SelectDelegate, SelectItem, SelectState}, skeleton::Skeleton, spinner::Spinner, table::{Table, TableState}, tooltip::Tooltip, v_flex, ActiveTheme as _, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, StyledExt, WindowExt
+    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, scroll::{ScrollableElement, ScrollbarAxis}, select::{Select, SelectDelegate, SelectItem, SelectState}, skeleton::Skeleton, spinner::Spinner, table::{Table, TableState}, tooltip::Tooltip, v_flex, ActiveTheme as _, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, StyledExt, WindowExt
 };
 use schema::{loader::Loader, version_manifest::{MinecraftVersionManifest, MinecraftVersionType}};
 
@@ -120,7 +120,7 @@ impl Render for SyncingPage {
             let content = v_flex().size_full().p_3().gap_3()
                 .child("These options allow for syncing various files/folders across instances")
                 .child(Spinner::new().with_size(gpui_component::Size::Large));
-            return ui::page(cx, h_flex().gap_8().child("Syncing")).child(content).scrollable(ScrollbarAxis::Vertical);
+            return ui::page(cx, h_flex().gap_8().child("Syncing")).child(content).overflow_y_scrollbar();
         }
 
         let sync_folder = self.sync_state.sync_folder.clone();
@@ -151,6 +151,6 @@ impl Render for SyncingPage {
             .child(self.create_entry("xaero", "Sync Xaero's Minimap (xaero) folder", SyncTarget::XaerosMinimap, warning, info, cx))
             .child(self.create_entry("bobby", "Sync Bobby (.bobby) folder", SyncTarget::Bobby, warning, info, cx));
 
-        ui::page(cx, h_flex().gap_8().child("Syncing")).child(content).scrollable(ScrollbarAxis::Vertical)
+        ui::page(cx, h_flex().gap_8().child("Syncing")).child(content).overflow_y_scrollbar()
     }
 }

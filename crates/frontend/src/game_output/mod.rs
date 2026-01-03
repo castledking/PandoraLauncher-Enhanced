@@ -3,12 +3,7 @@ use std::{cell::RefCell, collections::HashMap, num::NonZeroUsize, ops::Range, rc
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable,
-    button::Button,
-    h_flex,
-    input::{Input, InputEvent, InputState},
-    scroll::{ScrollHandleOffsetable, Scrollbar, ScrollbarState},
-    v_flex,
+    button::Button, h_flex, input::{Input, InputEvent, InputState}, scroll::{Scrollbar, ScrollbarHandle}, v_flex, ActiveTheme as _, Icon, IconName, Sizable
 };
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
@@ -762,9 +757,9 @@ fn paint_lines<'a, const REVERSE: bool>(
             for shaped in lines.iter().rev() {
                 if line_origin.y <= visible_bounds.origin.y + visible_bounds.size.height {
                     if has_highlighted_text {
-                        _ = shaped.paint_background(line_origin, line_height, window, cx);
+                        _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
                     }
-                    _ = shaped.paint(line_origin, line_height, window, cx);
+                    _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
                 }
                 line_origin.y -= line_height;
             }
@@ -772,9 +767,9 @@ fn paint_lines<'a, const REVERSE: bool>(
             for shaped in lines.iter() {
                 if line_origin.y >= visible_bounds.origin.y - line_height {
                     if has_highlighted_text {
-                        _ = shaped.paint_background(line_origin, line_height, window, cx);
+                        _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
                     }
-                    _ = shaped.paint(line_origin, line_height, window, cx);
+                    _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
                 }
                 line_origin.y += line_height;
             }
@@ -812,7 +807,7 @@ fn paint_lines<'a, const REVERSE: bool>(
             time_origin.y -= (line_count - 1) * line_height;
         }
         if let TimeShapedLine::Shaped(shaped_time) = &item.time {
-            _ = shaped_time.paint(time_origin, line_height, window, cx);
+            _ = shaped_time.paint(time_origin, line_height, TextAlign::Left, None, window, cx);
         }
 
         // Shape thread text if needed
@@ -821,7 +816,7 @@ fn paint_lines<'a, const REVERSE: bool>(
                 item.thread = ThreadShapedLine::Shaped(Arc::clone(cached_thread_line));
             } else {
                 let thread_name = thread_name.clone();
-                let mut thread_run = vec![TextRun {
+                let thread_run = vec![TextRun {
                     len: thread_name.len(),
                     font: font.clone(),
                     color: text_style.color,
@@ -831,7 +826,7 @@ fn paint_lines<'a, const REVERSE: bool>(
                 }];
 
                 let mut line_wrapper = window.text_system().line_wrapper(font.clone(), font_size);
-                let truncated = line_wrapper.truncate_line(thread_name.clone().into(), px(150.0), "…", &mut thread_run);
+                let (truncated, thread_run) = line_wrapper.truncate_line(thread_name.clone().into(), px(150.0), "…", &thread_run, TruncateFrom::Start);
 
                 let shaped_thread_name =
                     Arc::new(window.text_system().shape_line(truncated, font_size, &thread_run, None));
@@ -848,12 +843,12 @@ fn paint_lines<'a, const REVERSE: bool>(
         if let ThreadShapedLine::Shaped(shaped_thread) = &item.thread {
             let mut thread_origin = time_origin;
             thread_origin.x += *time_column_width + *thread_column_width - shaped_thread.width - font_size / 2.0;
-            _ = shaped_thread.paint(thread_origin, line_height, window, cx);
+            _ = shaped_thread.paint(thread_origin, line_height, TextAlign::Left, None, window, cx);
         }
 
         let mut level_origin = time_origin;
         level_origin.x += *time_column_width + *thread_column_width + level_column_width - item.level.width - font_size/2.0;
-        _ = item.level.paint(level_origin, line_height, window, cx);
+        _ = item.level.paint(level_origin, line_height, TextAlign::Left, None, window, cx);
 
         if line_count != item.total_lines {
             if item.total_lines < line_count {
@@ -881,7 +876,6 @@ fn paint_lines<'a, const REVERSE: bool>(
 }
 
 pub struct GameOutputRoot {
-    scrollbar_state: ScrollbarState,
     scroll_handler: ScrollHandler,
     _keep_alive: KeepAlive,
     game_output: Entity<GameOutput>,
@@ -956,7 +950,7 @@ impl GameOutputScrollState {
     }
 }
 
-impl ScrollHandleOffsetable for ScrollHandler {
+impl ScrollbarHandle for ScrollHandler {
     fn offset(&self) -> Point<Pixels> {
         let state = self.state.borrow();
         Point::new(Pixels::ZERO, state.offset())
@@ -1005,7 +999,6 @@ impl GameOutputRoot {
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
         Self {
-            scrollbar_state: ScrollbarState::default(),
             scroll_handler: ScrollHandler { state: scroll_state },
             _keep_alive: keep_alive,
             game_output,
@@ -1148,7 +1141,7 @@ impl Render for GameOutputRoot {
                             .w_3()
                             .h_full()
                             .border_y_12()
-                            .child(Scrollbar::vertical(&self.scrollbar_state, &self.scroll_handler)),
+                            .child(Scrollbar::vertical(&self.scroll_handler)),
                     ),
             )
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {

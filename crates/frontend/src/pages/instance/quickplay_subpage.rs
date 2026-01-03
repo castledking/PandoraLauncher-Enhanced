@@ -162,7 +162,7 @@ impl ListDelegate for WorldsListDelegate {
         self.searched.len()
     }
 
-    fn render_item(&self, ix: IndexPath, _window: &mut Window, cx: &mut App) -> Option<Self::Item> {
+    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
         let summary = self.searched.get(ix.row)?;
 
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
@@ -237,7 +237,7 @@ impl ListDelegate for ServersListDelegate {
         self.searched.len()
     }
 
-    fn render_item(&self, ix: IndexPath, _window: &mut Window, cx: &mut App) -> Option<Self::Item> {
+    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
         let summary = self.searched.get(ix.row)?;
 
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {

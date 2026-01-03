@@ -85,8 +85,8 @@ impl TableDelegate for InstanceList {
         self.items.len()
     }
 
-    fn column(&self, col_ix: usize, _cx: &App) -> &gpui_component::table::Column {
-        &self.columns[col_ix]
+    fn column(&self, col_ix: usize, _cx: &App) -> gpui_component::table::Column {
+        self.columns[col_ix].clone()
     }
 
     fn perform_sort(
@@ -111,7 +111,7 @@ impl TableDelegate for InstanceList {
         }
     }
 
-    fn render_td(&self, row_ix: usize, col_ix: usize, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render_td(&mut self, row_ix: usize, col_ix: usize, _window: &mut Window, _cx: &mut Context<TableState<Self>>) -> impl IntoElement {
         let item = &self.items[row_ix];
         if let Some(col) = self.columns.get(col_ix) {
             match col.key.as_ref() {

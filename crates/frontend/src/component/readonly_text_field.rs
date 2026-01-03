@@ -3,12 +3,7 @@ use std::{cell::RefCell, collections::HashMap, num::NonZeroUsize, ops::Range, rc
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable,
-    button::Button,
-    h_flex,
-    input::{Input, InputEvent, InputState},
-    scroll::{ScrollHandleOffsetable, Scrollbar, ScrollbarState},
-    v_flex,
+    button::Button, h_flex, input::{Input, InputEvent, InputState}, scroll::{Scrollbar, ScrollbarHandle}, v_flex, ActiveTheme as _, Icon, IconName, Sizable
 };
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
@@ -634,9 +629,9 @@ fn paint_lines<'a, const REVERSE: bool>(
             for shaped in lines.iter().rev() {
                 if line_origin.y <= visible_bounds.origin.y + visible_bounds.size.height {
                     if has_highlighted_text {
-                        _ = shaped.paint_background(line_origin, line_height, window, cx);
+                        _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
                     }
-                    _ = shaped.paint(line_origin, line_height, window, cx);
+                    _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
                 }
                 line_origin.y -= line_height;
             }
@@ -644,9 +639,9 @@ fn paint_lines<'a, const REVERSE: bool>(
             for shaped in lines.iter() {
                 if line_origin.y >= visible_bounds.origin.y - line_height {
                     if has_highlighted_text {
-                        _ = shaped.paint_background(line_origin, line_height, window, cx);
+                        _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
                     }
-                    _ = shaped.paint(line_origin, line_height, window, cx);
+                    _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
                 }
                 line_origin.y += line_height;
             }
@@ -678,7 +673,6 @@ fn paint_lines<'a, const REVERSE: bool>(
 }
 
 pub struct ReadonlyTextFieldWithControls {
-    scrollbar_state: ScrollbarState,
     scroll_handler: ScrollHandler,
     text_field: Entity<ReadonlyTextField>,
     search_state: Entity<InputState>,
@@ -753,7 +747,7 @@ impl GameOutputScrollState {
     }
 }
 
-impl ScrollHandleOffsetable for ScrollHandler {
+impl ScrollbarHandle for ScrollHandler {
     fn offset(&self) -> Point<Pixels> {
         let state = self.state.borrow();
         Point::new(Pixels::ZERO, state.offset())
@@ -802,7 +796,6 @@ impl ReadonlyTextFieldWithControls {
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
         Self {
-            scrollbar_state: ScrollbarState::default(),
             scroll_handler: ScrollHandler { state: scroll_state },
             text_field,
             search_state,
@@ -942,7 +935,7 @@ impl Render for ReadonlyTextFieldWithControls {
                             .w_3()
                             .h_full()
                             .border_y_12()
-                            .child(Scrollbar::vertical(&self.scrollbar_state, &self.scroll_handler)),
+                            .child(Scrollbar::vertical(&self.scroll_handler)),
                     ),
             )
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {

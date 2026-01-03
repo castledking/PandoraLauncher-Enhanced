@@ -54,7 +54,7 @@ pub fn build_settings_sheet(theme_folder: Arc<Path>, window: &mut Window, cx: &m
 
         sheet
             .title("Settings")
-            .margin_top(crate::root::sheet_margin_top(window))
+            .overlay_top(crate::root::sheet_margin_top(window))
             .p_0()
             .child(v_flex()
                 .border_t_1()

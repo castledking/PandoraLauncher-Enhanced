@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc, time::Duration};
 use bridge::{instance::InstanceID, meta::MetadataRequest};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    breadcrumb::Breadcrumb, button::{Button, ButtonGroup, ButtonVariants}, h_flex, input::{Input, InputEvent, InputState}, notification::NotificationType, scroll::{Scrollbar, ScrollbarState}, skeleton::Skeleton, v_flex, ActiveTheme, Icon, IconName, Selectable, StyledExt, WindowExt
+    breadcrumb::Breadcrumb, button::{Button, ButtonGroup, ButtonVariants}, h_flex, input::{Input, InputEvent, InputState}, notification::NotificationType, scroll::Scrollbar, skeleton::Skeleton, v_flex, ActiveTheme, Icon, IconName, Selectable, StyledExt, WindowExt
 };
 use schema::modrinth::{
     ModrinthHit, ModrinthProjectType, ModrinthSearchRequest, ModrinthSearchResult, ModrinthSideRequirement
@@ -28,7 +28,6 @@ pub struct ModrinthSearchPage {
     _delayed_clear_task: Task<()>,
     project_type: ModrinthProjectType,
     last_search: Arc<str>,
-    scroll_state: ScrollbarState,
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
     image_cache: Entity<RetainAllImageCache>,
@@ -53,7 +52,6 @@ impl ModrinthSearchPage {
             _delayed_clear_task: Task::ready(()),
             project_type: ModrinthProjectType::Mod,
             last_search: Arc::from(""),
-            scroll_state: ScrollbarState::default(),
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
             image_cache: RetainAllImageCache::new(cx),
@@ -396,7 +394,6 @@ impl Render for ModrinthSearchPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let can_load_more = self.total_hits > self.hits.len();
         let scroll_handle = self.scroll_handle.clone();
-        let scroll_state = self.scroll_state.clone();
 
         let item_count = self.hits.len() + if can_load_more || self.search_error.is_some() { 1 } else { 0 };
 
@@ -411,14 +408,14 @@ impl Render for ModrinthSearchPage {
                     cx.processor(Self::render_items),
                 )
                 .size_full()
-                .track_scroll(scroll_handle.clone()),
+                .track_scroll(&scroll_handle),
             )
             .child(
                 div()
                     .w_3()
                     .h_full()
                     .py_3()
-                    .child(Scrollbar::uniform_scroll(&scroll_state, &scroll_handle)),
+                    .child(Scrollbar::vertical(&scroll_handle)),
             );
 
         let theme = cx.theme();

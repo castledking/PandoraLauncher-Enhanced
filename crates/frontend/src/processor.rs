@@ -126,7 +126,7 @@ impl Processor {
                     window.activate_window();
                     let window_handle = window.window_handle().downcast::<Root>().unwrap();
                     self.game_output_windows.insert(id, (window_handle, game_output.clone()));
-                    cx.new(|cx| Root::new(game_output_root.into(), window, cx))
+                    cx.new(|cx| Root::new(game_output_root, window, cx))
                 });
             },
             MessageToFrontend::AddGameOutput {

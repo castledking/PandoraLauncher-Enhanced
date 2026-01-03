@@ -520,7 +520,7 @@ impl ListDelegate for ModsListDelegate {
         }
     }
 
-    fn render_item(&self, ix: IndexPath, _window: &mut Window, cx: &mut App) -> Option<Self::Item> {
+    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
         let mut index = ix.row;
 
         if let Some(searched) = &self.searched {

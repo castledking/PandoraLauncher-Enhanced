@@ -8,7 +8,7 @@ use bridge::{
     modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{breadcrumb::Breadcrumb, scroll::ScrollbarAxis, v_flex, StyledExt};
+use gpui_component::{breadcrumb::Breadcrumb, scroll::{ScrollableElement, ScrollbarAxis}, v_flex, Root, StyledExt};
 
 use crate::{MAIN_FONT, entity::DataEntities, modals, ui::{LauncherUI, PageType}};
 
@@ -45,7 +45,7 @@ impl LauncherRoot {
 }
 
 impl Render for LauncherRoot {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(message) = &*self.deadlock_message.read().unwrap() {
             let purple = Hsla {
                 h: 0.8333333333,
@@ -53,14 +53,18 @@ impl Render for LauncherRoot {
                 l: 0.25,
                 a: 1.,
             };
-            return v_flex().size_full().bg(purple).child(message.clone()).scrollable(ScrollbarAxis::Vertical).into_any_element();
+            return v_flex().size_full().bg(purple).child(message.clone()).overflow_y_scrollbar().into_any_element();
         }
         if let Some(message) = &*self.panic_message.read().unwrap() {
-            return v_flex().size_full().bg(gpui::blue()).child(message.clone()).scrollable(ScrollbarAxis::Vertical).into_any_element();
+            return v_flex().size_full().bg(gpui::blue()).child(message.clone()).overflow_y_scrollbar().into_any_element();
         }
         if self.backend_handle.is_closed() {
             return v_flex().size_full().bg(gpui::red()).child("Backend has abruptly shutdown").into_any_element();
         }
+
+        let sheet_layer = Root::render_sheet_layer(window, cx);
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        let notification_layer = Root::render_notification_layer(window, cx);
 
         v_flex()
             .size_full()
@@ -69,6 +73,9 @@ impl Render for LauncherRoot {
                 this.child(gpui_component::TitleBar::new().child("Pandora"))
             })
             .child(self.ui.clone())
+            .children(sheet_layer)
+            .children(dialog_layer)
+            .children(notification_layer)
             .into_any_element()
     }
 }

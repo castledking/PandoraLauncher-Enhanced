@@ -10,7 +10,7 @@ use auth::{
     serve_redirect::{self, ProcessAuthorizationError},
 };
 use bridge::{
-    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile}, instance::{InstanceID, InstanceModSummary, InstanceServerSummary, InstanceWorldSummary, LoaderSpecificModSummary}, message::{MessageToBackend, MessageToFrontend, SyncTarget}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}
+    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{InstanceID, InstanceModSummary, InstanceServerSummary, InstanceWorldSummary, LoaderSpecificModSummary}, message::{MessageToBackend, MessageToFrontend, SyncTarget}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 use enumset::EnumSet;
 use image::imageops::FilterType;
@@ -619,7 +619,7 @@ impl BackendState {
 
         struct ModpackInstall {
             hashed_downloads: Vec<HashedDownload>,
-            overrides: Arc<[(Arc<Path>, Arc<[u8]>)]>,
+            overrides: Arc<[(SafePath, Arc<[u8]>)]>,
         }
 
         let mut modpack_installs = Vec::new();
@@ -644,18 +644,18 @@ impl BackendState {
 
                 let content_install = ContentInstall {
                     target: bridge::install::InstallTarget::Library,
-                    files: filtered_downloads.clone().map(|file| {
-                        let path: PathBuf = typed_path::Utf8UnixPath::new(&*file.path).with_platform_encoding().into();
-                        ContentInstallFile {
+                    files: filtered_downloads.clone().filter_map(|file| {
+                        let path = SafePath::new(&file.path)?;
+                        Some(ContentInstallFile {
                             replace_old: None,
-                            path: path.into(),
+                            path: ContentInstallPath::Safe(path),
                             download: ContentDownload::Url {
                                 url: file.downloads[0].clone(),
                                 sha1: file.hashes.sha1.clone(),
                                 size: file.file_size,
                             },
                             content_source: schema::content::ContentSource::Modrinth,
-                        }
+                        })
                     }).collect(),
                 };
 
@@ -690,18 +690,16 @@ impl BackendState {
                 let Ok(_) = hex::decode_to_slice(&*file.sha1, &mut expected_hash) else {
                     continue;
                 };
-
-                let dest_path: PathBuf = typed_path::Utf8UnixPath::new(&*file.path).with_platform_encoding().into();
-                if !crate::is_relative_normal_path(&dest_path) {
+                let Some(dest_path) = SafePath::new(&file.path) else {
                     continue;
-                }
+                };
 
                 let path = crate::create_content_library_path(content_library_dir, expected_hash, dest_path.extension());
 
                 if file.path.starts_with("mods/") && file.path.ends_with(".jar") {
                     add_mods.push(path);
                 } else {
-                    let dest_path = dot_minecraft_path.join(dest_path);
+                    let dest_path = dest_path.to_path(&dot_minecraft_path);
 
                     let _ = std::fs::create_dir_all(dest_path.parent().unwrap());
                     let _ = std::fs::copy(path, dest_path);
@@ -718,10 +716,6 @@ impl BackendState {
                 let tracker = &tracker;
                 let dot_minecraft_path = &dot_minecraft_path;
                 let futures = overrides.iter().map(|(dest_path, file)| async move {
-                    if !crate::is_relative_normal_path(&dest_path) {
-                        return None;
-                    }
-
                     let file2 = file.clone();
                     let expected_hash = tokio::task::spawn_blocking(move || {
                         let mut hasher = Sha1::new();
@@ -739,7 +733,7 @@ impl BackendState {
                     if dest_path.starts_with("mods") && let Some(extension) = dest_path.extension() && extension == "jar" {
                         return Some(path);
                     } else {
-                        let dest_path = dot_minecraft_path.join(dest_path);
+                        let dest_path = dest_path.to_path(&dot_minecraft_path);
 
                         let _ = std::fs::create_dir_all(dest_path.parent().unwrap());
                         let _ = tokio::fs::copy(path, dest_path).await;

@@ -2,7 +2,7 @@ use std::{
     collections::HashMap, fs::File, io::{Cursor, Write}, path::{Path, PathBuf}, sync::Arc
 };
 
-use bridge::instance::{AtomicContentUpdateStatus, ContentUpdateStatus, LoaderSpecificModSummary, ModSummary};
+use bridge::{instance::{AtomicContentUpdateStatus, ContentUpdateStatus, LoaderSpecificModSummary, ModSummary}, safe_path::SafePath};
 use image::imageops::FilterType;
 use indexmap::IndexMap;
 use parking_lot::{RwLock, RwLockReadGuard};
@@ -211,27 +211,23 @@ impl ModMetadataManager {
             eprintln!("Error parsing modrinth.index.json: {e}");
         }).ok()?;
 
-        let mut overrides: IndexMap<Arc<Path>, Arc<[u8]>> = IndexMap::new();
+        let mut overrides: IndexMap<SafePath, Arc<[u8]>> = IndexMap::new();
 
         for entry in archive.entries() {
             if entry.kind() != rc_zip_sync::rc_zip::EntryKind::File {
                 continue;
             }
-            let path: PathBuf = typed_path::Utf8UnixPath::new(&entry.name).with_platform_encoding().into();
-            if !crate::is_relative_normal_path(&path) {
-                eprintln!("Path is not relative or normal, attempted exploit?: {}", &entry.name);
+            let Some(path) = SafePath::new(&entry.name) else {
                 continue;
-            }
+            };
 
-            let (prioritize, path) = if let Ok(path) = path.strip_prefix("overrides") {
+            let (prioritize, path) = if let Some(path) = path.strip_prefix("overrides") {
                 (false, path)
-            } else if let Ok(path) = path.strip_prefix("client-overrides") {
+            } else if let Some(path) = path.strip_prefix("client-overrides") {
                 (true, path)
             } else {
                 continue;
             };
-
-            let path = Arc::from(path);
 
             if !prioritize && overrides.contains_key(&path) {
                 continue;
@@ -261,11 +257,15 @@ impl ModMetadataManager {
                 return cached;
             }
 
+            let Some(path) = SafePath::new(&download.path) else {
+                return None;
+            };
+
             let file_hash_as_str = hex::encode(file_hash);
 
             let mut file = self.content_library_dir.join(&file_hash_as_str[..2]);
             file.push(&file_hash_as_str);
-            if let Some(extension) = typed_path::Utf8UnixPath::new(&*download.path).extension() {
+            if let Some(extension) = path.extension() {
                 file.set_extension(extension);
             }
 

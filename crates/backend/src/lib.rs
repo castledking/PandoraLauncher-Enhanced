@@ -37,22 +37,6 @@ pub(crate) fn is_single_component_path(path: &str) -> bool {
     components.count() == 1
 }
 
-pub(crate) fn is_relative_normal_path(path: &Path) -> bool {
-    if path.is_absolute() {
-        return false;
-    }
-
-    if path.components().count() == 0 {
-        return false;
-    }
-
-    if !path.components().all(|component| matches!(component, std::path::Component::Normal(_))) {
-        return false;
-    }
-
-    true
-}
-
 pub(crate) fn check_sha1_hash(path: &Path, expected_hash: [u8; 20]) -> std::io::Result<bool> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha1::new();
@@ -123,7 +107,7 @@ pub(crate) fn child_state_path(path: &Path) -> Option<PathBuf> {
     Some(new_path)
 }
 
-pub(crate) fn create_content_library_path(content_library_dir: &Path, expected_hash: [u8; 20], extension: Option<&std::ffi::OsStr>) -> PathBuf {
+pub(crate) fn create_content_library_path(content_library_dir: &Path, expected_hash: [u8; 20], extension: Option<&str>) -> PathBuf {
     let hash_as_str = hex::encode(expected_hash);
 
     let hash_folder = content_library_dir.join(&hash_as_str[..2]);

@@ -423,19 +423,12 @@ impl BackendState {
                             if !mod_summary.enabled {
                                 path.add_extension("disabled");
                             }
-                            let path = match path.strip_prefix(&instance.dot_minecraft_path) {
-                                Ok(path) => path,
-                                Err(_) => {
-                                    self.send.send_error("Can't update mod in instance, invalid filename");
-                                    modal_action.set_finished();
-                                    return;
-                                },
-                            };
+                            debug_assert!(path.is_absolute());
                             ContentInstall {
                                 target: InstallTarget::Instance(id),
                                 files: [ContentInstallFile {
                                     replace_old: Some(mod_summary.path.clone()),
-                                    path: path.into(),
+                                    path: bridge::install::ContentInstallPath::Raw(path.into()),
                                     download: ContentDownload::Url {
                                         url: modrinth_file.url.clone(),
                                         sha1: modrinth_file.hashes.sha1.clone(),

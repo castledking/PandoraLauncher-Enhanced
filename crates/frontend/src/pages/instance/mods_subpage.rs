@@ -141,7 +141,7 @@ impl Render for InstanceModsSubpage {
                                         files: paths.into_iter().filter_map(|path| {
                                             Some(ContentInstallFile {
                                                 replace_old: None,
-                                                path: Path::new("mods").join(path.file_name()?).into(),
+                                                path: bridge::install::ContentInstallPath::Raw(Path::new("mods").join(path.file_name()?).into()),
                                                 download: ContentDownload::File { path },
                                                 content_source: ContentSource::Manual,
                                             })

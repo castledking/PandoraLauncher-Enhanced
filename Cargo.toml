@@ -85,7 +85,6 @@ intrusive-collections = "0.9.7"
 tokio-util = "0.7.17"
 enumset = { version = "1.1.10", features = [ "serde" ] }
 serde_with = "3.15.1"
-typed-path = "0.12.0"
 parking_lot = { version = "0.12.5", features = ["deadlock_detection"] }
 lzma-rs = "0.3.0"
 httparse = "1.10.1"
@@ -93,3 +92,4 @@ enum-map = "2.7.3"
 strum = "0.27.2"
 rayon = "1.11.0"
 rc-zip-sync = "4.4.2"
+relative-path = { version = "2.0.1", features = ["serde"] }

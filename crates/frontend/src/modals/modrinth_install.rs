@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, path::Path, sync::Arc};
 
-use bridge::{install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::InstanceID, meta::MetadataRequest};
+use bridge::{install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::InstanceID, meta::MetadataRequest, safe_path::SafePath};
 use enumset::EnumSet;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -13,6 +13,7 @@ use gpui_component::{
     spinner::Spinner,
     v_flex,
 };
+use relative_path::RelativePath;
 use rustc_hash::FxHashMap;
 use schema::{
     content::ContentSource, loader::Loader, modrinth::{
@@ -601,11 +602,19 @@ impl InstallDialog {
                                 .unwrap_or(selected_mod_version.files.first().unwrap());
 
                             let path = match this.project_type {
-                                ModrinthProjectType::Mod => Path::new("mods").join(&*install_file.filename),
-                                ModrinthProjectType::Modpack => Path::new("mods").join(&*install_file.filename),
-                                ModrinthProjectType::Resourcepack => Path::new("resourcepacks").join(&*install_file.filename),
-                                ModrinthProjectType::Shader => Path::new("shaderpacks").join(&*install_file.filename),
-                                ModrinthProjectType::Other => panic!("Don't know how to install this file type"),
+                                ModrinthProjectType::Mod => RelativePath::new("mods").join(&*install_file.filename),
+                                ModrinthProjectType::Modpack => RelativePath::new("mods").join(&*install_file.filename),
+                                ModrinthProjectType::Resourcepack => RelativePath::new("resourcepacks").join(&*install_file.filename),
+                                ModrinthProjectType::Shader => RelativePath::new("shaderpacks").join(&*install_file.filename),
+                                ModrinthProjectType::Other => {
+                                    window.push_notification((NotificationType::Error, "Unable to install 'other' project type"), cx);
+                                    return;
+                                },
+                            };
+
+                            let Some(path) = SafePath::from_relative_path(&path) else {
+                                window.push_notification((NotificationType::Error, "Invalid/dangerous filename"), cx);
+                                return;
                             };
 
                             let mut target = this.target.clone().unwrap();
@@ -630,7 +639,7 @@ impl InstallDialog {
                                 target,
                                 files: [ContentInstallFile {
                                     replace_old: None,
-                                    path: path.into(),
+                                    path: bridge::install::ContentInstallPath::Safe(path),
                                     download: ContentDownload::Url {
                                         url: install_file.url.clone(),
                                         sha1: install_file.hashes.sha1.clone(),

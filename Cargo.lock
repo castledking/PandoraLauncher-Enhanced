@@ -588,6 +588,7 @@ dependencies = [
  "rayon",
  "rc-zip-sync",
  "regex",
+ "relative-path",
  "reqwest",
  "rustc-hash 2.1.1",
  "sanitize-filename",
@@ -601,7 +602,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
- "typed-path",
  "ustr",
  "uuid",
  "xmlparser",
@@ -843,6 +843,8 @@ dependencies = [
  "atomic_enum",
  "enum-map",
  "enumset",
+ "relative-path",
+ "sanitize-filename",
  "schema",
  "strum 0.27.2",
  "tokio",
@@ -2421,6 +2423,7 @@ dependencies = [
  "once_cell",
  "open",
  "rand 0.8.5",
+ "relative-path",
  "reqwest_client",
  "rust-embed",
  "rust-i18n",
@@ -5803,6 +5806,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "relative-path"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bca40a312222d8ba74837cb474edef44b37f561da5f773981007a10bbaa992b0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6235,6 +6247,7 @@ dependencies = [
  "chrono",
  "enumset",
  "indexmap 2.12.0",
+ "relative-path",
  "serde",
  "serde-untagged",
  "serde_json",
@@ -7709,12 +7722,6 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
 ]
-
-[[package]]
-name = "typed-path"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7922f2cdc51280d47b491af9eafc41eb0cdab85eabcb390c854412fcbf26dbe8"
 
 [[package]]
 name = "typeid"

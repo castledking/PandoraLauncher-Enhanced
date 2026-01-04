@@ -3,6 +3,8 @@ use std::{collections::{HashMap, HashSet}, path::Path, sync::{atomic::AtomicBool
 use schema::{loader::Loader, modification::ModrinthModpackFileDownload};
 use ustr::Ustr;
 
+use crate::safe_path::SafePath;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InstanceID {
     pub index: usize,
@@ -87,7 +89,7 @@ pub enum LoaderSpecificModSummary {
     ModrinthModpack {
         downloads: Arc<[ModrinthModpackFileDownload]>,
         summaries: Arc<[Option<Arc<ModSummary>>]>,
-        overrides: Arc<[(Arc<Path>, Arc<[u8]>)]>,
+        overrides: Arc<[(SafePath, Arc<[u8]>)]>,
     },
 }
 

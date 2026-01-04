@@ -38,7 +38,6 @@ indexmap.workspace = true
 serde_with.workspace = true
 once_cell.workspace = true
 tokio-util.workspace = true
-typed-path.workspace = true
 parking_lot.workspace = true
 lzma-rs.workspace = true
 enum-map.workspace = true
@@ -47,6 +46,7 @@ strum.workspace = true
 rand.workspace = true
 rayon.workspace = true
 rc-zip-sync.workspace = true
+relative-path = "2.0.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 junction = "1.3.0"

@@ -1,7 +1,7 @@
 use std::{ffi::OsString, io::Write, path::{Path, PathBuf}, sync::{atomic::AtomicBool, Arc}};
 
 use bridge::{
-    install::{ContentDownload, ContentInstall, ContentInstallFile}, instance::{LoaderSpecificModSummary, ModSummary}, message::MessageToFrontend, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType}
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{LoaderSpecificModSummary, ModSummary}, message::MessageToFrontend, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 use reqwest::StatusCode;
 use schema::content::ContentSource;
@@ -38,15 +38,6 @@ struct InstallFromContentLibrary {
 
 impl BackendState {
     pub async fn install_content(&self, content: ContentInstall, modal_action: ModalAction) {
-        for content_file in content.files.iter() {
-            if !crate::is_relative_normal_path(&content_file.path) {
-                let error = ContentInstallError::InvalidPath(content_file.path.clone());
-                modal_action.set_error_message(Arc::from(format!("{}", error).as_str()));
-                modal_action.set_finished();
-                return;
-            }
-        }
-
         let semaphore = tokio::sync::Semaphore::new(8);
 
         let mut tasks = Vec::new();
@@ -56,7 +47,7 @@ impl BackendState {
                 match content_file.download {
                     bridge::install::ContentDownload::Url { ref url, ref sha1, size } => {
                         let (path, hash, mod_summary) = self.download_file_into_library(&modal_action,
-                            &content_file.path, url, sha1, size, &semaphore).await?;
+                            content_file.path.clone(), url, sha1, size, &semaphore).await?;
 
                         return Ok(InstallFromContentLibrary {
                             from: path,
@@ -159,11 +150,13 @@ impl BackendState {
 
                 if let Some(instance_dir) = instance_dir {
                     for install in files {
-                        let mut target_path = instance_dir.to_path_buf();
-                        target_path.push(install.content_file.path);
+                        let target_path = match install.content_file.path {
+                            ContentInstallPath::Raw(path) => instance_dir.join(&path),
+                            ContentInstallPath::Safe(safe_path) => safe_path.to_path(&instance_dir),
+                        };
+
                         let _ = std::fs::create_dir_all(target_path.parent().unwrap());
 
-                        // Use std::fs instead of tokio::fs to ensure that remove and hard_link can't be interrupted
                         if let Some(replace) = install.replace {
                             let _ = std::fs::remove_file(replace);
                         }
@@ -177,17 +170,19 @@ impl BackendState {
         }
     }
 
-    async fn download_file_into_library(&self, modal_action: &ModalAction, content_path: &Arc<Path>, url: &Arc<str>, sha1: &Arc<str>, size: usize, semaphore: &tokio::sync::Semaphore) -> Result<(PathBuf, [u8; 20], Option<Arc<ModSummary>>), ContentInstallError> {
-        let mut result = self.download_file_into_library_inner(modal_action, content_path.clone(), url, sha1, size, semaphore).await?;
+    async fn download_file_into_library(&self, modal_action: &ModalAction, content_path: ContentInstallPath, url: &Arc<str>, sha1: &Arc<str>, size: usize, semaphore: &tokio::sync::Semaphore) -> Result<(PathBuf, [u8; 20], Option<Arc<ModSummary>>), ContentInstallError> {
+        let mut result = self.download_file_into_library_inner(modal_action, content_path, url, sha1, size, semaphore).await?;
 
         if let Some(summary) = &result.2 {
             if let LoaderSpecificModSummary::ModrinthModpack { downloads, .. } = &summary.extra {
                 let mut tasks = Vec::new();
 
                 for download in downloads.iter() {
-                    let path: PathBuf = typed_path::Utf8UnixPath::new(&*download.path).with_platform_encoding().into();
+                    let Some(path) = SafePath::new(&download.path) else {
+                        continue;
+                    };
 
-                    tasks.push(self.download_file_into_library_inner(modal_action, path.into(),
+                    tasks.push(self.download_file_into_library_inner(modal_action, ContentInstallPath::Safe(path),
                         &download.downloads[0], &download.hashes.sha1, download.file_size, semaphore));
                 }
 
@@ -199,7 +194,7 @@ impl BackendState {
         Ok(result)
     }
 
-    async fn download_file_into_library_inner(&self, modal_action: &ModalAction, content_path: Arc<Path>, url: &Arc<str>, sha1: &Arc<str>, size: usize, semaphore: &tokio::sync::Semaphore) -> Result<(PathBuf, [u8; 20], Option<Arc<ModSummary>>), ContentInstallError> {
+    async fn download_file_into_library_inner(&self, modal_action: &ModalAction, content_path: ContentInstallPath, url: &Arc<str>, sha1: &Arc<str>, size: usize, semaphore: &tokio::sync::Semaphore) -> Result<(PathBuf, [u8; 20], Option<Arc<ModSummary>>), ContentInstallError> {
         let _permit = semaphore.acquire().await.unwrap();
 
         let mut expected_hash = [0u8; 20];
@@ -219,7 +214,12 @@ impl BackendState {
             path.set_extension(extension);
         }
 
-        let title = format!("Downloading {}", content_path.file_name().unwrap().to_string_lossy());
+        let file_name = match &content_path {
+            ContentInstallPath::Raw(path) => path.file_name(),
+            ContentInstallPath::Safe(safe_path) => safe_path.file_name().map(std::ffi::OsStr::new),
+        };
+
+        let title = format!("Downloading {}", file_name.map(|s| s.to_string_lossy()).unwrap_or(std::borrow::Cow::Borrowed("???")));
         let tracker = ProgressTracker::new(title.into(), self.send.clone());
         modal_action.trackers.push(tracker.clone());
 

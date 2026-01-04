@@ -10,7 +10,7 @@ use std::{
 };
 
 use bridge::{
-    handle::FrontendHandle, instance::LoaderSpecificModSummary, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType, ProgressTrackers}
+    handle::FrontendHandle, instance::LoaderSpecificModSummary, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType, ProgressTrackers}, safe_path::SafePath
 };
 use futures::{FutureExt, TryFutureExt};
 use rc_zip_sync::ReadZip;
@@ -155,11 +155,10 @@ impl Launcher {
                     continue;
                 };
                 for file in archive.entries() {
-                    let path: PathBuf = typed_path::Utf8UnixPath::new(&file.name).with_platform_encoding().into();
-                    if !crate::is_relative_normal_path(&path) {
-                        eprintln!("Path is not relative or normal, attempted exploit?: {}", &file.name);
+                    let Some(path) = SafePath::new(&file.name) else {
                         continue;
-                    }
+                    };
+
                     if let Some(exclude) = &extract_options.exclude {
                         let mut skip = false;
                         for to_exclude in exclude.iter() {
@@ -173,7 +172,7 @@ impl Launcher {
                         }
                     }
 
-                    let output_path = natives_dir.join(&path);
+                    let output_path = path.to_path(&natives_dir);
                     match file.kind() {
                         rc_zip_sync::rc_zip::EntryKind::Directory => {
                             let _ = std::fs::create_dir(output_path);

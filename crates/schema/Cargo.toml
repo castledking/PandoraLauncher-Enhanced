@@ -12,3 +12,4 @@ serde_json.workspace = true
 ustr.workspace = true
 thiserror.workspace = true
 enumset.workspace = true
+relative-path.workspace = true

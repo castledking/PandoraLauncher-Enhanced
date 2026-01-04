@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
+use relative_path::RelativePathBuf;
 use serde::{Deserialize, Deserializer};
 use ustr::Ustr;
 
@@ -198,7 +199,7 @@ pub struct GameLibraryArtifact {
 #[derive(Deserialize, Clone, Debug)]
 #[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
 pub struct GameLibraryExtractOptions {
-    pub exclude: Option<Arc<[PathBuf]>>,
+    pub exclude: Option<Arc<[RelativePathBuf]>>,
 }
 
 #[derive(Deserialize, Clone, Debug)]

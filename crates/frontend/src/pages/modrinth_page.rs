@@ -802,8 +802,10 @@ impl Render for ModrinthSearchPage {
         let mut top_bar = h_flex()
             .w_full()
             .gap_3()
-            .child(Input::new(&self.search_state));
-
+            .child(
+                div().flex_1().min_w_0()
+                    .child(Input::new(&self.search_state)),
+            );
 
         if self.can_install_latest {
             let tooltip = |window: &mut Window, cx: &mut App| {
@@ -811,15 +813,18 @@ impl Render for ModrinthSearchPage {
             };
 
             let install_latest = !InterfaceConfig::get(cx).modrinth_install_normally;
-            top_bar = top_bar.child(Checkbox::new("install-latest")
-                .label("Install Latest")
-                .tooltip(tooltip)
-                .checked(install_latest)
-                .on_click({
-                    move |value, _, cx| {
-                        InterfaceConfig::get_mut(cx).modrinth_install_normally = !*value;
-                    }
-                })
+            top_bar = top_bar.child(
+                div()
+                    .child(Checkbox::new("install-latest")
+                        .label("Install Latest")
+                        .tooltip(tooltip)
+                        .checked(install_latest)
+                        .on_click({
+                            move |value, _, cx| {
+                                InterfaceConfig::get_mut(cx).modrinth_install_normally = !*value;
+                            }
+                        })
+                ),
             );
         }
 

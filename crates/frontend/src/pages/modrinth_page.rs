@@ -55,7 +55,7 @@ impl ModrinthSearchPage {
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
                 let instance = entry.read(cx);
-                can_install_latest = instance.configuration.loader != Loader::Vanilla;
+                can_install_latest = true;
 
                 let mods = instance.mods.read(cx);
                 for summary in mods.iter() {

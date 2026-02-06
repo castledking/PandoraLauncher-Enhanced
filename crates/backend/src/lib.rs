@@ -1,7 +1,7 @@
 #![deny(unused_must_use)]
 
 mod backend;
-use std::{ffi::OsString, io::Write, path::{Path, PathBuf}};
+use std::{ffi::OsString, io::Write, path::{Path, PathBuf}, sync::Arc};
 
 pub use backend::*;
 use bridge::instance::InstanceContentSummary;
@@ -89,21 +89,20 @@ pub(crate) fn write_safe(path: &Path, content: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn pandora_aux_path_for_content(content: &InstanceContentSummary) -> Option<PathBuf> {
-    let name = content.content_summary.id.as_ref()
-        .or(content.content_summary.name.as_ref());
+pub(crate) fn pandora_aux_path(id: &Option<Arc<str>>, name: &Option<Arc<str>>, path: &Path) -> Option<PathBuf> {
+    let name = id.as_ref().or(name.as_ref());
 
     if let Some(name) = name {
         let name = name.trim_ascii();
         if !name.is_empty() {
-            let mut path = content.path.parent()?.join(format!(".{name}"));
+            let mut path = path.parent()?.join(format!(".{name}"));
             path.add_extension("aux");
             path.add_extension("json");
             return Some(path);
         }
     }
 
-    let mut new_path = content.path.to_path_buf();
+    let mut new_path = path.to_path_buf();
 
     if let Some(extension) = new_path.extension() {
         if extension == "disabled" {
@@ -120,6 +119,10 @@ pub(crate) fn pandora_aux_path_for_content(content: &InstanceContentSummary) -> 
     new_path.add_extension("json");
 
     Some(new_path)
+}
+
+pub(crate) fn pandora_aux_path_for_content(content: &InstanceContentSummary) -> Option<PathBuf> {
+    pandora_aux_path(&content.content_summary.id, &content.content_summary.name, &content.path)
 }
 
 pub(crate) fn create_content_library_path(content_library_dir: &Path, expected_hash: [u8; 20], extension: Option<&str>) -> PathBuf {

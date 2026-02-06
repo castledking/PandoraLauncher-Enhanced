@@ -8,7 +8,7 @@ use anyhow::Context;
 use base64::Engine;
 use bridge::{
     instance::{
-        InstanceID, InstanceContentID, InstanceContentSummary, InstanceServerSummary, InstanceStatus, InstanceWorldSummary,
+        ContentSummary, InstanceContentID, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary
     }, message::{AtomicBridgeDataLoadState, BridgeDataLoadState, MessageToFrontend}, notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle}
 };
 use parking_lot::RwLock;
@@ -799,7 +799,9 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
         .chain(std::iter::once(lowercase_filename))
         .collect();
 
-    let mut summary = InstanceContentSummary {
+    let disabled_children = read_disabled_children_for(&summary, path).unwrap_or_default();
+
+    Some(InstanceContentSummary {
         content_summary: summary,
         id: InstanceContentID::dangling(),
         lowercase_search_keys,
@@ -808,20 +810,15 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
         path: path.into(),
         enabled,
         content_source,
-        disabled_children: Default::default(),
-    };
-
-    if let Some(disabled_children) = read_disabled_children_for(&summary) {
-        summary.disabled_children = Arc::new(disabled_children);
-    }
-
-    Some(summary)
+        disabled_children: Arc::new(disabled_children),
+    })
 }
 
 fn read_disabled_children_for(
-    summary: &InstanceContentSummary
+    summary: &ContentSummary,
+    path: &Path,
 ) -> Option<AuxDisabledChildren> {
-    let aux_path = crate::pandora_aux_path_for_content(&summary)?;
+    let aux_path = crate::pandora_aux_path(&summary.id, &summary.name, path)?;
     let aux: AuxiliaryContentMeta = crate::read_json(&aux_path).ok()?;
     Some(aux.disabled_children)
 }

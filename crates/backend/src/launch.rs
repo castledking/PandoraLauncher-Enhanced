@@ -2100,6 +2100,11 @@ impl LaunchContext {
             }
         };
 
+        #[cfg(target_os = "linux")]
+        if self.configuration.linux_wrapper.map(|w| w.use_discrete_gpu).unwrap_or(true) {
+            command.env("DRI_PRIME", "1");
+        }
+
         #[cfg(not(target_os = "linux"))]
         let mut command = std::process::Command::new(&*self.java_path);
 

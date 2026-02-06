@@ -33,3 +33,7 @@ where
 fn skip_if_default<T: Default + PartialEq>(value: &T) -> bool {
     value == &T::default()
 }
+
+fn default_true() -> bool {
+    true
+}

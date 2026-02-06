@@ -11,29 +11,13 @@ pub struct InstanceConfiguration {
     pub loader: Loader,
     #[serde(default)]
     pub preferred_loader_version: Option<Ustr>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_memory_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_memory_configuration")]
     pub memory: Option<InstanceMemoryConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_jvm_flags_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_jvm_flags_configuration")]
     pub jvm_flags: Option<InstanceJvmFlagsConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_jvm_binary_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_jvm_binary_configuration")]
     pub jvm_binary: Option<InstanceJvmBinaryConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_linux_wrapper_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_linux_wrapper_configuration")]
     pub linux_wrapper: Option<InstanceLinuxWrapperConfiguration>,
 }
 
@@ -97,15 +81,29 @@ fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfigur
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct InstanceLinuxWrapperConfiguration {
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub use_mangohud: bool,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub use_gamemode: bool,
+    #[serde(default = "crate::default_true", deserialize_with = "crate::try_deserialize")]
+    pub use_discrete_gpu: bool,
+}
+
+impl Default for InstanceLinuxWrapperConfiguration {
+    fn default() -> Self {
+        Self {
+            use_mangohud: false,
+            use_gamemode: false,
+            use_discrete_gpu: true,
+        }
+    }
 }
 
 fn is_default_linux_wrapper_configuration(config: &Option<InstanceLinuxWrapperConfiguration>) -> bool {
     if let Some(config) = config {
-        !config.use_mangohud && !config.use_gamemode
+        !config.use_mangohud && !config.use_gamemode && config.use_discrete_gpu
     } else {
         true
     }

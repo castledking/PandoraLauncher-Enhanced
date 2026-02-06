@@ -40,6 +40,8 @@ pub struct InstanceSettingsSubpage {
     #[cfg(target_os = "linux")]
     use_gamemode: bool,
     #[cfg(target_os = "linux")]
+    use_discrete_gpu: bool,
+    #[cfg(target_os = "linux")]
     mangohud_available: bool,
     #[cfg(target_os = "linux")]
     gamemode_available: bool,
@@ -130,6 +132,8 @@ impl InstanceSettingsSubpage {
             use_mangohud: linux_wrapper.use_mangohud,
             #[cfg(target_os = "linux")]
             use_gamemode: linux_wrapper.use_gamemode,
+            #[cfg(target_os = "linux")]
+            use_discrete_gpu: linux_wrapper.use_discrete_gpu,
             #[cfg(target_os = "linux")]
             mangohud_available: Self::is_command_available("mangohud"),
             #[cfg(target_os = "linux")]
@@ -424,6 +428,7 @@ impl InstanceSettingsSubpage {
         InstanceLinuxWrapperConfiguration {
             use_mangohud: self.use_mangohud,
             use_gamemode: self.use_gamemode,
+            use_discrete_gpu: self.use_discrete_gpu,
         }
     }
 
@@ -678,6 +683,16 @@ impl Render for InstanceSettingsSubpage {
             .child(Checkbox::new("use_gamemode").label("Use GameMode").checked(self.use_gamemode).disabled(!self.gamemode_available).on_click(cx.listener(|page, value, _, cx| {
                 if page.use_gamemode != *value {
                     page.use_gamemode = *value;
+                    page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
+                        id: page.instance_id,
+                        linux_wrapper: page.get_linux_wrapper_configuration()
+                    });
+                    cx.notify();
+                }
+            })))
+            .child(Checkbox::new("use_discrete_gpu").label("Use Discrete GPU").checked(self.use_discrete_gpu).on_click(cx.listener(|page, value, _, cx| {
+                if page.use_discrete_gpu != *value {
+                    page.use_discrete_gpu = *value;
                     page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
                         id: page.instance_id,
                         linux_wrapper: page.get_linux_wrapper_configuration()

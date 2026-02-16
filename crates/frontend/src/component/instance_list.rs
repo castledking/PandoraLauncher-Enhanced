@@ -1,17 +1,22 @@
 use bridge::handle::BackendHandle;
 use gpui::{prelude::*, *};
+use gpui_component::Icon;
 use gpui_component::{
-    Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     table::{Column, ColumnSort, TableDelegate, TableState},
+    Sizable,
 };
-use gpui_component::Icon;
 
 use crate::{
     entity::{
-        instance::{InstanceAddedEvent, InstanceEntry, InstanceModifiedEvent, InstanceRemovedEvent}, DataEntities
-    }, modals, pages::instance::instance_page::InstanceSubpageType, root, ui
+        instance::{InstanceAddedEvent, InstanceEntry, InstanceModifiedEvent, InstanceRemovedEvent},
+        DataEntities,
+    },
+    interface_config::InterfaceConfig,
+    modals,
+    pages::instance::instance_page::InstanceSubpageType,
+    root, ui,
 };
 
 pub struct InstanceList {
@@ -28,48 +33,34 @@ impl InstanceList {
         let instances = data.instances.clone();
         let items = instances.read(cx).entries.values().map(|i| i.read(cx).clone()).collect();
         cx.new(|cx| {
-            let _instance_added_subscription = cx.subscribe::<_, InstanceAddedEvent>(&instances, |table: &mut TableState<InstanceList>, _, event, cx| {
-                table.delegate_mut().items.insert(0, event.instance.clone());
-                cx.notify();
-            });
-            let _instance_removed_subscription = cx.subscribe::<_, InstanceRemovedEvent>(&instances, |table, _, event, cx| {
-                table.delegate_mut().items.retain(|instance| {
-                    instance.id != event.id
-                });
-                cx.notify();
-            });
-            let _instance_modified_subscription = cx.subscribe::<_, InstanceModifiedEvent>(&instances, |table, _, event, cx| {
-                if let Some(entry) = table.delegate_mut().items.iter_mut().find(|entry| entry.id == event.instance.id) {
-                    *entry = event.instance.clone();
+            let _instance_added_subscription = cx.subscribe::<_, InstanceAddedEvent>(
+                &instances,
+                |table: &mut TableState<InstanceList>, _, event, cx| {
+                    table.delegate_mut().items.insert(0, event.instance.clone());
                     cx.notify();
-                }
-            });
+                },
+            );
+            let _instance_removed_subscription =
+                cx.subscribe::<_, InstanceRemovedEvent>(&instances, |table, _, event, cx| {
+                    table.delegate_mut().items.retain(|instance| instance.id != event.id);
+                    cx.notify();
+                });
+            let _instance_modified_subscription =
+                cx.subscribe::<_, InstanceModifiedEvent>(&instances, |table, _, event, cx| {
+                    if let Some(entry) =
+                        table.delegate_mut().items.iter_mut().find(|entry| entry.id == event.instance.id)
+                    {
+                        *entry = event.instance.clone();
+                        cx.notify();
+                    }
+                });
             let instance_list = Self {
                 columns: vec![
-                    Column::new("controls", "")
-                        .width(150.)
-                        .fixed_left()
-                        .movable(false)
-                        .resizable(false),
-                    Column::new("name", "Name")
-                        .width(150.)
-                        .fixed_left()
-                        .sortable()
-                        .resizable(true),
-                    Column::new("version", "Version")
-                        .width(150.)
-                        .fixed_left()
-                        .sortable()
-                        .resizable(true),
-                    Column::new("loader", "Loader")
-                        .width(150.)
-                        .fixed_left()
-                        .resizable(true),
-                    Column::new("remove", "")
-                        .width(44.)
-                        .fixed_left()
-                        .movable(false)
-                        .resizable(false),
+                    Column::new("controls", "").width(150.).fixed_left().movable(false).resizable(false),
+                    Column::new("name", "Name").width(150.).fixed_left().sortable().resizable(true),
+                    Column::new("version", "Version").width(150.).fixed_left().sortable().resizable(true),
+                    Column::new("loader", "Loader").width(150.).fixed_left().resizable(true),
+                    Column::new("remove", "").width(44.).fixed_left().movable(false).resizable(false),
                 ],
                 items,
                 backend_handle: data.backend_handle.clone(),
@@ -109,15 +100,28 @@ impl TableDelegate for InstanceList {
                     _ => lexical_sort::natural_lexical_cmp(&a.name, &b.name),
                 }),
                 "version" => self.items.sort_by(|a, b| match sort {
-                    ColumnSort::Descending => lexical_sort::natural_lexical_cmp(&a.configuration.minecraft_version, &b.configuration.minecraft_version).reverse(),
-                    _ => lexical_sort::natural_lexical_cmp(&a.configuration.minecraft_version, &b.configuration.minecraft_version),
+                    ColumnSort::Descending => lexical_sort::natural_lexical_cmp(
+                        &a.configuration.minecraft_version,
+                        &b.configuration.minecraft_version,
+                    )
+                    .reverse(),
+                    _ => lexical_sort::natural_lexical_cmp(
+                        &a.configuration.minecraft_version,
+                        &b.configuration.minecraft_version,
+                    ),
                 }),
                 _ => {},
             }
         }
     }
 
-    fn render_td(&mut self, row_ix: usize, col_ix: usize, _window: &mut Window, _cx: &mut Context<TableState<Self>>) -> impl IntoElement {
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
         let item = &self.items[row_ix];
         if let Some(col) = self.columns.get(col_ix) {
             match col.key.as_ref() {
@@ -139,8 +143,12 @@ impl TableDelegate for InstanceList {
                         .child(Button::new("view").w(relative(0.5)).small().info().label("View").on_click({
                             let id = item.id;
                             move |_, window, cx| {
-                                root::switch_page(ui::PageType::InstancePage(id, InstanceSubpageType::Quickplay),
-                                    &[ui::PageType::Instances], window, cx);
+                                root::switch_page(
+                                    ui::PageType::InstancePage(id, InstanceSubpageType::Quickplay),
+                                    &[ui::PageType::Instances],
+                                    window,
+                                    cx,
+                                );
                             }
                         }))
                         .into_any_element()
@@ -154,16 +162,21 @@ impl TableDelegate for InstanceList {
                     h_flex()
                         .size_full()
                         .items_center()
-                        .child(
-                            Button::new(("remove", row_ix))
-                                .danger()
-                                .small()
-                                .compact()
-                                .icon(trash_icon)
-                                .on_click(move |_, window, cx| {
-                                    modals::delete_instance::open_delete_instance(id, name.clone(), backend_handle.clone(), window, cx);
-                                }),
-                        )
+                        .child(Button::new(("remove", row_ix)).danger().small().compact().icon(trash_icon).on_click(
+                            move |click: &ClickEvent, window, cx| {
+                                if InterfaceConfig::get(cx).quick_delete_instance && click.modifiers().shift {
+                                    backend_handle.send(bridge::message::MessageToBackend::DeleteInstance { id });
+                                } else {
+                                    modals::delete_instance::open_delete_instance(
+                                        id,
+                                        name.clone(),
+                                        backend_handle.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            },
+                        ))
                         .into_any_element()
                 },
                 _ => "Unknown".into_any_element(),

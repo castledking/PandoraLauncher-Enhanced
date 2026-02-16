@@ -501,8 +501,9 @@ impl ModrinthSearchPage {
                 let download_icon = Icon::empty().path("icons/download.svg");
                 let downloads = h_flex()
                     .gap_0p5()
+                    .items_center()
                     .child(download_icon.clone())
-                    .child(format_downloads(hit.downloads));
+                    .child(div().text_sm().text_color(GRAY).child(format_downloads(hit.downloads)));
 
                 let (main_action, nub_action) = self.get_primary_action(&hit.project_id, cx);
                 let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
@@ -709,7 +710,7 @@ impl ModrinthSearchPage {
                                     .children(std::iter::once(environment).chain(categories)),
                             ),
                     )
-                    .child(v_flex().gap_2().child(downloads).child(buttons));
+                    .child(v_flex().items_end().gap_2().child(downloads).child(buttons));
 
                 div().pl_3().pt_3().child(item)
             })

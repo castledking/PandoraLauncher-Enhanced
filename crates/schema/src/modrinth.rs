@@ -41,7 +41,7 @@ pub struct ModrinthSearchResult {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModrinthHit {
-    // pub slug: Option<Arc<str>>,
+    pub slug: Option<Arc<str>>,
     pub title: Option<Arc<str>>,
     pub description: Option<Arc<str>>,
     // pub categories: Option<Arc<[Arc<str>]>>,

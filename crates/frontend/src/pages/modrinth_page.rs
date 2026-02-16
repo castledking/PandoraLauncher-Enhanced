@@ -1,6 +1,9 @@
 use std::{ops::Range, sync::{atomic::AtomicBool, Arc}, time::Duration};
 
-use bridge::{instance::{AtomicContentUpdateStatus, ContentUpdateStatus, InstanceID, InstanceContentID, InstanceContentSummary}, message::MessageToBackend, meta::MetadataRequest, modal_action::ModalAction};
+use bridge::instance::{AtomicContentUpdateStatus, ContentUpdateStatus, ContentType, InstanceID, InstanceContentID, InstanceContentSummary};
+use bridge::message::MessageToBackend;
+use bridge::meta::MetadataRequest;
+use bridge::modal_action::ModalAction;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Selectable, Sizable, StyledExt, WindowExt, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, tooltip::Tooltip, v_flex
@@ -33,6 +36,9 @@ pub struct ModrinthSearchPage {
     show_categories: Arc<AtomicBool>,
     can_install_latest: bool,
     installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_mods_by_hash: FxHashMap<[u8; 20], InstalledContent>,
+    installed_mods_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
+    installed_mods_by_mod_id: FxHashMap<Arc<str>, InstalledContent>,
     installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
     last_search: Arc<str>,
     scroll_handle: UniformListScrollHandle,
@@ -45,6 +51,17 @@ pub struct ModrinthSearchPage {
 struct InstalledContent {
     content_id: InstanceContentID,
     status: Arc<AtomicContentUpdateStatus>,
+    mod_id: Option<Arc<str>>,
+}
+
+impl Clone for InstalledContent {
+    fn clone(&self) -> Self {
+        Self {
+            content_id: self.content_id,
+            status: Arc::clone(&self.status),
+            mod_id: self.mod_id.clone(),
+        }
+    }
 }
 
 impl ModrinthSearchPage {
@@ -60,6 +77,9 @@ impl ModrinthSearchPage {
 
         let mut can_install_latest = false;
         let mut installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_mods_by_hash: FxHashMap<[u8; 20], InstalledContent> = FxHashMap::default();
+        let mut installed_mods_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
+        let mut installed_mods_by_mod_id: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
         let mut installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
 
         if let Some(install_for) = install_for {
@@ -68,16 +88,46 @@ impl ModrinthSearchPage {
                 can_install_latest = true;
 
                 let mods = instance.mods.read(cx);
+                log::debug!("Loading mods for instance: {} mods found", mods.len());
                 for summary in mods.iter() {
-                    let ContentSource::ModrinthProject { project } = &summary.content_source else {
-                        continue;
-                    };
-
-                    let installed = installed_mods_by_project.entry(project.clone()).or_default();
-                    installed.push(InstalledContent {
+                    log::debug!("  Mod: filename={}, hash={:?}, source={:?}", 
+                        summary.filename, 
+                        &summary.content_summary.hash[..4],
+                        summary.content_source);
+                    
+                    let content = InstalledContent {
                         content_id: summary.id,
                         status: summary.content_summary.update_status.clone(),
-                    })
+                        mod_id: summary.content_summary.id.clone(),
+                    };
+
+                    if let ContentSource::ModrinthProject { project } = &summary.content_source {
+                        let installed = installed_mods_by_project.entry(project.clone()).or_default();
+                        installed.push(content.clone());
+                        log::debug!("    Added to project map: {}", project);
+                    }
+
+                    installed_mods_by_hash.insert(summary.content_summary.hash, content.clone());
+
+                    if let Some(filename_prefix) = extract_modrinth_project_id_from_filename(&summary.filename) {
+                        let content_for_insert = content.clone();
+                        installed_mods_by_filename_prefix.entry(filename_prefix.clone()).or_insert(content_for_insert);
+                        log::debug!("    Added to filename map: {}", filename_prefix);
+                    }
+
+                    if let ContentType::ModrinthModpack { summaries, .. } = &summary.content_summary.extra {
+                        log::debug!("    Mod is a modpack with {} bundled mods", summaries.len());
+                        for bundled_summary in summaries.iter() {
+                            if let Some(bundled) = bundled_summary {
+                                let bundled_content = InstalledContent {
+                                    content_id: summary.id,
+                                    status: bundled.update_status.clone(),
+                                    mod_id: bundled.id.clone(),
+                                };
+                                installed_mods_by_hash.insert(bundled.hash, bundled_content);
+                            }
+                        }
+                    }
                 }
                 
                 let resource_packs = instance.resource_packs.read(cx);
@@ -90,6 +140,7 @@ impl ModrinthSearchPage {
                     installed.push(InstalledContent {
                         content_id: summary.id,
                         status: summary.content_summary.update_status.clone(),
+                        mod_id: summary.content_summary.id.clone(),
                     })
                 }
             }
@@ -124,6 +175,9 @@ impl ModrinthSearchPage {
             show_categories: Arc::new(AtomicBool::new(false)),
             can_install_latest,
             installed_mods_by_project,
+            installed_mods_by_hash,
+            installed_mods_by_filename_prefix,
+            installed_mods_by_mod_id,
             installed_resourcepacks_by_project,
             last_search: Arc::from(""),
             scroll_handle: UniformListScrollHandle::new(),
@@ -136,6 +190,11 @@ impl ModrinthSearchPage {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
                 let mods_entity = entry.read(cx).mods.clone();
                 let resource_packs_entity = entry.read(cx).resource_packs.clone();
+                
+                page.refill_installed_content_from_instance(cx);
+                
+                page.refill_installed_content_from_instance(cx);
+                cx.notify();
                 
                 let subscription = cx.observe(&mods_entity, |page, _mods, cx| {
                     page.refill_installed_content_from_instance(cx);
@@ -150,13 +209,19 @@ impl ModrinthSearchPage {
                 page._instance_resourcepacks_subscription = Some(subscription);
             }
         }
+        page.refill_installed_content_from_instance(cx);
         page.load_more(cx);
         page
     }
 
     fn refill_installed_content_from_instance(&mut self, cx: &App) {
         self.installed_mods_by_project.clear();
+        self.installed_mods_by_hash.clear();
+        self.installed_mods_by_filename_prefix.clear();
+        self.installed_mods_by_mod_id.clear();
         self.installed_resourcepacks_by_project.clear();
+        
+        log::debug!("refill_installed_content_from_instance called");
         
         if let Some(install_for) = self.install_for {
             if let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) {
@@ -164,14 +229,46 @@ impl ModrinthSearchPage {
                 
                 let mods = instance.mods.read(cx);
                 for summary in mods.iter() {
-                    let ContentSource::ModrinthProject { project } = &summary.content_source else {
-                        continue;
-                    };
-                    let installed = self.installed_mods_by_project.entry(project.clone()).or_default();
-                    installed.push(InstalledContent {
+                    let content = InstalledContent {
                         content_id: summary.id,
                         status: summary.content_summary.update_status.clone(),
-                    });
+                        mod_id: summary.content_summary.id.clone(),
+                    };
+
+                    if let ContentSource::ModrinthProject { project } = &summary.content_source {
+                        let installed = self.installed_mods_by_project.entry(project.clone()).or_default();
+                        installed.push(content.clone());
+                    }
+
+                    self.installed_mods_by_hash.insert(summary.content_summary.hash, content.clone());
+
+                    if let Some(filename_prefix) = extract_modrinth_project_id_from_filename(&summary.filename) {
+                        let content_for_insert = content.clone();
+                        self.installed_mods_by_filename_prefix.entry(filename_prefix.clone()).or_insert(content_for_insert);
+                    }
+
+                    if let Some(mod_id) = &summary.content_summary.id {
+                        let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
+                        self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(content.clone());
+                    }
+
+                    if let ContentType::ModrinthModpack { summaries, .. } = &summary.content_summary.extra {
+                        for bundled_summary in summaries.iter() {
+                            if let Some(bundled) = bundled_summary {
+                                let bundled_content = InstalledContent {
+                                    content_id: summary.id,
+                                    status: bundled.update_status.clone(),
+                                    mod_id: bundled.id.clone(),
+                                };
+                                self.installed_mods_by_hash.insert(bundled.hash, bundled_content.clone());
+
+                                if let Some(mod_id) = &bundled.id {
+                                    let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
+                                    self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content);
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 let resource_packs = instance.resource_packs.read(cx);
@@ -183,6 +280,7 @@ impl ModrinthSearchPage {
                     installed.push(InstalledContent {
                         content_id: summary.id,
                         status: summary.content_summary.update_status.clone(),
+                        mod_id: summary.content_summary.id.clone(),
                     });
                 }
             }
@@ -505,8 +603,8 @@ impl ModrinthSearchPage {
                     .child(download_icon.clone())
                     .child(div().text_sm().text_color(GRAY).child(format_downloads(hit.downloads)));
 
-                let (main_action, nub_action) = self.get_primary_action(&hit.project_id, cx);
-                let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
+                let title = hit.title.as_deref().unwrap_or("").to_lowercase();
+                let (main_action, nub_action) = self.get_primary_action(&hit, cx);
 
                 let primary_button_label = match &main_action {
                     PrimaryAction::InstallLatest => "Install",
@@ -723,15 +821,18 @@ impl ModrinthSearchPage {
         items
     }
 
-    fn get_primary_action(&self, project_id: &str, cx: &App) -> (PrimaryAction, Option<NubAction>) {
+    fn get_primary_action(&self, hit: &ModrinthHit, cx: &App) -> (PrimaryAction, Option<NubAction>) {
+        let project_id = &hit.project_id;
+        let title = hit.title.as_deref().unwrap_or("");
         let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
 
         let is_resourcepack = self.filter_project_type == ModrinthProjectType::Resourcepack;
-        
+
+        let project_id_key: Arc<str> = project_id.to_lowercase().into();
         let installed = if is_resourcepack {
-            self.installed_resourcepacks_by_project.get(project_id)
+            self.installed_resourcepacks_by_project.get(&project_id_key)
         } else {
-            self.installed_mods_by_project.get(project_id)
+            self.installed_mods_by_project.get(&project_id_key)
         };
 
         if let Some(installed) = installed && !installed.is_empty() {
@@ -765,12 +866,72 @@ impl ModrinthSearchPage {
             return (main_action, Some(nub_action));
         }
 
+        if let Some(slug) = &hit.slug {
+            let slug_key: Arc<str> = slug.to_lowercase().into();
+            if self.installed_mods_by_mod_id.contains_key(&slug_key) {
+                return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+            }
+        }
+
+        if self.installed_mods_by_filename_prefix.contains_key(&project_id_key) {
+            return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+        }
+
+        if !title.is_empty() {
+            let title_normalized: String = title.chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase();
+            
+            for (filename_prefix, _) in &self.installed_mods_by_filename_prefix {
+                let fp: String = filename_prefix.chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+                    .to_lowercase();
+                
+                if title_normalized == fp || fp.contains(&title_normalized) || title_normalized.contains(&fp) {
+                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                }
+            }
+        }
+
         if install_latest {
             (PrimaryAction::InstallLatest, None)
         } else {
             (PrimaryAction::Install, None)
         }
     }
+}
+
+fn extract_modrinth_project_id_from_filename(filename: &str) -> Option<Arc<str>> {
+    let filename = filename.strip_suffix(".disabled").unwrap_or(filename);
+    let filename = filename.strip_suffix(".jar").unwrap_or(filename);
+    let filename = filename.strip_suffix(".zip").unwrap_or(filename);
+    
+    if let Some(last_dash_pos) = filename.rfind('-') {
+        let after_last_dash = &filename[last_dash_pos + 1..];
+        if after_last_dash.is_empty() {
+            return None;
+        }
+        
+        let first_char = after_last_dash.chars().next().unwrap();
+        if first_char.is_ascii_digit() {
+            let result = filename[..last_dash_pos].to_lowercase();
+            log::debug!("Extracted project ID '{}' from filename '{}'", result, filename);
+            return Some(result.into());
+        }
+        
+        if let Some(second_dash_pos) = filename[..last_dash_pos].rfind('-') {
+            let potential_version = &filename[second_dash_pos + 1..last_dash_pos];
+            if !potential_version.is_empty() && potential_version.chars().next()?.is_ascii_digit() {
+                let result = filename[..second_dash_pos].to_lowercase();
+                log::debug!("Extracted project ID '{}' from filename '{}' (second pattern)", result, filename);
+                return Some(result.into());
+            }
+        }
+    }
+    
+    None
 }
 
 #[derive(Clone, PartialEq, Eq)]

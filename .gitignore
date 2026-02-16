@@ -5,3 +5,6 @@ client_id.txt
 flamegraph.svg
 heaptrack*
 .DS_Store
+rustup-init.exe
+config.toml
+build_windows.ps1

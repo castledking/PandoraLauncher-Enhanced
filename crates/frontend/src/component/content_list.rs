@@ -356,6 +356,21 @@ impl ContentListDelegate {
         let enabled = child.enabled;
         let visually_enabled = enabled && child.parent_enabled;
 
+        let delete_button = Button::new(("delete_child", element_id)).danger().icon(Icon::default().path("icons/trash-2.svg")).on_click({
+            let id = self.id;
+            let content_id = child.parent;
+            let path = child.path.clone();
+            let backend_handle = self.backend_handle.clone();
+            move |_, _, _| {
+                backend_handle.send(MessageToBackend::SetContentChildEnabled {
+                    id,
+                    content_id,
+                    path: path.clone(),
+                    enabled: false,
+                });
+            }
+        });
+
         let item_content = h_flex()
             .gap_1()
             .pl_4()
@@ -381,7 +396,8 @@ impl ContentListDelegate {
             .child(icon.size_16().min_w_16().min_h_16().grayscale(!visually_enabled))
             .when(!visually_enabled, |this| this.line_through())
             .child(desc1)
-            .when_some(desc2, |div, desc2| div.child(desc2));
+            .when_some(desc2, |div, desc2| div.child(desc2))
+            .child(delete_button.absolute().right_4());
 
         ListItem::new(("item", element_id)).p_1().child(item_content)
     }

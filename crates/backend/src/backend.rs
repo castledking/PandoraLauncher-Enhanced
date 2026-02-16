@@ -718,7 +718,7 @@ impl BackendState {
                     !summary.disabled_children.contains(&*dl.path)
                 });
 
-                let content_install = ContentInstall {
+        let content_install = ContentInstall {
                     target: bridge::install::InstallTarget::Library,
                     loader_hint: loader,
                     version_hint: Some(minecraft_version.into()),

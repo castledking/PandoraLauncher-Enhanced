@@ -32,25 +32,35 @@ pub struct ModrinthSearchPage {
     filter_categories: FxHashSet<&'static str>,
     show_categories: Arc<AtomicBool>,
     can_install_latest: bool,
-    installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledMod>>,
+    installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
     last_search: Arc<str>,
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
     image_cache: Entity<RetainAllImageCache>,
     _instance_mods_subscription: Option<Subscription>,
+    _instance_resourcepacks_subscription: Option<Subscription>,
 }
 
-struct InstalledMod {
-    mod_id: InstanceContentID,
+struct InstalledContent {
+    content_id: InstanceContentID,
     status: Arc<AtomicContentUpdateStatus>,
 }
 
 impl ModrinthSearchPage {
     pub fn new(install_for: Option<InstanceID>, project_type: Option<ModrinthProjectType>, page_path: PagePath, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search_state = cx.new(|cx| InputState::new(window, cx).placeholder("Search mods...").clean_on_escape());
+        let filter_project_type = project_type.unwrap_or_else(|| InterfaceConfig::get(cx).modrinth_page_project_type);
+        
+        let placeholder = match filter_project_type {
+            ModrinthProjectType::Resourcepack => "Search resourcepacks...",
+            ModrinthProjectType::Shader => "Search shaders...",
+            _ => "Search mods...",
+        };
+        let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).clean_on_escape());
 
         let mut can_install_latest = false;
-        let mut installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledMod>> = FxHashMap::default();
+        let mut installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
 
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
@@ -64,8 +74,21 @@ impl ModrinthSearchPage {
                     };
 
                     let installed = installed_mods_by_project.entry(project.clone()).or_default();
-                    installed.push(InstalledMod {
-                        mod_id: summary.id,
+                    installed.push(InstalledContent {
+                        content_id: summary.id,
+                        status: summary.content_summary.update_status.clone(),
+                    })
+                }
+                
+                let resource_packs = instance.resource_packs.read(cx);
+                for summary in resource_packs.iter() {
+                    let ContentSource::ModrinthProject { project } = &summary.content_source else {
+                        continue;
+                    };
+
+                    let installed = installed_resourcepacks_by_project.entry(project.clone()).or_default();
+                    installed.push(InstalledContent {
+                        content_id: summary.id,
                         status: summary.content_summary.update_status.clone(),
                     })
                 }
@@ -101,39 +124,64 @@ impl ModrinthSearchPage {
             show_categories: Arc::new(AtomicBool::new(false)),
             can_install_latest,
             installed_mods_by_project,
+            installed_resourcepacks_by_project,
             last_search: Arc::from(""),
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
             image_cache: RetainAllImageCache::new(cx),
             _instance_mods_subscription: None,
+            _instance_resourcepacks_subscription: None,
         };
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
                 let mods_entity = entry.read(cx).mods.clone();
+                let resource_packs_entity = entry.read(cx).resource_packs.clone();
+                
                 let subscription = cx.observe(&mods_entity, |page, _mods, cx| {
-                    page.refill_installed_mods_from_instance(cx);
+                    page.refill_installed_content_from_instance(cx);
                     cx.notify();
                 });
                 page._instance_mods_subscription = Some(subscription);
+                
+                let subscription = cx.observe(&resource_packs_entity, |page, _resource_packs, cx| {
+                    page.refill_installed_content_from_instance(cx);
+                    cx.notify();
+                });
+                page._instance_resourcepacks_subscription = Some(subscription);
             }
         }
         page.load_more(cx);
         page
     }
 
-    fn refill_installed_mods_from_instance(&mut self, cx: &App) {
+    fn refill_installed_content_from_instance(&mut self, cx: &App) {
         self.installed_mods_by_project.clear();
+        self.installed_resourcepacks_by_project.clear();
+        
         if let Some(install_for) = self.install_for {
             if let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) {
                 let instance = entry.read(cx);
+                
                 let mods = instance.mods.read(cx);
                 for summary in mods.iter() {
                     let ContentSource::ModrinthProject { project } = &summary.content_source else {
                         continue;
                     };
                     let installed = self.installed_mods_by_project.entry(project.clone()).or_default();
-                    installed.push(InstalledMod {
-                        mod_id: summary.id,
+                    installed.push(InstalledContent {
+                        content_id: summary.id,
+                        status: summary.content_summary.update_status.clone(),
+                    });
+                }
+                
+                let resource_packs = instance.resource_packs.read(cx);
+                for summary in resource_packs.iter() {
+                    let ContentSource::ModrinthProject { project } = &summary.content_source else {
+                        continue;
+                    };
+                    let installed = self.installed_resourcepacks_by_project.entry(project.clone()).or_default();
+                    installed.push(InstalledContent {
+                        content_id: summary.id,
                         status: summary.content_summary.update_status.clone(),
                     });
                 }
@@ -677,12 +725,18 @@ impl ModrinthSearchPage {
     fn get_primary_action(&self, project_id: &str, cx: &App) -> (PrimaryAction, Option<NubAction>) {
         let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
 
-        let installed = self.installed_mods_by_project.get(project_id);
+        let is_resourcepack = self.filter_project_type == ModrinthProjectType::Resourcepack;
+        
+        let installed = if is_resourcepack {
+            self.installed_resourcepacks_by_project.get(project_id)
+        } else {
+            self.installed_mods_by_project.get(project_id)
+        };
 
         if let Some(installed) = installed && !installed.is_empty() {
             let mut nub_action = NubAction::CheckForUpdates;
-            for installed_mod in installed {
-                match installed_mod.status.load(std::sync::atomic::Ordering::Relaxed) {
+            for installed_content in installed {
+                match installed_content.status.load(std::sync::atomic::Ordering::Relaxed) {
                     ContentUpdateStatus::Unknown => {},
                     ContentUpdateStatus::AlreadyUpToDate => {
                         if !matches!(nub_action, NubAction::Update(..)) {
@@ -691,9 +745,9 @@ impl ModrinthSearchPage {
                     },
                     ContentUpdateStatus::Modrinth => {
                         if let NubAction::Update(vec) = &mut nub_action {
-                            vec.push(installed_mod.mod_id);
+                            vec.push(installed_content.content_id);
                         } else {
-                            nub_action = NubAction::Update(vec![installed_mod.mod_id]);
+                            nub_action = NubAction::Update(vec![installed_content.content_id]);
                         }
                     },
                     _ => {

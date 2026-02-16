@@ -39,7 +39,9 @@ pub struct ModrinthSearchPage {
     installed_mods_by_hash: FxHashMap<[u8; 20], InstalledContent>,
     installed_mods_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
     installed_mods_by_mod_id: FxHashMap<Arc<str>, InstalledContent>,
+    installed_modpacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
     installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>>,
     last_search: Arc<str>,
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
@@ -80,7 +82,9 @@ impl ModrinthSearchPage {
         let mut installed_mods_by_hash: FxHashMap<[u8; 20], InstalledContent> = FxHashMap::default();
         let mut installed_mods_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
         let mut installed_mods_by_mod_id: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
+        let mut installed_modpacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
         let mut installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>> = FxHashMap::default();
 
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
@@ -178,7 +182,9 @@ impl ModrinthSearchPage {
             installed_mods_by_hash,
             installed_mods_by_filename_prefix,
             installed_mods_by_mod_id,
+            installed_modpacks_by_project,
             installed_resourcepacks_by_project,
+            installed_resourcepacks_by_hash,
             last_search: Arc::from(""),
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
@@ -219,7 +225,9 @@ impl ModrinthSearchPage {
         self.installed_mods_by_hash.clear();
         self.installed_mods_by_filename_prefix.clear();
         self.installed_mods_by_mod_id.clear();
+        self.installed_modpacks_by_project.clear();
         self.installed_resourcepacks_by_project.clear();
+        self.installed_resourcepacks_by_hash.clear();
         
         log::debug!("refill_installed_content_from_instance called");
         
@@ -236,7 +244,8 @@ impl ModrinthSearchPage {
                     };
 
                     if let ContentSource::ModrinthProject { project } = &summary.content_source {
-                        let installed = self.installed_mods_by_project.entry(project.clone()).or_default();
+                        let project_key: Arc<str> = project.to_lowercase().into();
+                        let installed = self.installed_mods_by_project.entry(project_key).or_default();
                         installed.push(content.clone());
                     }
 
@@ -253,6 +262,12 @@ impl ModrinthSearchPage {
                     }
 
                     if let ContentType::ModrinthModpack { summaries, .. } = &summary.content_summary.extra {
+                        let modpack_project = if let ContentSource::ModrinthProject { project } = &summary.content_source {
+                            Some(project.clone())
+                        } else {
+                            None
+                        };
+
                         for bundled_summary in summaries.iter() {
                             if let Some(bundled) = bundled_summary {
                                 let bundled_content = InstalledContent {
@@ -266,22 +281,47 @@ impl ModrinthSearchPage {
                                     let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
                                     self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content);
                                 }
+
+                                if let Some(ref project) = modpack_project {
+                                    let project_key: Arc<str> = project.to_lowercase().into();
+                                    self.installed_resourcepacks_by_hash.insert(bundled.hash, project_key);
+                                }
                             }
+                        }
+
+                        if let Some(project) = modpack_project {
+                            let project_key: Arc<str> = project.to_lowercase().into();
+                            let installed = self.installed_modpacks_by_project.entry(project_key).or_default();
+                            installed.push(content);
                         }
                     }
                 }
                 
                 let resource_packs = instance.resource_packs.read(cx);
                 for summary in resource_packs.iter() {
-                    let ContentSource::ModrinthProject { project } = &summary.content_source else {
-                        continue;
-                    };
-                    let installed = self.installed_resourcepacks_by_project.entry(project.clone()).or_default();
-                    installed.push(InstalledContent {
-                        content_id: summary.id,
-                        status: summary.content_summary.update_status.clone(),
-                        mod_id: summary.content_summary.id.clone(),
-                    });
+                    match &summary.content_source {
+                        ContentSource::ModrinthProject { project } => {
+                            let project_key: Arc<str> = project.to_lowercase().into();
+                            let installed = self.installed_resourcepacks_by_project.entry(project_key).or_default();
+                            installed.push(InstalledContent {
+                                content_id: summary.id,
+                                status: summary.content_summary.update_status.clone(),
+                                mod_id: summary.content_summary.id.clone(),
+                            });
+                        },
+                        ContentSource::ModrinthUnknown => {
+                            if let Some(project) = self.installed_resourcepacks_by_hash.get(&summary.content_summary.hash) {
+                                let project_key: Arc<str> = project.to_lowercase().into();
+                                let installed = self.installed_resourcepacks_by_project.entry(project_key).or_default();
+                                installed.push(InstalledContent {
+                                    content_id: summary.id,
+                                    status: summary.content_summary.update_status.clone(),
+                                    mod_id: summary.content_summary.id.clone(),
+                                });
+                            }
+                        },
+                        ContentSource::Manual => {},
+                    }
                 }
             }
         }
@@ -826,11 +866,15 @@ impl ModrinthSearchPage {
         let title = hit.title.as_deref().unwrap_or("");
         let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
 
-        let is_resourcepack = self.filter_project_type == ModrinthProjectType::Resourcepack;
+        let project_type = self.filter_project_type;
+        let is_resourcepack = project_type == ModrinthProjectType::Resourcepack;
+        let is_modpack = project_type == ModrinthProjectType::Modpack;
 
         let project_id_key: Arc<str> = project_id.to_lowercase().into();
         let installed = if is_resourcepack {
             self.installed_resourcepacks_by_project.get(&project_id_key)
+        } else if is_modpack {
+            self.installed_modpacks_by_project.get(&project_id_key)
         } else {
             self.installed_mods_by_project.get(&project_id_key)
         };
@@ -866,31 +910,33 @@ impl ModrinthSearchPage {
             return (main_action, Some(nub_action));
         }
 
-        if let Some(slug) = &hit.slug {
-            let slug_key: Arc<str> = slug.to_lowercase().into();
-            if self.installed_mods_by_mod_id.contains_key(&slug_key) {
+        if !is_resourcepack && !is_modpack {
+            if let Some(slug) = &hit.slug {
+                let slug_key: Arc<str> = slug.to_lowercase().into();
+                if self.installed_mods_by_mod_id.contains_key(&slug_key) {
+                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                }
+            }
+
+            if self.installed_mods_by_filename_prefix.contains_key(&project_id_key) {
                 return (PrimaryAction::Installed, Some(NubAction::UpToDate));
             }
-        }
 
-        if self.installed_mods_by_filename_prefix.contains_key(&project_id_key) {
-            return (PrimaryAction::Installed, Some(NubAction::UpToDate));
-        }
-
-        if !title.is_empty() {
-            let title_normalized: String = title.chars()
-                .filter(|c| c.is_alphanumeric())
-                .collect::<String>()
-                .to_lowercase();
-            
-            for (filename_prefix, _) in &self.installed_mods_by_filename_prefix {
-                let fp: String = filename_prefix.chars()
+            if !title.is_empty() {
+                let title_normalized: String = title.chars()
                     .filter(|c| c.is_alphanumeric())
                     .collect::<String>()
                     .to_lowercase();
                 
-                if title_normalized == fp || fp.contains(&title_normalized) || title_normalized.contains(&fp) {
-                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                for (filename_prefix, _) in &self.installed_mods_by_filename_prefix {
+                    let fp: String = filename_prefix.chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .collect::<String>()
+                        .to_lowercase();
+                    
+                    if title_normalized == fp || fp.contains(&title_normalized) || title_normalized.contains(&fp) {
+                        return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                    }
                 }
             }
         }

@@ -42,12 +42,15 @@ pub struct ModrinthSearchPage {
     installed_modpacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
     installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
     installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>>,
+    installed_shaders_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_shaders_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
     last_search: Arc<str>,
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
     image_cache: Entity<RetainAllImageCache>,
     _instance_mods_subscription: Option<Subscription>,
     _instance_resourcepacks_subscription: Option<Subscription>,
+    _shader_refresh_task: Option<Task<()>>,
 }
 
 struct InstalledContent {
@@ -85,6 +88,8 @@ impl ModrinthSearchPage {
         let mut installed_modpacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
         let mut installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
         let mut installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>> = FxHashMap::default();
+        let mut installed_shaders_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_shaders_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
 
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
@@ -185,12 +190,15 @@ impl ModrinthSearchPage {
             installed_modpacks_by_project,
             installed_resourcepacks_by_project,
             installed_resourcepacks_by_hash,
+            installed_shaders_by_project,
+            installed_shaders_by_filename_prefix,
             last_search: Arc::from(""),
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
             image_cache: RetainAllImageCache::new(cx),
             _instance_mods_subscription: None,
             _instance_resourcepacks_subscription: None,
+            _shader_refresh_task: None,
         };
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
@@ -213,6 +221,16 @@ impl ModrinthSearchPage {
                     cx.notify();
                 });
                 page._instance_resourcepacks_subscription = Some(subscription);
+
+                page._shader_refresh_task = Some(cx.spawn(async move |page, cx| {
+                    loop {
+                        gpui::Timer::after(Duration::from_secs(2)).await;
+                        page.update(cx, |page, cx| {
+                            page.refill_installed_content_from_instance(cx);
+                            cx.notify();
+                        }).ok();
+                    }
+                }));
             }
         }
         page.refill_installed_content_from_instance(cx);
@@ -228,8 +246,8 @@ impl ModrinthSearchPage {
         self.installed_modpacks_by_project.clear();
         self.installed_resourcepacks_by_project.clear();
         self.installed_resourcepacks_by_hash.clear();
-        
-        log::debug!("refill_installed_content_from_instance called");
+        self.installed_shaders_by_project.clear();
+        self.installed_shaders_by_filename_prefix.clear();
         
         if let Some(install_for) = self.install_for {
             if let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) {
@@ -321,6 +339,29 @@ impl ModrinthSearchPage {
                             }
                         },
                         ContentSource::Manual => {},
+                    }
+                }
+
+                let shaderpacks_path = instance.dot_minecraft_folder.join("shaderpacks");
+                if shaderpacks_path.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&shaderpacks_path) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                    let shader_name = filename.trim_end_matches(".zip").trim_end_matches(".disabled");
+                                    if !shader_name.is_empty() {
+                                        let filename_prefix: Arc<str> = shader_name.to_lowercase().into();
+                                        let content = InstalledContent {
+                                            content_id: InstanceContentID::dangling(),
+                                            status: Arc::new(AtomicContentUpdateStatus::new(ContentUpdateStatus::ManualInstall)),
+                                            mod_id: None,
+                                        };
+                                        self.installed_shaders_by_filename_prefix.entry(filename_prefix).or_insert(content);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -869,12 +910,15 @@ impl ModrinthSearchPage {
         let project_type = self.filter_project_type;
         let is_resourcepack = project_type == ModrinthProjectType::Resourcepack;
         let is_modpack = project_type == ModrinthProjectType::Modpack;
+        let is_shader = project_type == ModrinthProjectType::Shader;
 
         let project_id_key: Arc<str> = project_id.to_lowercase().into();
         let installed = if is_resourcepack {
             self.installed_resourcepacks_by_project.get(&project_id_key)
         } else if is_modpack {
             self.installed_modpacks_by_project.get(&project_id_key)
+        } else if is_shader {
+            self.installed_shaders_by_project.get(&project_id_key)
         } else {
             self.installed_mods_by_project.get(&project_id_key)
         };
@@ -936,6 +980,38 @@ impl ModrinthSearchPage {
                     
                     if title_normalized == fp || fp.contains(&title_normalized) || title_normalized.contains(&fp) {
                         return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                    }
+                }
+            }
+        }
+
+        if is_shader {
+            if self.installed_shaders_by_filename_prefix.contains_key(&project_id_key) {
+                return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+            }
+
+            if !title.is_empty() {
+                let title_words: Vec<String> = title.to_lowercase()
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                
+                for (filename_prefix, _) in &self.installed_shaders_by_filename_prefix {
+                    let fp_words: Vec<String> = filename_prefix.to_string()
+                        .split(|c: char| !c.is_alphanumeric())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+                    
+                    for title_word in &title_words {
+                        for fp_word in &fp_words {
+                            if title_word.len() > 2 && fp_word.len() > 2 {
+                                if title_word == fp_word || fp_word.contains(title_word) || title_word.contains(fp_word) {
+                                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                                }
+                            }
+                        }
                     }
                 }
             }

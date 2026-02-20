@@ -91,6 +91,11 @@ impl InstanceList {
         };
 
         let theme = cx.theme();
+        let backend_handle = self.backend_handle.clone();
+        let id = item.id;
+        let name = item.name.clone();
+        let trash_icon = Icon::default().path("icons/trash-2.svg");
+
         v_flex()
             .flex_1()
             .p_2()
@@ -99,6 +104,30 @@ impl InstanceList {
             .min_w_64()
             .bg(theme.secondary)
             .rounded(theme.radius_lg)
+            .relative()
+            .child(
+                Button::new(("remove", index))
+                    .absolute()
+                    .top_1()
+                    .right_1()
+                    .danger()
+                    .small()
+                    .compact()
+                    .icon(trash_icon)
+                    .on_click(move |click: &ClickEvent, window, cx| {
+                        if InterfaceConfig::get(cx).quick_delete_instance && click.modifiers().shift {
+                            backend_handle.send(bridge::message::MessageToBackend::DeleteInstance { id });
+                        } else {
+                            modals::delete_instance::open_delete_instance(
+                                id,
+                                name.clone(),
+                                backend_handle.clone(),
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            )
             .child(
                 h_flex()
                     .w_full()

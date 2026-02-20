@@ -51,8 +51,11 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
         .unwrap();
 
     let redirecting_http_client = reqwest::ClientBuilder::new()
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
         .use_rustls_tls()
         .user_agent(&user_agent)
+        .redirect(reqwest::redirect::Policy::default())
         .build()
         .unwrap();
 

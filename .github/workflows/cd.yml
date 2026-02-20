@@ -86,7 +86,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            ./artifacts/**/update_darwin.json
+            ./artifacts/**/update_macos.json
             ./artifacts/**/update_linux.json
             ./artifacts/**/update_windows.json
         env:

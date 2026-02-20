@@ -59,6 +59,7 @@ impl Processor {
             MessageToFrontend::InstanceAdded {
                 id,
                 name,
+                icon,
                 dot_minecraft_folder,
                 configuration,
                 worlds_state,
@@ -70,6 +71,7 @@ impl Processor {
                     &self.data.instances,
                     id,
                     name.as_str().into(),
+                    icon,
                     dot_minecraft_folder,
                     configuration,
                     worlds_state,
@@ -85,6 +87,7 @@ impl Processor {
             MessageToFrontend::InstanceModified {
                 id,
                 name,
+                icon,
                 dot_minecraft_folder,
                 configuration,
                 status,
@@ -110,6 +113,7 @@ impl Processor {
                     &self.data.instances,
                     id,
                     name.as_str().into(),
+                    icon,
                     dot_minecraft_folder,
                     configuration,
                     status,

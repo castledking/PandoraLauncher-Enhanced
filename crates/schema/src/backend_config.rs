@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct BackendConfig {
-    #[serde(default, skip_serializing_if = "skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
     pub sync_targets: EnumSet<SyncTarget>,
-    #[serde(default, skip_serializing_if = "skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
     pub dont_open_game_output_when_launching: bool,
 }
 
@@ -48,8 +48,4 @@ impl SyncTarget {
             SyncTarget::Litematic => Some("schematics"),
         }
     }
-}
-
-fn skip_if_default<T: Default + PartialEq>(value: &T) -> bool {
-    value == &T::default()
 }

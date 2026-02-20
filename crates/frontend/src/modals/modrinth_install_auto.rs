@@ -151,7 +151,7 @@ fn handle_project_versions(
                 if !allow_all_versions && !game_versions.contains(&configuration.minecraft_version) {
                     return false;
                 }
-                if is_mod && !loaders.contains(&modrinth_loader) {
+                if is_mod && configuration.loader != Loader::Vanilla && !loaders.contains(&modrinth_loader) {
                     return false;
                 }
                 true

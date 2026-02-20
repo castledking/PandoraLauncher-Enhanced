@@ -37,6 +37,10 @@ pub struct InterfaceConfig {
     pub modrinth_page_project_type: ModrinthProjectType,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_main_window_on_launch: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub show_snapshots_in_create_instance: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instances_view_mode: InstancesViewMode,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -62,6 +66,23 @@ pub enum WindowBounds {
         w: f32,
         h: f32,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
+#[serde(rename_all = "lowercase")]
+pub enum InstancesViewMode {
+    #[default]
+    Cards,
+    List,
+}
+
+impl InstancesViewMode {
+    pub fn name(self) -> SharedString {
+        match self {
+            InstancesViewMode::Cards => "Cards".into(),
+            InstancesViewMode::List => "List".into(),
+        }
+    }
 }
 
 impl InterfaceConfig {

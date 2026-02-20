@@ -64,7 +64,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
@@ -77,106 +77,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate update manifest inputs
-        id: manifest
+      - name: Upload update manifests
         run: |
-          VERSION="${{ github.ref_name }}"
-          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
-          
-          DARWIN_INFO=""
-          LINUX_INFO=""
-          WINDOWS_INFO=""
-          
-          # Darwin (macOS)
-          if [ -d "artifacts/MacOS-arm64" ]; then
-            cd artifacts/MacOS-arm64
-            EXE=$(ls *.app 2>/dev/null | head -1 || ls | head -1)
-            SIZE=$(wc -c < "$EXE")
-            SHA1=$(sha1sum "$EXE" | cut -d' ' -f1)
-            URL="${REPO_URL}/releases/download/${VERSION}/$EXE"
-            DARWIN_INFO="darwin_url=${URL}|darwin_size=${SIZE}|darwin_sha1=${SHA1}"
-            cd ../..
-          fi
-          
-          # Linux
-          if [ -d "artifacts/Linux-x86_64" ]; then
-            cd artifacts/Linux-x86_64
-            EXE=$(ls | head -1)
-            SIZE=$(wc -c < "$EXE")
-            SHA1=$(sha1sum "$EXE" | cut -d' ' -f1)
-            URL="${REPO_URL}/releases/download/${VERSION}/$EXE"
-            LINUX_INFO="linux_url=${URL}|linux_size=${SIZE}|linux_sha1=${SHA1}"
-            cd ../..
-          fi
-          
-          # Windows
-          if [ -d "artifacts/Windows-x86_64" ]; then
-            cd artifacts/Windows-x86_64
-            EXE=$(ls *.exe 2>/dev/null | head -1 || ls | head -1)
-            SIZE=$(wc -c < "$EXE")
-            SHA1=$(sha1sum "$EXE" | cut -d' ' -f1)
-            URL="${REPO_URL}/releases/download/${VERSION}/$EXE"
-            WINDOWS_INFO="windows_url=${URL}|windows_size=${SIZE}|windows_sha1=${SHA1}"
-            cd ../..
-          fi
-          
-          echo "darwin=${DARWIN_INFO}" >> $GITHUB_OUTPUT
-          echo "linux=${LINUX_INFO}" >> $GITHUB_OUTPUT
-          echo "windows=${WINDOWS_INFO}" >> $GITHUB_OUTPUT
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          for f in ./artifacts/update_*.json; do
+            if [ -f "$f" ]; then
+              echo "Found: $f"
+            fi
+          done
 
-      - name: Create Update Manifest Issue
-        uses: actions/github-script@v7
+      - name: Upload update manifests
+        uses: softprops/action-gh-release@v2
         with:
-          script: |
-            const version = "${{ steps.manifest.outputs.version }}";
-            const darwin = "${{ steps.manifest.outputs.darwin }}".split('|');
-            const linux = "${{ steps.manifest.outputs.linux }}".split('|');
-            const windows = "${{ steps.manifest.outputs.windows }}".split('|');
-            
-            function parseInfo(infoArray) {
-              const obj = {};
-              for (const item of infoArray) {
-                if (item) {
-                  const [key, value] = item.split('=');
-                  obj[key] = value;
-                }
-              }
-              return obj;
-            }
-            
-            const d = parseInfo(darwin);
-            const l = parseInfo(linux);
-            const w = parseInfo(windows);
-            
-            let body = `A new release **${version}** has been created.\n\n`;
-            body += `The executables have been built and the release created. To enable auto-updates, `;
-            body += `please run the **Update Manifest** workflow and fill in the following values:\n\n`;
-            body += `### Version\n\`${version}\`\n\n`;
-            
-            body += `### Darwin (macOS)\n`;
-            if (d.darwin_url) body += `- **URL**: ${d.darwin_url}\n`;
-            if (d.darwin_size) body += `- **Size**: ${d.darwin_size}\n`;
-            if (d.darwin_sha1) body += `- **SHA1**: ${d.darwin_sha1}\n`;
-            body += `- **Signature**: (minisign signature required)\n\n`;
-            
-            body += `### Linux\n`;
-            if (l.linux_url) body += `- **URL**: ${l.linux_url}\n`;
-            if (l.linux_size) body += `- **Size**: ${l.linux_size}\n`;
-            if (l.linux_sha1) body += `- **SHA1**: ${l.linux_sha1}\n`;
-            body += `- **Signature**: \`(add minisign signature)\`\n\n`;
-            
-            body += `### Windows\n`;
-            if (w.windows_url) body += `- **URL**: ${w.windows_url}\n`;
-            if (w.windows_size) body += `- **Size**: ${w.windows_size}\n`;
-            if (w.windows_sha1) body += `- **SHA1**: ${w.windows_sha1}\n`;
-            body += `- **Signature**: \`(add minisign signature)\`\n\n`;
-            
-            body += `> After filling in the signatures, run the Update Manifest workflow to publish the update manifests.`;
-            
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Update Manifest needed for ${version}`,
-              body: body
-            });
+          tag_name: ${{ github.ref_name }}
+          files: ./artifacts/update_*.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

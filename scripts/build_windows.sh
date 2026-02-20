@@ -34,12 +34,13 @@ mv -f 'dist/PandoraLauncher-Windows_'$version'_x64-setup.exe' dist/PandoraLaunch
 if [[ -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then
     cargo packager signer sign dist/PandoraLauncher-Windows-$version-x86_64-Portable.exe
 
+    GITHUB_REPO="${GITHUB_REPOSITORY_URL:-https://github.com/Moulberry/PandoraLauncher}"
     echo "{
     \"version\": \"$version\",
     \"downloads\": {
         \"x86_64\": {
             \"executable\": {
-                \"download\": \"https://github.com/Moulberry/PandoraLauncher/releases/download/v$version/PandoraLauncher-Windows-$version-x86_64-Portable.exe\",
+                \"download\": \"$GITHUB_REPO/releases/download/v$version/PandoraLauncher-Windows-$version-x86_64-Portable.exe\",
                 \"size\": $(wc -c < dist/PandoraLauncher-Windows-$version-x86_64-Portable.exe),
                 \"sha1\": \"$(sha1sum dist/PandoraLauncher-Windows-$version-x86_64-Portable.exe | cut -d ' ' -f 1)\",
                 \"sig\": \"$(cat dist/PandoraLauncher-Windows-$version-x86_64-Portable.exe.sig)\"

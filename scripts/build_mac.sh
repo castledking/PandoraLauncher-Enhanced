@@ -42,25 +42,26 @@ if [[ -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then
     cargo packager signer sign dist/PandoraLauncher-$version.dmg
     cargo packager signer sign dist/PandoraLauncher.app.tar.gz
 
+    GITHUB_REPO="${GITHUB_REPOSITORY_URL:-https://github.com/Moulberry/PandoraLauncher}"
     echo "{
     \"version\": \"$version\",
     \"downloads\": {
         \"universal\": {
             \"executable\": {
-                \"download\": \"https://github.com/Moulberry/PandoraLauncher/releases/download/v$version/PandoraLauncher-macOS-$version-Universal-Portable\",
+                \"download\": \"$GITHUB_REPO/releases/download/v$version/PandoraLauncher-macOS-$version-Universal-Portable\",
                 \"size\": $(wc -c < dist/PandoraLauncher-macOS-$version-Universal-Portable),
                 \"sha1\": \"$(sha1sum dist/PandoraLauncher-macOS-$version-Universal-Portable | cut -d ' ' -f 1)\",
                 \"sig\": \"$(cat dist/PandoraLauncher-macOS-$version-Universal-Portable.sig)\"
             },
             \"app\": {
-                \"download\": \"https://github.com/Moulberry/PandoraLauncher/releases/download/v$version/PandoraLauncher.app.tar.gz\",
+                \"download\": \"$GITHUB_REPO/releases/download/v$version/PandoraLauncher.app.tar.gz\",
                 \"size\": $(wc -c < dist/PandoraLauncher.app.tar.gz),
                 \"sha1\": \"$(sha1sum dist/PandoraLauncher.app.tar.gz | cut -d ' ' -f 1)\",
                 \"sig\": \"$(cat dist/PandoraLauncher.app.tar.gz.sig)\"
             }
         }
     }
-}" > dist/update_macos.json
+}" > dist/update_darwin.json
 
     rm dist/*.sig
 fi

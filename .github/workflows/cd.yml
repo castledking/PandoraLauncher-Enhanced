@@ -79,16 +79,15 @@ jobs:
 
       - name: Upload update manifests
         run: |
-          for f in ./artifacts/update_*.json; do
-            if [ -f "$f" ]; then
-              echo "Found: $f"
-            fi
-          done
+          find ./artifacts -name "update_*.json" -type f
 
       - name: Upload update manifests
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: ./artifacts/update_*.json
+          files: |
+            ./artifacts/**/update_darwin.json
+            ./artifacts/**/update_linux.json
+            ./artifacts/**/update_windows.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

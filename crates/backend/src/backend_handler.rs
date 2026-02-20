@@ -1,4 +1,4 @@
-use std::{io::{BufRead, Read, Seek, SeekFrom, Write}, path::Path, sync::{atomic::Ordering, Arc}, time::{Duration, SystemTime}};
+use std::{io::{BufRead, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, sync::{atomic::Ordering, Arc}, time::{Duration, SystemTime}};
 
 use auth::{credentials::AccountCredentials, models::{MinecraftAccessToken, MinecraftProfileResponse}, secret::PlatformSecretStorage};
 use bridge::{
@@ -73,10 +73,34 @@ impl BackendState {
                 self.create_instance(&name, &version, loader).await;
             },
             MessageToBackend::DeleteInstance { id } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let result = std::fs::remove_dir_all(&instance.root_path);
-                    if let Err(err) = result {
-                        self.send.send_error(format!("Unable to delete instance folder: {}", err));
+                let (root_path, instance_name): (Option<PathBuf>, Option<String>) = {
+                    let mut instance_state = self.instance_state.write();
+                    if let Some(instance) = instance_state.instances.get_mut(id) {
+                        let path = (*instance.root_path).to_path_buf();
+                        let name = instance.name.to_string();
+                        if !path.exists() {
+                            log::warn!("Instance folder does not exist, skipping deletion: {:?}", path);
+                            instance_state.instances.remove(id);
+                            instance_state.instance_by_path.remove(&path);
+                        } else {
+                            let result = std::fs::remove_dir_all(&path);
+                            if let Err(err) = result {
+                                self.send.send_error(format!("Unable to delete instance folder: {}", err));
+                            } else {
+                                instance_state.instances.remove(id);
+                                instance_state.instance_by_path.remove(&path);
+                            }
+                        }
+                        (Some(path), Some(name))
+                    } else {
+                        (None, None)
+                    }
+                };
+
+                if root_path.is_some() {
+                    self.send.send(MessageToFrontend::InstanceRemoved { id });
+                    if let Some(name) = instance_name {
+                        self.send.send_info(format!("Instance '{}' deleted", name));
                     }
                 }
             },

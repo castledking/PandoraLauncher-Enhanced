@@ -1,0 +1,136 @@
+name: Update Manifest
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.2.3)'
+        required: true
+        type: string
+      darwin_url:
+        description: 'Download URL for macOS'
+        required: false
+      darwin_size:
+        description: 'File size in bytes for macOS'
+        required: false
+      darwin_sha1:
+        description: 'SHA1 hash for macOS'
+        required: false
+      darwin_sig:
+        description: 'Minisign signature for macOS'
+        required: true
+      linux_url:
+        description: 'Download URL for Linux'
+        required: false
+      linux_size:
+        description: 'File size in bytes for Linux'
+        required: false
+      linux_sha1:
+        description: 'SHA1 hash for Linux'
+        required: false
+      linux_sig:
+        description: 'Minisign signature for Linux'
+        required: true
+      windows_url:
+        description: 'Download URL for Windows'
+        required: false
+      windows_size:
+        description: 'File size in bytes for Windows'
+        required: false
+      windows_sha1:
+        description: 'SHA1 hash for Windows'
+        required: false
+      windows_sig:
+        description: 'Minisign signature for Windows'
+        required: true
+
+jobs:
+  create-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Darwin manifest
+        run: |
+          cat > update_darwin.json << 'EOF'
+          {
+            "version": "${{ github.event.inputs.version }}",
+            "universal": {
+              "exes": {
+                "executable": {
+                  "download": "${{ github.event.inputs.darwin_url }}",
+                  "size": ${{ github.event.inputs.darwin_size }},
+                  "sha1": "${{ github.event.inputs.darwin_sha1 }}",
+                  "sig": "${{ github.event.inputs.darwin_sig }}"
+                },
+                "app": {
+                  "download": "${{ github.event.inputs.darwin_url }}",
+                  "size": ${{ github.event.inputs.darwin_size }},
+                  "sha1": "${{ github.event.inputs.darwin_sha1 }}",
+                  "sig": "${{ github.event.inputs.darwin_sig }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Generate Linux manifest
+        run: |
+          cat > update_linux.json << 'EOF'
+          {
+            "version": "${{ github.event.inputs.version }}",
+            "universal": {
+              "exes": {
+                "executable": {
+                  "download": "${{ github.event.inputs.linux_url }}",
+                  "size": ${{ github.event.inputs.linux_size }},
+                  "sha1": "${{ github.event.inputs.linux_sha1 }}",
+                  "sig": "${{ github.event.inputs.linux_sig }}"
+                },
+                "appimage": {
+                  "download": "${{ github.event.inputs.linux_url }}",
+                  "size": ${{ github.event.inputs.linux_size }},
+                  "sha1": "${{ github.event.inputs.linux_sha1 }}",
+                  "sig": "${{ github.event.inputs.linux_sig }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Generate Windows manifest
+        run: |
+          cat > update_windows.json << 'EOF'
+          {
+            "version": "${{ github.event.inputs.version }}",
+            "universal": {
+              "exes": {
+                "executable": {
+                  "download": "${{ github.event.inputs.windows_url }}",
+                  "size": ${{ github.event.inputs.windows_size }},
+                  "sha1": "${{ github.event.inputs.windows_sha1 }}",
+                  "sig": "${{ github.event.inputs.windows_sig }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Upload Darwin manifest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: update_darwin.json
+
+      - name: Upload Linux manifest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: update_linux.json
+
+      - name: Upload Windows manifest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: update_windows.json

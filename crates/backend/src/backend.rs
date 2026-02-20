@@ -251,6 +251,19 @@ impl BackendState {
     }
 
     pub fn load_instance_from_path(&mut self, path: &Path, mut show_errors: bool, show_success: bool) -> bool {
+        if !path.exists() {
+            log::info!("Instance folder no longer exists, removing from state: {:?}", path);
+            let mut instance_state_guard = self.instance_state.write();
+            let existing_id = instance_state_guard.instance_by_path.get(path).copied();
+            if let Some(id) = existing_id {
+                if let Some(existing_instance) = instance_state_guard.instances.remove(id) {
+                    drop(instance_state_guard);
+                    self.send.send(MessageToFrontend::InstanceRemoved { id: existing_instance.id});
+                }
+            }
+            return false;
+        }
+
         let instance = Instance::load_from_folder(&path);
 
         let instance_id = {

@@ -201,8 +201,19 @@ async fn install_update_inner(http_client: reqwest::Client, dirs: &LauncherDirec
     let pubkey = base64::engine::general_purpose::STANDARD.decode(pubkey).unwrap();
     let sig = base64::engine::general_purpose::STANDARD.decode(&*update.exe.sig).unwrap();
 
-    let pk = minisign_verify::PublicKey::decode(std::str::from_utf8(&pubkey).unwrap()).unwrap();
-    let signature = minisign_verify::Signature::decode(std::str::from_utf8(&sig).unwrap()).unwrap();
+    let pubkey_str = std::str::from_utf8(&pubkey).map_err(|e| {
+        format!("Public key is not valid UTF-8: {}", e)
+    })?;
+    let sig_str = std::str::from_utf8(&sig).map_err(|e| {
+        format!("Signature is not valid UTF-8: {}", e)
+    })?;
+
+    let pk = minisign_verify::PublicKey::decode(pubkey_str).map_err(|e| {
+        format!("Failed to decode public key: {}", e)
+    })?;
+    let signature = minisign_verify::Signature::decode(sig_str).map_err(|e| {
+        format!("Failed to decode signature: {}", e)
+    })?;
 
     match pk.verify(&bytes, &signature, false) {
         Err(minisign_verify::Error::InvalidSignature) => {

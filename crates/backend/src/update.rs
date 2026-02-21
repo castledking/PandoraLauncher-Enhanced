@@ -416,10 +416,6 @@ fn install_app_update(current_app_folder: PathBuf, bytes: &[u8], temp_extract: &
         }
     };
 
-    if temp_backup.exists() {
-        return Err("Rename from current .app to temp backup errored, but then succeeded".into());
-    }
-
     if needs_authorization {
         // Move current -> backup, then app -> current in single elevated command
         let mut command = OsString::new();

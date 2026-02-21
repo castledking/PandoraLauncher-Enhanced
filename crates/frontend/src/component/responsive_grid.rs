@@ -120,6 +120,7 @@ impl Element for ResponsiveGrid {
                             (element_width * children_count + gap_width * children_count.saturating_sub(1), horizontal_count)
                         };
 
+                        let horizontal_count = if horizontal_count == 0 { 1 } else { horizontal_count };
                         let rows = (children_count + horizontal_count - 1) / horizontal_count;
                         let height = (min_element_height + gap_height) * rows;
 

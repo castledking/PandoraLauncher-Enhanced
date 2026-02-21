@@ -73,7 +73,7 @@ impl BackendState {
                 self.create_instance(&name, &version, loader, icon).await;
             },
             MessageToBackend::DeleteInstance { id } => {
-                let (root_path, instance_name): (Option<PathBuf>, Option<String>) = {
+                let (removed, instance_name): (bool, Option<String>) = {
                     let mut instance_state = self.instance_state.write();
                     if let Some(instance) = instance_state.instances.get_mut(id) {
                         let path = (*instance.root_path).to_path_buf();
@@ -82,22 +82,24 @@ impl BackendState {
                             log::warn!("Instance folder does not exist, skipping deletion: {:?}", path);
                             instance_state.instances.remove(id);
                             instance_state.instance_by_path.remove(&path);
+                            (true, Some(name))
                         } else {
                             let result = std::fs::remove_dir_all(&path);
                             if let Err(err) = result {
                                 self.send.send_error(format!("Unable to delete instance folder: {}", err));
+                                (false, Some(name))
                             } else {
                                 instance_state.instances.remove(id);
                                 instance_state.instance_by_path.remove(&path);
+                                (true, Some(name))
                             }
                         }
-                        (Some(path), Some(name))
                     } else {
-                        (None, None)
+                        (false, None)
                     }
                 };
 
-                if root_path.is_some() {
+                if removed {
                     self.send.send(MessageToFrontend::InstanceRemoved { id });
                     if let Some(name) = instance_name {
                         self.send.send_info(format!("Instance '{}' deleted", name));

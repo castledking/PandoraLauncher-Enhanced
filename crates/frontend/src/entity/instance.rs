@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use bridge::{
-    instance::{InstanceID, InstanceContentSummary, InstanceServerSummary, InstanceStatus, InstanceWorldSummary},
+    instance::{InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary},
     message::AtomicBridgeDataLoadState,
 };
 use gpui::{prelude::*, *};
@@ -63,14 +63,14 @@ impl InstanceEntries {
 
     pub fn find_name_by_id(entity: &Entity<Self>, id: InstanceID, cx: &App) -> Option<SharedString> {
         if let Some(entry) = entity.read(cx).entries.get(&id) {
-            return Some(entry.read(cx).name.clone())
+            return Some(entry.read(cx).name.clone());
         }
         None
     }
 
     pub fn find_title_by_id(entity: &Entity<Self>, id: InstanceID, cx: &App) -> Option<SharedString> {
         if let Some(entry) = entity.read(cx).entries.get(&id) {
-            return Some(entry.read(cx).title())
+            return Some(entry.read(cx).title());
         }
         None
     }
@@ -112,12 +112,7 @@ impl InstanceEntries {
         });
     }
 
-    pub fn set_worlds(
-        entity: &Entity<Self>,
-        id: InstanceID,
-        worlds: Arc<[InstanceWorldSummary]>,
-        cx: &mut App,
-    ) {
+    pub fn set_worlds(entity: &Entity<Self>, id: InstanceID, worlds: Arc<[InstanceWorldSummary]>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
                 instance.update(cx, |instance, cx| {
@@ -130,12 +125,7 @@ impl InstanceEntries {
         });
     }
 
-    pub fn set_servers(
-        entity: &Entity<Self>,
-        id: InstanceID,
-        servers: Arc<[InstanceServerSummary]>,
-        cx: &mut App,
-    ) {
+    pub fn set_servers(entity: &Entity<Self>, id: InstanceID, servers: Arc<[InstanceServerSummary]>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
                 instance.update(cx, |instance, cx| {
@@ -161,7 +151,12 @@ impl InstanceEntries {
         });
     }
 
-    pub fn set_resource_packs(entity: &Entity<Self>, id: InstanceID, resource_packs: Arc<[InstanceContentSummary]>, cx: &mut App) {
+    pub fn set_resource_packs(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        resource_packs: Arc<[InstanceContentSummary]>,
+        cx: &mut App,
+    ) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
                 instance.update(cx, |instance, cx| {
@@ -178,10 +173,11 @@ impl InstanceEntries {
         entity.update(cx, |entries, cx| {
             if let Some(index) = entries.entries.get_index_of(&id) {
                 entries.entries.move_index(index, 0);
-                let (_, entry) = entries.entries.get_index(0).unwrap();
-                cx.emit(InstanceMovedToTopEvent {
-                    instance: entry.read(cx).clone(),
-                });
+                if let Some((_, entry)) = entries.entries.get_index(0) {
+                    cx.emit(InstanceMovedToTopEvent {
+                        instance: entry.read(cx).clone(),
+                    });
+                }
             }
         });
     }

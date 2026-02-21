@@ -200,7 +200,11 @@ impl BackendState {
         let mut paths_with_time = Vec::new();
 
         self.file_watching.write().watch_filesystem(self.directories.instances_dir.clone(), WatchTarget::InstancesDir);
-        for entry in std::fs::read_dir(&self.directories.instances_dir).unwrap() {
+        let Ok(entries) = std::fs::read_dir(&self.directories.instances_dir) else {
+            log::warn!("Unable to read instances directory");
+            return;
+        };
+        for entry in entries {
             let Ok(entry) = entry else {
                 log::warn!("Error reading directory in instances folder: {:?}", entry.unwrap_err());
                 continue;

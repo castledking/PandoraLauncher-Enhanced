@@ -34,7 +34,7 @@ env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config '{'\
 
 mv -f dist/PandoraLauncher-macOS dist/PandoraLauncher-macOS-$version-Universal-Portable
 mv -f dist/PandoraLauncher*.dmg dist/PandoraLauncher-$version.dmg
-tar -czf dist/PandoraLauncher.app.tar.gz dist/PandoraLauncher.app
+tar -czf dist/PandoraLauncher.app.tar.gz -C dist PandoraLauncher.app
 rm -r dist/PandoraLauncher.app
 
 if [[ -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then

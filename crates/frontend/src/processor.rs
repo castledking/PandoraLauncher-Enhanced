@@ -1,10 +1,26 @@
-use std::{collections::HashMap, sync::{Arc, atomic::AtomicBool}};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicBool, Arc},
+};
 
-use bridge::{instance::InstanceStatus, message::{BridgeNotificationType, MessageToFrontend}};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, SharedString, TitlebarOptions, Window, WindowDecorations, WindowHandle, WindowOptions, px, size};
-use gpui_component::{notification::{Notification, NotificationType}, Root, WindowExt};
+use bridge::{
+    instance::InstanceStatus,
+    message::{BridgeNotificationType, MessageToFrontend},
+};
+use gpui::{
+    px, size, AnyWindowHandle, App, AppContext, Entity, SharedString, TitlebarOptions, Window, WindowDecorations,
+    WindowHandle, WindowOptions,
+};
+use gpui_component::{
+    notification::{Notification, NotificationType},
+    Root, WindowExt,
+};
 
-use crate::{entity::{DataEntities, account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata}, game_output::{GameOutput, GameOutputRoot}, interface_config::InterfaceConfig};
+use crate::{
+    entity::{account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata, DataEntities},
+    game_output::{GameOutput, GameOutputRoot},
+    interface_config::InterfaceConfig,
+};
 
 pub struct Processor {
     data: DataEntities,
@@ -37,7 +53,12 @@ impl Processor {
     }
 
     #[inline(always)]
-    pub fn with_main_window(&mut self, message: MessageToFrontend, cx: &mut App, func: impl FnOnce(&mut Processor, MessageToFrontend, &mut Window, &mut App)) {
+    pub fn with_main_window(
+        &mut self,
+        message: MessageToFrontend,
+        cx: &mut App,
+        func: impl FnOnce(&mut Processor, MessageToFrontend, &mut Window, &mut App),
+    ) {
         let Some(handle) = self.main_window_handle else {
             self.waiting_for_window.push(message);
             return;
@@ -96,13 +117,17 @@ impl Processor {
                     if InterfaceConfig::get(cx).hide_main_window_on_launch {
                         if let Some(handle) = self.main_window_handle.take() {
                             self.main_window_hidden.store(true, std::sync::atomic::Ordering::SeqCst);
-                            _ = handle.update(cx, |_, window, _| {
-                                window.remove_window();
+                            cx.defer(move |window| {
+                                _ = handle.update(window, |_, window, _| {
+                                    window.remove_window();
+                                });
                             });
                         }
                     }
                 } else if status == InstanceStatus::NotRunning {
-                    if self.main_window_handle.is_none() && self.main_window_hidden.load(std::sync::atomic::Ordering::SeqCst) {
+                    if self.main_window_handle.is_none()
+                        && self.main_window_hidden.load(std::sync::atomic::Ordering::SeqCst)
+                    {
                         self.main_window_handle = Some(crate::open_main_window(&self.data, cx));
                         self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                         self.process_messages_waiting_for_window(cx);
@@ -134,7 +159,11 @@ impl Processor {
             },
             MessageToFrontend::AddNotification { .. } => {
                 self.with_main_window(message, cx, |_, message, window, cx| {
-                    let MessageToFrontend::AddNotification { notification_type, message } = message else {
+                    let MessageToFrontend::AddNotification {
+                        notification_type,
+                        message,
+                    } = message
+                    else {
                         unreachable!();
                     };
 
@@ -180,20 +209,15 @@ impl Processor {
                 };
                 _ = cx.open_window(options, |window, cx| {
                     let game_output = cx.new(|_| GameOutput::default());
-                    let game_output_root = cx
-                        .new(|cx| GameOutputRoot::new(keep_alive, game_output.clone(), window, cx));
+                    let game_output_root =
+                        cx.new(|cx| GameOutputRoot::new(keep_alive, game_output.clone(), window, cx));
                     window.activate_window();
                     let window_handle = window.window_handle().downcast::<Root>().unwrap();
                     self.game_output_windows.insert(id, (window_handle, game_output.clone()));
                     cx.new(|cx| Root::new(game_output_root, window, cx))
                 });
             },
-            MessageToFrontend::AddGameOutput {
-                id,
-                time,
-                level,
-                text,
-            } => {
+            MessageToFrontend::AddGameOutput { id, time, level, text } => {
                 if let Some((window, game_output)) = self.game_output_windows.get(&id) {
                     _ = window.update(cx, |_, window, cx| {
                         game_output.update(cx, |game_output, _| {
@@ -206,7 +230,11 @@ impl Processor {
             MessageToFrontend::MoveInstanceToTop { id } => {
                 InstanceEntries::move_to_top(&self.data.instances, id, cx);
             },
-            MessageToFrontend::MetadataResult { request, result, keep_alive_handle } => {
+            MessageToFrontend::MetadataResult {
+                request,
+                result,
+                keep_alive_handle,
+            } => {
                 FrontendMetadata::set(&self.data.metadata, request, result, keep_alive_handle, cx);
             },
             MessageToFrontend::UpdateAvailable { .. } => {
@@ -215,9 +243,29 @@ impl Processor {
                         unreachable!();
                     };
 
-                    crate::modals::update_prompt::open_update_prompt(update, this.data.backend_handle.clone(), window, cx);
+                    crate::modals::update_prompt::open_update_prompt(
+                        update,
+                        this.data.backend_handle.clone(),
+                        window,
+                        cx,
+                    );
                 });
-            }
+            },
+            MessageToFrontend::ConfirmKillInstance { id, name } => {
+                self.with_main_window(message, cx, |this, message, window, cx| {
+                    let MessageToFrontend::ConfirmKillInstance { id, name } = message else {
+                        unreachable!();
+                    };
+
+                    crate::modals::confirm_kill_instance::open_confirm_kill_instance(
+                        id,
+                        name.as_str().into(),
+                        this.data.backend_handle.clone(),
+                        window,
+                        cx,
+                    );
+                });
+            },
         }
     }
 }

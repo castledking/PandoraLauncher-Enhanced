@@ -1,4 +1,6 @@
 use bridge::handle::BackendHandle;
+use bridge::instance::InstanceStatus;
+use bridge::message::MessageToBackend;
 use gpui::{prelude::*, *};
 use gpui_component::Icon;
 use gpui_component::{
@@ -171,14 +173,36 @@ impl InstanceList {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new(("start", index)).flex_grow().small().success().label("Start").on_click({
+                    .child({
                         let name = item.name.clone();
                         let id = item.id;
+                        let status = item.status;
                         let backend_handle = self.backend_handle.clone();
-                        move |_, window, cx| {
-                            root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                        match status {
+                            InstanceStatus::NotRunning => {
+                                Button::new(("start", index)).flex_grow().small().success().label("Start").on_click(
+                                    move |_, window, cx| {
+                                        root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                                    },
+                                )
+                            },
+                            InstanceStatus::Launching => Button::new(("starting", index))
+                                .flex_grow()
+                                .small()
+                                .warning()
+                                .icon(IconName::Loader)
+                                .label("Starting..."),
+                            InstanceStatus::Running => Button::new(("kill", index))
+                                .flex_grow()
+                                .small()
+                                .danger()
+                                .icon(IconName::Close)
+                                .label("Kill")
+                                .on_click(move |_, _, _| {
+                                    backend_handle.send(bridge::message::MessageToBackend::KillInstance { id });
+                                }),
                         }
-                    }))
+                    })
                     .child(Button::new(("view", index)).flex_grow().small().info().label("View").on_click({
                         let id = item.id;
                         move |_, window, cx| {
@@ -250,17 +274,41 @@ impl TableDelegate for InstanceList {
                 "version" => item.configuration.minecraft_version.as_str().into_any_element(),
                 "controls" => {
                     let backend_handle = self.backend_handle.clone();
+                    let item = item.clone();
                     h_flex()
                         .size_full()
                         .gap_2()
                         .border_r_4()
-                        .child(Button::new("start").w(relative(0.5)).small().success().label("Start").on_click({
+                        .child({
                             let name = item.name.clone();
                             let id = item.id;
-                            move |_, window, cx| {
-                                root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                            let status = item.status;
+                            let backend_handle = backend_handle.clone();
+                            match status {
+                                InstanceStatus::NotRunning => {
+                                    Button::new("start").w(relative(0.5)).small().success().label("Start").on_click(
+                                        move |_, window, cx| {
+                                            root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                                        },
+                                    )
+                                },
+                                InstanceStatus::Launching => Button::new("starting")
+                                    .w(relative(0.5))
+                                    .small()
+                                    .warning()
+                                    .icon(IconName::Loader)
+                                    .label("Starting..."),
+                                InstanceStatus::Running => Button::new("kill")
+                                    .w(relative(0.5))
+                                    .small()
+                                    .danger()
+                                    .icon(IconName::Close)
+                                    .label("Kill")
+                                    .on_click(move |_, _, _| {
+                                        backend_handle.send(MessageToBackend::KillInstance { id });
+                                    }),
                             }
-                        }))
+                        })
                         .child(Button::new("view").w(relative(0.5)).small().info().label("View").on_click({
                             let id = item.id;
                             move |_, window, cx| {

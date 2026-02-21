@@ -107,6 +107,9 @@ impl BackendState {
             MessageToBackend::RenameInstance { id, name } => {
                 self.rename_instance(id, &name).await;
             },
+            MessageToBackend::SetInstanceIcon { id, icon } => {
+                self.set_instance_icon(id, icon).await;
+            },
             MessageToBackend::SetInstanceMinecraftVersion { id, version } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {

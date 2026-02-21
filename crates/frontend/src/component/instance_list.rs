@@ -77,7 +77,7 @@ impl InstanceList {
         let loader_and_version =
             format!("{} {}", item.configuration.loader.name(), item.configuration.minecraft_version.as_str(),);
 
-        let icon = if let Some(icon) = item.icon.clone() {
+        let icon_element = if let Some(icon) = item.icon.clone() {
             let transform = png_render_cache::ImageTransformation::Resize { width: 64, height: 64 };
             png_render_cache::render_with_transform(icon, transform, cx)
                 .rounded(cx.theme().radius)
@@ -92,9 +92,42 @@ impl InstanceList {
 
         let theme = cx.theme();
         let backend_handle = self.backend_handle.clone();
+        let backend_handle_for_delete = self.backend_handle.clone();
         let id = item.id;
         let name = item.name.clone();
         let trash_icon = Icon::default().path("icons/trash-2.svg");
+        let edit_icon = Icon::default().path("icons/brush.svg").text_color(white());
+
+        let icon = div()
+            .id(("icon", index))
+            .cursor_pointer()
+            .size_16()
+            .min_w_16()
+            .min_h_16()
+            .relative()
+            .on_click(move |_, window, cx| {
+                let id = id;
+                let backend_handle = backend_handle.clone();
+                crate::modals::select_icon::open_select_icon(
+                    Box::new(move |icon, cx| {
+                        backend_handle.send(bridge::message::MessageToBackend::SetInstanceIcon { id, icon });
+                    }),
+                    window,
+                    cx,
+                );
+            })
+            .child(icon_element)
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(black().clone().opacity(0.5))
+                    .opacity(0.0)
+                    .hover(|this| this.opacity(1.0))
+                    .items_center()
+                    .justify_center()
+                    .child(edit_icon.clone().size_8()),
+            );
 
         v_flex()
             .flex_1()
@@ -116,12 +149,12 @@ impl InstanceList {
                     .icon(trash_icon)
                     .on_click(move |click: &ClickEvent, window, cx| {
                         if InterfaceConfig::get(cx).quick_delete_instance && click.modifiers().shift {
-                            backend_handle.send(bridge::message::MessageToBackend::DeleteInstance { id });
+                            backend_handle_for_delete.send(bridge::message::MessageToBackend::DeleteInstance { id });
                         } else {
                             modals::delete_instance::open_delete_instance(
                                 id,
                                 name.clone(),
-                                backend_handle.clone(),
+                                backend_handle_for_delete.clone(),
                                 window,
                                 cx,
                             );

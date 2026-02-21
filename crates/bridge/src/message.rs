@@ -6,10 +6,13 @@ use std::{
 
 use enumset::{EnumSet, EnumSetType};
 use schema::{
-    backend_config::{BackendConfig, SyncTarget}, instance::{
+    backend_config::{BackendConfig, SyncTarget},
+    instance::{
         InstanceConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
         InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration, InstanceSystemLibrariesConfiguration,
-    }, loader::Loader, pandora_update::{UpdateManifest, UpdateManifestExe, UpdatePrompt}
+    },
+    loader::Loader,
+    pandora_update::{UpdateManifest, UpdateManifestExe, UpdatePrompt},
 };
 use ustr::Ustr;
 use uuid::Uuid;
@@ -46,17 +49,21 @@ pub enum MessageToBackend {
         id: InstanceID,
         name: Ustr,
     },
+    SetInstanceIcon {
+        id: InstanceID,
+        icon: Option<EmbeddedOrRaw>,
+    },
     SetInstanceMinecraftVersion {
         id: InstanceID,
-        version: Ustr
+        version: Ustr,
     },
     SetInstanceLoader {
         id: InstanceID,
-        loader: Loader
+        loader: Loader,
     },
     SetInstancePreferredLoaderVersion {
         id: InstanceID,
-        loader_version: Option<&'static str>
+        loader_version: Option<&'static str>,
     },
     SetInstanceMemory {
         id: InstanceID,
@@ -122,7 +129,7 @@ pub enum MessageToBackend {
     DownloadAllMetadata,
     UpdateCheck {
         instance: InstanceID,
-        modal_action: ModalAction
+        modal_action: ModalAction,
     },
     UpdateContent {
         instance: InstanceID,
@@ -132,7 +139,7 @@ pub enum MessageToBackend {
     Sleep5s,
     ReadLog {
         path: Arc<Path>,
-        send: tokio::sync::mpsc::Sender<Arc<str>>
+        send: tokio::sync::mpsc::Sender<Arc<str>>,
     },
     GetLogFiles {
         instance: InstanceID,
@@ -160,7 +167,7 @@ pub enum MessageToBackend {
     },
     AddOfflineAccount {
         name: Arc<str>,
-        uuid: Uuid
+        uuid: Uuid,
     },
     SelectAccount {
         uuid: Uuid,
@@ -173,12 +180,12 @@ pub enum MessageToBackend {
     },
     CreateInstanceShortcut {
         id: InstanceID,
-        path: PathBuf
+        path: PathBuf,
     },
     InstallUpdate {
         update: UpdatePrompt,
         modal_action: ModalAction,
-    }
+    },
 }
 
 #[derive(Debug)]

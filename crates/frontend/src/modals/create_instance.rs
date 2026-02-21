@@ -287,7 +287,7 @@ impl CreateInstanceModalState {
                     let entity = entity.clone();
                     crate::modals::select_icon::open_select_icon(Box::new(move |icon, cx| {
                         cx.update_entity(&entity, |this, _| {
-                            this.icon = Some(icon);
+                            this.icon = icon;
                         });
                     }), window, cx);
                 }

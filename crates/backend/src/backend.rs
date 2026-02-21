@@ -1131,6 +1131,87 @@ impl BackendState {
         }
     }
 
+    pub async fn set_instance_icon(&self, id: InstanceID, icon: Option<bridge::message::EmbeddedOrRaw>) {
+        let instance_dir = {
+            let instance_state = self.instance_state.read();
+            match instance_state.instances.get(id) {
+                Some(instance) => instance.root_path.clone(),
+                None => {
+                    self.send.send_error("Instance not found".to_string());
+                    return;
+                }
+            }
+        };
+
+        let instance_fallback_icon = if let Some(EmbeddedOrRaw::Embedded(e)) = &icon {
+            Some(Ustr::from(&**e))
+        } else {
+            None
+        };
+
+        {
+            let mut instance_state = self.instance_state.write();
+            if let Some(instance) = instance_state.instances.get_mut(id) {
+                instance.configuration.modify(|configuration| {
+                    configuration.instance_fallback_icon = instance_fallback_icon;
+                });
+            }
+        }
+
+        let info_path = instance_dir.join("info_v1.json");
+        {
+            let mut instance_state = self.instance_state.write();
+            if let Some(instance) = instance_state.instances.get_mut(id) {
+                let config = instance.configuration.get();
+                let instance_info = InstanceConfiguration {
+                    minecraft_version: config.minecraft_version,
+                    loader: config.loader,
+                    preferred_loader_version: config.preferred_loader_version,
+                    memory: config.memory.clone(),
+                    jvm_flags: config.jvm_flags.clone(),
+                    jvm_binary: config.jvm_binary.clone(),
+                    linux_wrapper: config.linux_wrapper.clone(),
+                    system_libraries: config.system_libraries.clone(),
+                    instance_fallback_icon: config.instance_fallback_icon,
+                };
+                crate::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
+            }
+        }
+
+        if let Some(EmbeddedOrRaw::Raw(image_bytes)) = icon {
+            if let Ok(format) = image::guess_format(&*image_bytes) {
+                if format == ImageFormat::Png {
+                    let icon_path = instance_dir.join("icon.png");
+                    crate::write_safe(&icon_path, &*image_bytes).unwrap();
+                } else {
+                    self.send.send_error("Unable to apply icon: only pngs are supported".to_string());
+                }
+            } else {
+                self.send.send_error("Unable to apply icon: unknown format".to_string());
+            }
+        } else {
+            let icon_path = instance_dir.join("icon.png");
+            let _ = tokio::fs::remove_file(icon_path).await;
+        }
+
+        let new_icon = std::fs::read(instance_dir.join("icon.png")).ok().map(|v| v.into());
+
+        {
+            let mut instance_state = self.instance_state.write();
+            if let Some(instance) = instance_state.instances.get_mut(id) {
+                instance.icon = new_icon;
+                self.send.send(MessageToFrontend::InstanceModified {
+                    id,
+                    name: instance.name.clone(),
+                    icon: instance.icon.clone(),
+                    dot_minecraft_folder: instance.dot_minecraft_path.clone(),
+                    configuration: instance.configuration.get().clone(),
+                    status: instance.status(),
+                });
+            }
+        }
+    }
+
     pub async fn get_login_info(&self, modal_action: &ModalAction) -> Option<MinecraftLoginInfo> {
         let selected_account = {
             let mut account_info = self.account_info.write();

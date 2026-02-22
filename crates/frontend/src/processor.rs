@@ -251,21 +251,6 @@ impl Processor {
                     );
                 });
             },
-            MessageToFrontend::ConfirmKillInstance { id, name } => {
-                self.with_main_window(message, cx, |this, message, window, cx| {
-                    let MessageToFrontend::ConfirmKillInstance { id, name } = message else {
-                        unreachable!();
-                    };
-
-                    crate::modals::confirm_kill_instance::open_confirm_kill_instance(
-                        id,
-                        name.as_str().into(),
-                        this.data.backend_handle.clone(),
-                        window,
-                        cx,
-                    );
-                });
-            },
         }
     }
 }

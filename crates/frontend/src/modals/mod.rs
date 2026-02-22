@@ -1,4 +1,3 @@
-pub mod confirm_kill_instance;
 pub mod create_instance;
 pub mod delete_instance;
 pub mod generic;

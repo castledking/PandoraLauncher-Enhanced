@@ -251,10 +251,6 @@ pub enum MessageToFrontend {
     MoveInstanceToTop {
         id: InstanceID,
     },
-    ConfirmKillInstance {
-        id: InstanceID,
-        name: Ustr,
-    },
     MetadataResult {
         request: MetadataRequest,
         result: Result<MetadataResult, Arc<str>>,

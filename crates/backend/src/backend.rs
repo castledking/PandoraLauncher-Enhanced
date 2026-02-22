@@ -1128,6 +1128,10 @@ impl BackendState {
         let new_instance_dir = self.directories.instances_dir.join(name);
 
         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            if instance.child.is_some() {
+                self.send.send_warning("Unable to rename instance, instance is running".to_string());
+                return;
+            }
             let result = std::fs::rename(&instance.root_path, new_instance_dir);
             if let Err(err) = result {
                 self.send.send_error(format!("Unable to rename instance folder: {}", err));

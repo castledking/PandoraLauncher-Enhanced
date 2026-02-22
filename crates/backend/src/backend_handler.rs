@@ -212,10 +212,9 @@ impl BackendState {
 
                 let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     if instance.child.is_some() {
-                        self.send.send(MessageToFrontend::ConfirmKillInstance {
-                            id,
-                            name: instance.name,
-                        });
+                        self.send.send_warning("Can't launch instance, already running");
+                        modal_action.set_error_message("Can't launch instance, already running".into());
+                        modal_action.set_finished();
                         return;
                     }
 

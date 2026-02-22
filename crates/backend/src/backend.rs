@@ -98,6 +98,9 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
     // Load config
     let config = Persistent::load(directories.config_json.clone());
 
+    // Load owned skins
+    let owned_skins = Persistent::load(directories.owned_skins_json.clone());
+
     let mut state = BackendState {
         self_handle,
         send: send.clone(),
@@ -113,6 +116,7 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
         config: Arc::new(RwLock::new(config)),
         secret_storage: Arc::new(OnceCell::new()),
         head_cache: Default::default(),
+        owned_skins: Arc::new(RwLock::new(owned_skins)),
     };
 
     log::debug!("Doing initial backend load");
@@ -169,7 +173,22 @@ pub struct BackendState {
     pub account_info: Arc<RwLock<Persistent<BackendAccountInfo>>>,
     pub config: Arc<RwLock<Persistent<BackendConfig>>>,
     pub secret_storage: Arc<OnceCell<Result<PlatformSecretStorage, SecretStorageError>>>,
-    pub head_cache: Arc<RwLock<FxHashMap<Arc<str>, HeadCacheEntry>>>
+    pub head_cache: Arc<RwLock<FxHashMap<Arc<str>, HeadCacheEntry>>>,
+    pub owned_skins: Arc<RwLock<Persistent<OwnedSkins>>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct OwnedSkins {
+    pub skins: Vec<OwnedSkin>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OwnedSkin {
+    pub url: String,
+    pub variant: String,
+    pub skin_id: String,
+    pub thumbnail_front: Option<String>,
+    pub thumbnail_back: Option<String>,
 }
 
 pub enum HeadCacheEntry {

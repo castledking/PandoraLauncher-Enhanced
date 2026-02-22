@@ -14,6 +14,7 @@ use gpui_component::{
     v_flex,
     IconName, Selectable, Disableable, WindowExt,
 };
+use image::ImageEncoder;
 
 pub struct UploadSkinModal {
     backend_handle: BackendHandle,
@@ -71,8 +72,10 @@ impl UploadSkinModal {
 
             let (w, h) = (img.width(), img.height());
             if (w == 64 && h == 64) || (w == 64 && h == 32) {
-                let rgba = img.to_rgba8();
-                let data: Arc<[u8]> = Arc::from(rgba.into_raw());
+                let mut png_data = Vec::new();
+                let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+                encoder.write_image(&img.to_rgba8(), w, h, image::ExtendedColorType::Rgba8).unwrap();
+                let data: Arc<[u8]> = Arc::from(png_data);
                 let _ = cx.update_window_entity(&this_entity, move |this, _window, cx| {
                     this.selected_file_data = Some(data);
                     this.selected_file_name = Some(file_name.into());

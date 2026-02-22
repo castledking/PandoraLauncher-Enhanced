@@ -17,7 +17,7 @@ use gpui_component::{
 
 use crate::{
     component::skin_renderer::SkinRenderer,
-    entity::{account::AccountEntries, minecraft_profile::MinecraftProfileEntries, DataEntities},
+    entity::{account::AccountEntries, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
     ui,
     modals::upload_skin_modal,
 };
@@ -33,6 +33,7 @@ pub struct SkinsPage {
     backend_handle: BackendHandle,
     minecraft_profile: Entity<MinecraftProfileEntries>,
     accounts: Entity<AccountEntries>,
+    skin_thumbnail_cache: Entity<SkinThumbnailCache>,
     state: SkinPageState,
     selected_skin_id: Option<Arc<str>>,
     _subscription: Subscription,
@@ -43,7 +44,6 @@ pub struct SkinsPage {
     _download_active_cape_task: Option<Task<()>>,
     last_rendered_cape_url: Option<String>,
     
-    thumbnail_cache: std::collections::HashMap<Arc<str>, (Arc<RenderImage>, Arc<RenderImage>)>,
     _thumbnail_tasks: std::collections::HashMap<Arc<str>, Task<()>>,
 }
 
@@ -66,6 +66,7 @@ impl SkinsPage {
             backend_handle: data.backend_handle.clone(),
             minecraft_profile: data.minecraft_profile.clone(),
             accounts: data.accounts.clone(),
+            skin_thumbnail_cache: data.skin_thumbnail_cache.clone(),
             state,
             selected_skin_id: None,
             _subscription,
@@ -75,7 +76,6 @@ impl SkinsPage {
             last_rendered_skin_url: None,
             _download_active_cape_task: None,
             last_rendered_cape_url: None,
-            thumbnail_cache: std::collections::HashMap::new(),
             _thumbnail_tasks: std::collections::HashMap::new(),
         };
         page.load_profile(cx);
@@ -206,38 +206,47 @@ impl SkinsPage {
                 self.last_rendered_cape_url = None;
             }
 
-            // Lazy load thumbnails
+            // Lazy load thumbnails - keyed by URL to avoid duplicates
+            let mut urls_to_load: Vec<(String, Arc<str>, bool)> = Vec::new();
+            let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
             for skin in &profile.skins {
-                let id = skin.id.clone();
                 let url = skin.url.to_string();
                 let is_slim = skin.variant.as_ref() == "SLIM";
+                
+                // Skip if already cached or loading
+                if !thumbnail_cache.contains(&skin.url) && !self._thumbnail_tasks.contains_key(&skin.url) {
+                    urls_to_load.push((url.clone(), skin.url.clone(), is_slim));
+                }
+            }
+            let _ = thumbnail_cache;
 
-                if !self.thumbnail_cache.contains_key(&id) && !self._thumbnail_tasks.contains_key(&id) {
-                    let client = cx.http_client();
-                    let id_clone = id.clone();
-                    let task = cx.spawn(async move |this, cx| {
-                        if let Ok(mut response) = client.get(&url, ().into(), true).await {
-                            use futures::AsyncReadExt;
-                            let mut bytes = Vec::new();
-                            if response.body_mut().read_to_end(&mut bytes).await.is_ok() {
-                                let data: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
-                                let renderer = SkinRenderer::new(Some(data), is_slim);
-                                // Render both front and back - adjust for forward-facing logic
-                                // Yaw ~0.3 radians for front, PI + 0.3 for back.
-                                let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
-                                let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
-                                
-                                if let (Some(f), Some(b)) = (front, back) {
-                                    let _ = this.update(cx, |this, cx| {
-                                        this.thumbnail_cache.insert(id_clone, (f, b));
-                                        cx.notify();
+            // Load thumbnails
+            for (url_string, url_arc, is_slim) in urls_to_load {
+                let client = cx.http_client();
+                let url_clone = url_arc.clone();
+                let cache = self.skin_thumbnail_cache.clone();
+                let task = cx.spawn(async move |this, cx| {
+                    if let Ok(mut response) = client.get(&url_string, ().into(), true).await {
+                        use futures::AsyncReadExt;
+                        let mut bytes = Vec::new();
+                        if response.body_mut().read_to_end(&mut bytes).await.is_ok() {
+                            let data: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
+                            let renderer = SkinRenderer::new(Some(data), is_slim);
+                            let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
+                            let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
+                            
+                            if let (Some(f), Some(b)) = (front, back) {
+                                let _ = this.update(cx, |this, cx| {
+                                    this.skin_thumbnail_cache.update(cx, |cache, _| {
+                                        cache.insert(url_clone.clone(), f, b);
                                     });
-                                }
+                                    cx.notify();
+                                });
                             }
                         }
-                    });
-                    self._thumbnail_tasks.insert(id, task);
-                }
+                    }
+                });
+                self._thumbnail_tasks.insert(url_arc, task);
             }
         }
     }
@@ -299,7 +308,9 @@ impl Render for SkinsPage {
                 
                 for skin in &profile.skins {
                     let is_active = skin.state.as_ref() == "ACTIVE";
-                    let (front, back) = self.thumbnail_cache.get(&skin.id).cloned().map(|(f, b)| (Some(f), Some(b))).unwrap_or((None, None));
+                    let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
+                    let (front, back) = thumbnail_cache.get(&skin.url).map(|(f, b)| (Some(f.clone()), Some(b.clone()))).unwrap_or((None, None));
+                    let _ = thumbnail_cache;
                     let url = skin.url.clone();
                     let variant = skin.variant.clone();
                     let this_entity = cx.entity().clone();

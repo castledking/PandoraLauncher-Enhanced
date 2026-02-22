@@ -17,7 +17,7 @@ impl MinecraftProfileEntries {
     pub fn set_profile(entity: &Entity<Self>, profile: MinecraftProfileInfo, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             entries.profile = Some(profile);
-            cx.notify();
+            cx.emit(ProfileUpdated);
         });
     }
 }

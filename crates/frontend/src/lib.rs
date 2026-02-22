@@ -17,7 +17,7 @@ use parking_lot::RwLock;
 use crate::{
     entity::{
         DataEntities, PanicMessages, account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata,
-        minecraft_profile::MinecraftProfileEntries,
+        minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache,
     },
     interface_config::InterfaceConfig,
     processor::Processor,
@@ -172,12 +172,14 @@ pub fn start(
             let metadata = cx.new(|_| FrontendMetadata::new(backend_handle.clone()));
             let accounts = cx.new(|_| AccountEntries::default());
             let minecraft_profile = cx.new(|_| MinecraftProfileEntries::default());
+            let skin_thumbnail_cache = cx.new(|_| SkinThumbnailCache::default());
             let data = DataEntities {
                 instances,
                 metadata,
                 backend_handle,
                 accounts,
                 minecraft_profile,
+                skin_thumbnail_cache,
                 theme_folder: theme_folder.into(),
                 panic_messages: Arc::new(PanicMessages {
                     panic_message,

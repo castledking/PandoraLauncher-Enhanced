@@ -717,9 +717,8 @@ impl Render for InstanceSettingsSubpage {
                             system_libraries: page.get_system_libraries_configuration()
                         });
                         cx.notify();
-
                     }
-                }))
+                })))
                 .child(Button::new("select_glfw").success().label(glfw_path_label).disabled(!self.override_glfw_enabled).on_click(cx.listener(|this, _, window, cx| {
                     this.select_file(ts!("instance.select_glfw_lib"), |this, path| {
                         this.override_glfw_path = path;
@@ -751,7 +750,7 @@ impl Render for InstanceSettingsSubpage {
                             system_libraries: this.get_system_libraries_configuration()
                         });
                     }, window, cx);
-                }))))
+                })))
             );
 
         #[cfg(target_os = "linux")]

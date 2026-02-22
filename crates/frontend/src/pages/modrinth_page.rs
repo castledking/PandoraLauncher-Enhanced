@@ -279,15 +279,23 @@ impl ModrinthSearchPage {
                         self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(content.clone());
                     }
 
-                    if let ContentType::ModrinthModpack { summaries, .. } = &summary.content_summary.extra {
+                    if let ContentType::ModrinthModpack { downloads, summaries, .. } = &summary.content_summary.extra {
                         let modpack_project = if let ContentSource::ModrinthProject { project } = &summary.content_source {
                             Some(project.clone())
                         } else {
                             None
                         };
 
-                        for bundled_summary in summaries.iter() {
+                        let deleted_filenames = &summary.disabled_children.deleted_filenames;
+
+                        for (index, bundled_summary) in summaries.iter().enumerate() {
                             if let Some(bundled) = bundled_summary {
+                                if let Some(download) = downloads.get(index) {
+                                    if deleted_filenames.contains(&*download.path) {
+                                        continue;
+                                    }
+                                }
+
                                 let bundled_content = InstalledContent {
                                     content_id: summary.id,
                                     status: bundled.update_status.clone(),
@@ -298,7 +306,25 @@ impl ModrinthSearchPage {
                                 if let Some(mod_id) = &bundled.id {
                                     let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
                                     self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content.clone());
-                                    self.installed_mods_by_filename_prefix.entry(mod_id_key).or_insert(bundled_content);
+                                    self.installed_mods_by_filename_prefix.entry(mod_id_key).or_insert(bundled_content.clone());
+                                }
+                                
+                                if let Some(name) = &bundled.name {
+                                    let name_key: Arc<str> = name.to_lowercase().into();
+                                    self.installed_mods_by_filename_prefix.entry(name_key).or_insert(bundled_content.clone());
+                                }
+
+                                if let Some(download) = downloads.get(index) {
+                                    if let Some(filename) = download.path.rsplit('/').next() {
+                                        if let Some(project_id) = extract_modrinth_project_id_from_filename(filename) {
+                                            self.installed_mods_by_filename_prefix.entry(project_id).or_insert(bundled_content.clone());
+                                        }
+                                    }
+                                    for download_url in download.downloads.iter() {
+                                        if let Some(project_id) = extract_modrinth_project_id_from_url(download_url) {
+                                            self.installed_mods_by_filename_prefix.entry(project_id).or_insert(bundled_content.clone());
+                                        }
+                                    }
                                 }
 
                                 if let Some(ref project) = modpack_project {
@@ -744,7 +770,70 @@ impl ModrinthSearchPage {
                                             cx
                                         );
                                     },
-                                    PrimaryAction::Installed | PrimaryAction::CheckForUpdates
+                                    PrimaryAction::Installed => {
+                                        let project_id = project_id.clone();
+                                        let name = name.clone();
+                                        let install_for = install_for;
+                                        let data = data.clone();
+                                        window.open_dialog(cx, move |dialog, _, _| {
+                                            let type_str = match project_type {
+                                                ModrinthProjectType::Modpack => "modpack",
+                                                ModrinthProjectType::Resourcepack => "resourcepack",
+                                                ModrinthProjectType::Shader => "shader",
+                                                _ => "mod",
+                                            };
+                                            let message = SharedString::new(format!(
+                                                "You already have this {} installed. Are you sure you want to install it again?",
+                                                type_str
+                                            ));
+
+                                            let buttons = h_flex()
+                                                .w_full()
+                                                .gap_2()
+                                                .child(Button::new("install").flex_1().label("Install").success().on_click({
+                                                    let project_type = project_type;
+                                                    let project_id = project_id.clone();
+                                                    let name = name.clone();
+                                                    let install_for = install_for;
+                                                    let data = data.clone();
+                                                    move |_, window, cx| {
+                                                        window.close_all_dialogs(cx);
+                                                        if let Some(install_for_id) = install_for {
+                                                            crate::modals::modrinth_install::open_version_picker(
+                                                                name.as_str(),
+                                                                project_id.clone(),
+                                                                project_type,
+                                                                install_for_id,
+                                                                &data,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        } else {
+                                                            crate::modals::modrinth_install::open(
+                                                                name.as_str(),
+                                                                project_id.clone(),
+                                                                project_type,
+                                                                None,
+                                                                &data,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }
+                                                }))
+                                                .child(Button::new("cancel").flex_1().label("Cancel").on_click(|_, window, cx| {
+                                                    window.close_all_dialogs(cx);
+                                                }));
+
+                                            dialog
+                                                .title(SharedString::from("Already Installed"))
+                                                .child(v_flex()
+                                                    .gap_2()
+                                                    .child(message)
+                                                    .child(buttons))
+                                        });
+                                    },
+                                    PrimaryAction::CheckForUpdates
                                     | PrimaryAction::ErrorCheckingForUpdates | PrimaryAction::UpToDate => {},
                                     PrimaryAction::Update(ids) => {
                                         for id in ids {
@@ -914,6 +1003,7 @@ impl ModrinthSearchPage {
         let is_shader = project_type == ModrinthProjectType::Shader;
 
         let project_id_key: Arc<str> = project_id.to_lowercase().into();
+        
         let installed = if is_resourcepack {
             self.installed_resourcepacks_by_project.get(&project_id_key)
         } else if is_modpack {
@@ -965,24 +1055,6 @@ impl ModrinthSearchPage {
 
             if self.installed_mods_by_filename_prefix.contains_key(&project_id_key) {
                 return (PrimaryAction::Installed, Some(NubAction::UpToDate));
-            }
-
-            if !title.is_empty() {
-                let title_normalized: String = title.chars()
-                    .filter(|c| c.is_alphanumeric())
-                    .collect::<String>()
-                    .to_lowercase();
-                
-                for (filename_prefix, _) in &self.installed_mods_by_filename_prefix {
-                    let fp: String = filename_prefix.chars()
-                        .filter(|c| c.is_alphanumeric())
-                        .collect::<String>()
-                        .to_lowercase();
-                    
-                    if title_normalized == fp || fp.contains(&title_normalized) || title_normalized.contains(&fp) {
-                        return (PrimaryAction::Installed, Some(NubAction::UpToDate));
-                    }
-                }
             }
         }
 
@@ -1040,7 +1112,6 @@ fn extract_modrinth_project_id_from_filename(filename: &str) -> Option<Arc<str>>
         let first_char = after_last_dash.chars().next().unwrap();
         if first_char.is_ascii_digit() {
             let result = filename[..last_dash_pos].to_lowercase();
-            log::debug!("Extracted project ID '{}' from filename '{}'", result, filename);
             return Some(result.into());
         }
         
@@ -1048,12 +1119,24 @@ fn extract_modrinth_project_id_from_filename(filename: &str) -> Option<Arc<str>>
             let potential_version = &filename[second_dash_pos + 1..last_dash_pos];
             if !potential_version.is_empty() && potential_version.chars().next()?.is_ascii_digit() {
                 let result = filename[..second_dash_pos].to_lowercase();
-                log::debug!("Extracted project ID '{}' from filename '{}' (second pattern)", result, filename);
                 return Some(result.into());
             }
         }
     }
-    
+
+    None
+}
+
+fn extract_modrinth_project_id_from_url(url: &str) -> Option<Arc<str>> {
+    if let Some(data_pos) = url.find("/data/") {
+        let after_data = &url[data_pos + 6..];
+        if let Some(slash_pos) = after_data.find('/') {
+            let project_id = &after_data[..slash_pos];
+            if !project_id.is_empty() {
+                return Some(project_id.to_lowercase().into());
+            }
+        }
+    }
     None
 }
 

@@ -307,11 +307,23 @@ impl BackendState {
 
                 instance_state.reload_immediately.extend(reload);
             },
-            MessageToBackend::SetContentChildEnabled { id, content_id: mod_id, child_id, child_name, child_filename, enabled } => {
+            MessageToBackend::SetContentChildEnabled { id, content_id: mod_id, child_id, child_name, child_filename, enabled, delete } => {
                 let mut instance_state = self.instance_state.write();
                 if let Some(instance) = instance_state.instances.get_mut(id)
                     && let Some((instance_mod, folder)) = instance.try_get_content(mod_id)
                 {
+                    if delete {
+                        let file_to_delete = instance_mod.path.parent()
+                            .map(|p| p.join(&*child_filename));
+                        if let Some(file_path) = file_to_delete {
+                            if file_path.exists() {
+                                if let Err(e) = std::fs::remove_file(&file_path) {
+                                    log::error!("Failed to delete child file {:?}: {}", file_path, e);
+                                }
+                            }
+                        }
+                    }
+
                     let Some(aux_path) = crate::pandora_aux_path_for_content(instance_mod) else {
                         return;
                     };
@@ -320,7 +332,13 @@ impl BackendState {
 
                     let mut changed = false;
 
-                    if enabled {
+                    if delete {
+                        let child_filename_for_del = child_filename.clone();
+                        changed |= aux.disabled_children.deleted_filenames.insert(child_filename_for_del.clone());
+                        aux.disabled_children.disabled_ids.remove(&child_id.unwrap_or_default());
+                        aux.disabled_children.disabled_names.remove(&child_name.unwrap_or_default());
+                        aux.disabled_children.disabled_filenames.remove(&child_filename_for_del);
+                    } else if enabled {
                         if let Some(child_id) = child_id {
                             changed |= aux.disabled_children.disabled_ids.remove(&child_id);
                         }
@@ -328,6 +346,7 @@ impl BackendState {
                             changed |= aux.disabled_children.disabled_names.remove(&child_name);
                         }
                         changed |= aux.disabled_children.disabled_filenames.remove(&child_filename);
+                        changed |= aux.disabled_children.deleted_filenames.remove(&child_filename);
                     } else {
                         if let Some(child_id) = child_id {
                             changed |= aux.disabled_children.disabled_ids.insert(child_id);
@@ -342,13 +361,13 @@ impl BackendState {
                         let bytes = match serde_json::to_vec(&aux) {
                             Ok(bytes) => bytes,
                             Err(err) => {
-                                log::error!("Unable to serialize AuxiliaryContentMeta: {err:?}");
+                                log::error!("Unable to serialize AuxiliaryContentMeta: {:?}", err);
                                 self.send.send_error("Unable to serialize AuxiliaryContentMeta");
                                 return;
                             },
                         };
                         if let Err(err) = crate::write_safe(&aux_path, &bytes) {
-                            log::error!("Unable to save aux meta: {err:?}");
+                            log::error!("Unable to save aux meta: {:?}", err);
                             self.send.send_error("Unable to save aux meta");
                         }
                         instance_state.reload_immediately.insert((id, folder));

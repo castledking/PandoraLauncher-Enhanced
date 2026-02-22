@@ -117,6 +117,7 @@ pub enum MessageToBackend {
         child_name: Option<Arc<str>>,
         child_filename: Arc<str>,
         enabled: bool,
+        delete: bool,
     },
     DeleteContent {
         id: InstanceID,

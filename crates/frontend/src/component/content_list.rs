@@ -38,6 +38,7 @@ pub struct ContentListDelegate {
     children: Vec<Vec<ContentEntryChild>>,
     expanded: Arc<AtomicUsize>,
     confirming_delete: Arc<Mutex<FxHashSet<u64>>>,
+    confirming_delete_children: Arc<Mutex<FxHashSet<u64>>>,
     updating: Arc<Mutex<FxHashSet<u64>>>,
     last_query: SharedString,
     selected: FxHashSet<u64>,
@@ -55,6 +56,7 @@ impl ContentListDelegate {
             children: Vec::new(),
             expanded: Arc::new(AtomicUsize::new(0)),
             confirming_delete: Default::default(),
+            confirming_delete_children: Default::default(),
             updating: Default::default(),
             last_query: SharedString::new_static(""),
             selected: FxHashSet::default(),
@@ -337,7 +339,7 @@ impl ContentListDelegate {
         }))
     }
 
-    fn render_child_entry(&self, child: &ContentEntryChild, cx: &mut App) -> ListItem {
+    fn render_child_entry(&self, child: &ContentEntryChild, cx: &mut Context<ListState<Self>>) -> ListItem {
         let summary = &child.summary;
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
             png_render_cache::render(Arc::clone(png_icon), cx)
@@ -357,22 +359,50 @@ impl ContentListDelegate {
         let enabled = child.enabled;
         let visually_enabled = enabled && child.parent_enabled;
 
-        let delete_button = Button::new(("delete_child", element_id)).danger().icon(Icon::default().path("icons/trash-2.svg")).on_click({
-            let id = self.id;
-            let content_id = child.parent;
-            let path = child.path.clone();
-            let backend_handle = self.backend_handle.clone();
-            move |_, _, _| {
+        let id = self.id;
+        let content_id = child.parent;
+        let child_id = child.summary.id.clone();
+        let child_name = child.summary.name.clone();
+        let path = child.path.clone();
+        let backend_handle = self.backend_handle.clone();
+
+        let delete_button = if self.confirming_delete_children.lock().contains(&element_id) {
+            let confirming_delete_children = self.confirming_delete_children.clone();
+            Button::new(("delete-child", element_id)).danger().icon(IconName::Check).on_click(cx.listener(move |this, _, _, _| {
+                this.delegate().confirming_delete_children.lock().clear();
                 backend_handle.send(MessageToBackend::SetContentChildEnabled {
                     id,
                     content_id,
-                    child_id: None,
-                    child_name: None,
+                    child_id: child_id.clone(),
+                    child_name: child_name.clone(),
                     child_filename: path.clone(),
                     enabled: false,
+                    delete: true,
                 });
-            }
-        });
+            }))
+        } else {
+            let confirming_delete_children = self.confirming_delete_children.clone();
+            Button::new(("delete-child", element_id)).danger().icon(Icon::default().path("icons/trash-2.svg")).on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                let delegate = this.delegate();
+
+                if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
+                    backend_handle.send(MessageToBackend::SetContentChildEnabled {
+                        id,
+                        content_id,
+                        child_id: child_id.clone(),
+                        child_name: child_name.clone(),
+                        child_filename: path.clone(),
+                        enabled: false,
+                        delete: true,
+                    });
+                    return;
+                }
+
+                delegate.confirming_delete_children.lock().clear();
+                delegate.confirming_delete_children.lock().insert(element_id);
+            }))
+        };
 
         let item_content = h_flex()
             .gap_1()
@@ -395,6 +425,7 @@ impl ContentListDelegate {
                                 child_name: child_name.clone(),
                                 child_filename: path.clone(),
                                 enabled: *checked,
+                                delete: false,
                             });
                         }
                     })
@@ -433,6 +464,10 @@ impl ContentListDelegate {
                 let mut inner_children = Vec::new();
                 for (index, download) in downloads.iter().enumerate() {
                     if !download.path.starts_with("mods/") {
+                        continue;
+                    }
+
+                    if modification.disabled_children.deleted_filenames.contains(&*download.path) {
                         continue;
                     }
 

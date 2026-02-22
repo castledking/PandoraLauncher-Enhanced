@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use bridge::{
@@ -8,16 +8,16 @@ use bridge::{
     message::{BridgeNotificationType, MessageToFrontend},
 };
 use gpui::{
-    px, size, AnyWindowHandle, App, AppContext, Entity, SharedString, TitlebarOptions, Window, WindowDecorations,
-    WindowHandle, WindowOptions,
+    AnyWindowHandle, App, AppContext, Entity, SharedString, TitlebarOptions, Window, WindowDecorations, WindowHandle,
+    WindowOptions, px, size,
 };
 use gpui_component::{
-    notification::{Notification, NotificationType},
     Root, WindowExt,
+    notification::{Notification, NotificationType},
 };
 
 use crate::{
-    entity::{account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata, DataEntities},
+    entity::{DataEntities, account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata},
     game_output::{GameOutput, GameOutputRoot},
     interface_config::InterfaceConfig,
 };
@@ -250,6 +250,13 @@ impl Processor {
                         cx,
                     );
                 });
+            },
+            MessageToFrontend::MinecraftProfileResult { profile } => {
+                crate::entity::minecraft_profile::MinecraftProfileEntries::set_profile(
+                    &self.data.minecraft_profile,
+                    profile,
+                    cx,
+                );
             },
         }
     }

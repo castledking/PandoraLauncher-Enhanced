@@ -130,7 +130,7 @@ impl InterfaceConfigHolder {
     }
 }
 
-pub(crate) fn try_read_json<T: std::fmt::Debug + Default + for <'de> Deserialize<'de>>(path: &Path) -> T {
+pub(crate) fn try_read_json<T: std::fmt::Debug + Default + for<'de> Deserialize<'de>>(path: &Path) -> T {
     let Ok(data) = std::fs::read(path) else {
         return T::default();
     };

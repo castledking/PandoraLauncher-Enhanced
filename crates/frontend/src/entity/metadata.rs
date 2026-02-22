@@ -1,8 +1,19 @@
 use std::{collections::HashMap, sync::Arc};
 
-use bridge::{handle::BackendHandle, keep_alive::KeepAliveHandle, message::MessageToBackend, meta::{MetadataRequest, MetadataResult}};
+use bridge::{
+    handle::BackendHandle,
+    keep_alive::KeepAliveHandle,
+    message::MessageToBackend,
+    meta::{MetadataRequest, MetadataResult},
+};
 use gpui::{prelude::*, *};
-use schema::{fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest}, maven::MavenMetadataXml, modrinth::{ModrinthProjectVersionsResult, ModrinthSearchResult}, version_manifest::MinecraftVersionManifest};
+use schema::{
+    fabric_loader_manifest::FabricLoaderManifest,
+    forge::{ForgeMavenManifest, NeoforgeMavenManifest},
+    maven::MavenMetadataXml,
+    modrinth::{ModrinthProjectVersionsResult, ModrinthSearchResult},
+    version_manifest::MinecraftVersionManifest,
+};
 
 #[derive(Debug)]
 pub enum FrontendMetadataState {
@@ -19,7 +30,7 @@ pub enum FrontendMetadataResult<'a, T> {
     Error(SharedString),
 }
 
-impl <'a, T> FrontendMetadataResult<'a, T> {
+impl<'a, T> FrontendMetadataResult<'a, T> {
     pub fn as_typeless(self) -> TypelessFrontendMetadataResult {
         match self {
             FrontendMetadataResult::Loading => TypelessFrontendMetadataResult::Loading,
@@ -48,7 +59,11 @@ impl FrontendMetadata {
         }
     }
 
-    pub fn force_reload(entity: &Entity<Self>, request: MetadataRequest, cx: &mut App) -> Entity<FrontendMetadataState> {
+    pub fn force_reload(
+        entity: &Entity<Self>,
+        request: MetadataRequest,
+        cx: &mut App,
+    ) -> Entity<FrontendMetadataState> {
         entity.update(cx, |this, cx| {
             if let Some(existing) = this.data.get(&request) {
                 this.backend_handle.send(MessageToBackend::RequestMetadata {
@@ -118,12 +133,12 @@ macro_rules! define_as_metadata_result {
             fn result(&self) -> FrontendMetadataResult<'_, $t> {
                 match self {
                     FrontendMetadataState::Loading => FrontendMetadataResult::Loading,
-                    FrontendMetadataState::Loaded { result, .. } => {
-                        match result {
-                            Ok(MetadataResult::$t(result)) => FrontendMetadataResult::Loaded(&*result),
-                            Ok(_) => FrontendMetadataResult::Error(SharedString::new_static("Wrong metadata type! Pandora bug!")),
-                            Err(error) => FrontendMetadataResult::Error(SharedString::new(error.clone())),
-                        }
+                    FrontendMetadataState::Loaded { result, .. } => match result {
+                        Ok(MetadataResult::$t(result)) => FrontendMetadataResult::Loaded(&*result),
+                        Ok(_) => {
+                            FrontendMetadataResult::Error(SharedString::new_static("Wrong metadata type! Pandora bug!"))
+                        },
+                        Err(error) => FrontendMetadataResult::Error(SharedString::new(error.clone())),
                     },
                 }
             }

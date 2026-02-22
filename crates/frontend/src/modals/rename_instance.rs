@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use bridge::{handle::BackendHandle, instance::InstanceID};
-use gpui::{prelude::*, Styled, *};
+use gpui::{Styled, prelude::*, *};
 use gpui_component::{
+    StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputState},
-    v_flex, StyledExt, WindowExt,
+    v_flex,
 };
 
 pub fn open_rename_instance(

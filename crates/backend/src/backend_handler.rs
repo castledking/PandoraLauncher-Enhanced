@@ -2,15 +2,18 @@ use std::{io::{BufRead, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, syn
 
 use auth::{credentials::AccountCredentials, models::{MinecraftAccessToken, MinecraftProfileResponse}, secret::PlatformSecretStorage};
 use bridge::{
-    install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{InstanceStatus, ContentType, ContentSummary}, message::{LogFiles, MessageToBackend, MessageToFrontend}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, serial::AtomicOptionSerial
+    install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{InstanceStatus, ContentType, ContentSummary}, message::{LogFiles, MessageToBackend, MessageToFrontend, MinecraftCapeInfo, MinecraftProfileInfo, MinecraftSkinInfo}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, serial::AtomicOptionSerial
 };
+use chrono::Utc;
 use futures::TryFutureExt;
+use reqwest::StatusCode;
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, modrinth::ModrinthLoader, version::{LaunchArgument, LaunchArgumentValue}};
 use serde::Deserialize;
 use strum::IntoEnumIterator;
 use tokio::{io::AsyncBufReadExt, sync::Semaphore};
 use ustr::Ustr;
+use uuid::Uuid;
 
 use crate::{
     BackendState, LoginError, account::{BackendAccount, MinecraftLoginInfo}, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::ModUpdateAction
@@ -393,6 +396,294 @@ impl BackendState {
                     let _ = self.clone().load_instance_content(id, ContentFolder::ResourcePacks).await;
                 }
                 self.send.send(MessageToFrontend::Refresh);
+            },
+            MessageToBackend::GetMinecraftProfile { modal_action } => {
+                let selected_uuid = {
+                    let mut account_info = self.account_info.write();
+                    let info = account_info.get();
+                    info.selected_account
+                };
+
+                if let Some(selected_uuid) = selected_uuid {
+                    let secret_storage = match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                        Ok(ss) => ss,
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Secret storage error: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+
+                    let credentials = match secret_storage.read_credentials(selected_uuid).await {
+                        Ok(Some(creds)) => creds,
+                        Ok(None) => {
+                            self.send.send_error(Arc::from("No credentials found. Please log in again."));
+                            modal_action.set_finished();
+                            return;
+                        }
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Error reading credentials: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+
+                    // Get valid Minecraft access token from credentials
+                    let minecraft_token = {
+                        let now = chrono::Utc::now();
+                        if let Some(access) = &credentials.access_token && now < access.expiry {
+                            Some(auth::models::MinecraftAccessToken(Arc::clone(&access.token)))
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(minecraft_token) = minecraft_token {
+                        let client = self.http_client.clone();
+                        let send = self.send.clone();
+                        tokio::spawn(async move {
+                            let response = client
+                                .get("https://api.minecraftservices.com/minecraft/profile")
+                                .bearer_auth(minecraft_token.secret())
+                                .send()
+                                .await;
+
+                            match response {
+                                Ok(resp) if resp.status() == StatusCode::OK => {
+                                    match serde_json::from_slice::<MinecraftProfileResponse>(&resp.bytes().await.unwrap_or_default()) {
+                                        Ok(profile) => {
+                                            let skins: Vec<MinecraftSkinInfo> = profile.skins.iter().map(|s| {
+                                                MinecraftSkinInfo {
+                                                    id: s.id.map(|id| format!("{}", id)).unwrap_or_default().into(),
+                                                    url: s.url.clone(),
+                                                    variant: match s.variant {
+                                                        auth::models::SkinVariant::Classic => "CLASSIC".into(),
+                                                        auth::models::SkinVariant::Slim => "SLIM".into(),
+                                                        auth::models::SkinVariant::Other => "OTHER".into(),
+                                                    },
+                                                    state: match s.state {
+                                                        auth::models::SkinState::Active => "ACTIVE".into(),
+                                                        auth::models::SkinState::Inactive => "INACTIVE".into(),
+                                                    },
+                                                }
+                                            }).collect();
+                                            let capes: Vec<MinecraftCapeInfo> = profile.capes.iter().map(|c| {
+                                                MinecraftCapeInfo {
+                                                    id: format!("{}", c.id).into(),
+                                                    url: c.url.clone(),
+                                                }
+                                            }).collect();
+
+                                            let info = MinecraftProfileInfo {
+                                                id: profile.id,
+                                                name: profile.name,
+                                                skins,
+                                                capes,
+                                            };
+                                            send.send(MessageToFrontend::MinecraftProfileResult { profile: info });
+                                        },
+                                        Err(e) => {
+                                            log::error!("Failed to parse Minecraft profile: {}", e);
+                                            send.send_error(Arc::from("Failed to parse profile"));
+                                        }
+                                    }
+                                },
+                                Ok(resp) => {
+                                    log::error!("Minecraft profile request failed with status: {}", resp.status());
+                                    send.send_error(Arc::from(format!("Profile request failed: {}", resp.status())));
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to get Minecraft profile: {}", e);
+                                    send.send_error(Arc::from("Failed to get profile"));
+                                }
+                            }
+                            modal_action.set_finished();
+                        });
+                    } else {
+                        self.send.send_error(Arc::from("No Minecraft access token. Please log in again."));
+                        modal_action.set_finished();
+                    }
+                } else {
+                    self.send.send_error(Arc::from("No account selected"));
+                    modal_action.set_finished();
+                }
+            },
+            MessageToBackend::SetSkin { skin_url, skin_variant, modal_action } => {
+                let selected_uuid = {
+                    let mut account_info = self.account_info.write();
+                    let info = account_info.get();
+                    info.selected_account
+                };
+
+                if let Some(selected_uuid) = selected_uuid {
+                    let secret_storage = match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                        Ok(ss) => ss,
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Secret storage error: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+
+                    let credentials = match secret_storage.read_credentials(selected_uuid).await {
+                        Ok(Some(creds)) => creds,
+                        Ok(None) => {
+                            self.send.send_error(Arc::from("No credentials found. Please log in again."));
+                            modal_action.set_finished();
+                            return;
+                        }
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Error reading credentials: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+
+                    // Get valid Minecraft access token from credentials
+                    let minecraft_token = {
+                        let now = chrono::Utc::now();
+                        if let Some(access) = &credentials.access_token && now < access.expiry {
+                            Some(auth::models::MinecraftAccessToken(Arc::clone(&access.token)))
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(minecraft_token) = minecraft_token {
+                        let client = self.http_client.clone();
+                        let send = self.send.clone();
+                        let skin_url = skin_url.clone();
+                        let skin_variant = skin_variant.clone();
+                        tokio::spawn(async move {
+                            #[derive(serde::Serialize)]
+                            struct SkinRequest<'a> {
+                                url: &'a str,
+                                variant: &'a str,
+                            }
+                            let request = SkinRequest {
+                                url: &skin_url,
+                                variant: &skin_variant,
+                            };
+                            let response = client
+                                .post("https://api.minecraftservices.com/minecraft/profile/skins")
+                                .bearer_auth(minecraft_token.secret())
+                                .json(&request)
+                                .send()
+                                .await;
+
+                            match response {
+                                Ok(resp) if resp.status() == StatusCode::OK || resp.status() == StatusCode::CREATED => {
+                                    send.send(MessageToFrontend::Refresh);
+                                },
+                                Ok(resp) => {
+                                    let status = resp.status();
+                                    let error_text = resp.text().await.unwrap_or_default();
+                                    log::error!("Set skin failed with status {}: {}", status, error_text);
+                                    send.send_error(Arc::from(format!("Failed to set skin: {}", status)));
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to set skin: {}", e);
+                                    send.send_error(Arc::from("Failed to set skin"));
+                                }
+                            }
+                            modal_action.set_finished();
+                        });
+                    } else {
+                        self.send.send_error(Arc::from("No Minecraft access token. Please log in again."));
+                        modal_action.set_finished();
+                    }
+                } else {
+                    self.send.send_error(Arc::from("No account selected"));
+                    modal_action.set_finished();
+                }
+            },
+            MessageToBackend::UploadSkin { skin_data, skin_variant, modal_action } => {
+                let selected_uuid = {
+                    let mut account_info = self.account_info.write();
+                    let info = account_info.get();
+                    info.selected_account
+                };
+
+                if let Some(selected_uuid) = selected_uuid {
+                    let secret_storage = match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                        Ok(ss) => ss,
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Secret storage error: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+
+                    let credentials = match secret_storage.read_credentials(selected_uuid).await {
+                        Ok(Some(creds)) => creds,
+                        Ok(None) => {
+                            self.send.send_error(Arc::from("No credentials found. Please log in again."));
+                            modal_action.set_finished();
+                            return;
+                        }
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Error reading credentials: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+
+                    // Get valid Minecraft access token from credentials
+                    let minecraft_token = {
+                        let now = chrono::Utc::now();
+                        if let Some(access) = &credentials.access_token && now < access.expiry {
+                            Some(auth::models::MinecraftAccessToken(Arc::clone(&access.token)))
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(minecraft_token) = minecraft_token {
+                        let client = self.http_client.clone();
+                        let send = self.send.clone();
+                        let skin_data = skin_data.clone();
+                        let skin_variant = skin_variant.clone();
+                        tokio::spawn(async move {
+                            let part = reqwest::multipart::Part::bytes(skin_data.to_vec())
+                                .file_name("skin.png")
+                                .mime_str("image/png")
+                                .unwrap();
+                            let form = reqwest::multipart::Form::new()
+                                .text("variant", skin_variant.to_string())
+                                .part("file", part);
+
+                            let response = client
+                                .post("https://api.minecraftservices.com/minecraft/profile/skins")
+                                .bearer_auth(minecraft_token.secret())
+                                .multipart(form)
+                                .send()
+                                .await;
+
+                            match response {
+                                Ok(resp) if resp.status() == reqwest::StatusCode::OK || resp.status() == reqwest::StatusCode::CREATED => {
+                                    send.send(MessageToFrontend::Refresh);
+                                },
+                                Ok(resp) => {
+                                    let status = resp.status();
+                                    let error_text = resp.text().await.unwrap_or_default();
+                                    log::error!("Upload skin failed with status {}: {}", status, error_text);
+                                    send.send_error(Arc::from(format!("Failed to upload skin: {}", status)));
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to upload skin: {}", e);
+                                    send.send_error(Arc::from("Failed to upload skin"));
+                                }
+                            }
+                            modal_action.set_finished();
+                        });
+                    } else {
+                        self.send.send_error(Arc::from("No Minecraft access token. Please log in again."));
+                        modal_action.set_finished();
+                    }
+                } else {
+                    self.send.send_error(Arc::from("No account selected"));
+                    modal_action.set_finished();
+                }
             },
             MessageToBackend::DeleteContent { id, content_ids: mod_ids } => {
                 let mut instance_state = self.instance_state.write();

@@ -1,13 +1,14 @@
 use bridge::handle::BackendHandle;
 use bridge::instance::InstanceStatus;
 use bridge::message::MessageToBackend;
-use gpui::{prelude::*, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, *};
+use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, prelude::*, *};
 use gpui_component::Icon;
 use gpui_component::{
+    ActiveTheme, IconName, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     table::{Column, ColumnSort, TableDelegate, TableState},
-    v_flex, ActiveTheme, IconName, Sizable, StyledExt,
+    v_flex,
 };
 
 const GRAY: Hsla = Hsla {
@@ -19,8 +20,8 @@ const GRAY: Hsla = Hsla {
 
 use crate::{
     entity::{
-        instance::{InstanceAddedEvent, InstanceEntry, InstanceModifiedEvent, InstanceRemovedEvent},
         DataEntities,
+        instance::{InstanceAddedEvent, InstanceEntry, InstanceModifiedEvent, InstanceRemovedEvent},
     },
     interface_config::InterfaceConfig,
     modals,

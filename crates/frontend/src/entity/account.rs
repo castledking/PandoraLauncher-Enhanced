@@ -12,12 +12,7 @@ pub struct AccountEntries {
 }
 
 impl AccountEntries {
-    pub fn set(
-        entity: &Entity<Self>,
-        accounts: Arc<[Account]>,
-        selected_account: Option<Uuid>,
-        cx: &mut App,
-    ) {
+    pub fn set(entity: &Entity<Self>, accounts: Arc<[Account]>, selected_account: Option<Uuid>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             entries.selected_account =
                 selected_account.and_then(|uuid| accounts.iter().find(|acc| acc.uuid == uuid).cloned());

@@ -27,6 +27,7 @@ slab.workspace = true
 intrusive-collections.workspace = true
 atomic-time.workspace = true
 reqwest_client.workspace = true
+reqwest.workspace = true
 uuid.workspace = true
 enumset.workspace = true
 hex.workspace = true
@@ -41,3 +42,4 @@ log.workspace = true
 strum.workspace = true
 
 rust-i18n = "3.1.5"
+futures.workspace = true

@@ -6,7 +6,7 @@ use std::{
 
 use atomic_time::AtomicInstant;
 use gpui::{App, RenderImage};
-use image::{imageops::FilterType, Frame};
+use image::{Frame, imageops::FilterType};
 use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
 use rustc_hash::FxHashMap;
 
@@ -16,7 +16,7 @@ pub enum ImageTransformation {
     Resize {
         width: u32,
         height: u32,
-    }
+    },
 }
 
 struct CacheEntry {
@@ -80,7 +80,8 @@ pub fn render_with_transform(image: Arc<[u8]>, transform: ImageTransformation, c
                 }
                 cache.submitted_cleanup = false;
             });
-        }).detach();
+        })
+        .detach();
     }
 
     result
@@ -92,7 +93,9 @@ impl PngRenderCache {
 
         if let Some(result) = self.by_ptr.get(&(ptr, transform)) {
             // Update expiry
-            result.expiring.store(Instant::now() + Duration::from_secs(EXPIRY_SECONDS), Ordering::Relaxed);
+            result
+                .expiring
+                .store(Instant::now() + Duration::from_secs(EXPIRY_SECONDS), Ordering::Relaxed);
             unsafe {
                 self.expiring.cursor_mut_from_ptr(Rc::as_ptr(result)).remove();
             }
@@ -103,7 +106,9 @@ impl PngRenderCache {
 
         if let Some(result) = self.by_arc.get(&(image.clone(), transform)) {
             // Update expiry
-            result.expiring.store(Instant::now() + Duration::from_secs(EXPIRY_SECONDS), Ordering::Relaxed);
+            result
+                .expiring
+                .store(Instant::now() + Duration::from_secs(EXPIRY_SECONDS), Ordering::Relaxed);
             unsafe {
                 self.expiring.cursor_mut_from_ptr(Rc::as_ptr(result)).remove();
             }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::Uuid;
 
-pub struct MinecraftAccessToken(pub(crate) Arc<str>);
+pub struct MinecraftAccessToken(pub Arc<str>);
 
 impl MinecraftAccessToken {
     pub fn secret(&self) -> &str {
@@ -115,13 +115,22 @@ pub struct MinecraftProfileResponse {
     pub id: Uuid,
     pub name: Arc<str>,
     pub skins: Vec<MinecraftProfileSkin>,
+    #[serde(default)]
+    pub capes: Vec<MinecraftProfileCape>,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct MinecraftProfileSkin {
+    pub id: Option<Uuid>,
     pub url: Arc<str>,
     pub state: SkinState,
     pub variant: SkinVariant,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct MinecraftProfileCape {
+    pub id: Uuid,
+    pub url: Arc<str>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Deserialize)]

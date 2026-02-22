@@ -2,7 +2,16 @@ use std::{path::Path, sync::Arc};
 
 use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::*;
-use gpui_component::{button::{Button, ButtonVariants}, checkbox::Checkbox, select::{SearchableVec, Select, SelectEvent, SelectState}, sheet::Sheet, spinner::Spinner, tab::{Tab, TabBar, TabVariant}, v_flex, ActiveTheme, IconName, Sizable, ThemeRegistry};
+use gpui_component::{
+    ActiveTheme, IconName, Sizable, ThemeRegistry,
+    button::{Button, ButtonVariants},
+    checkbox::Checkbox,
+    select::{SearchableVec, Select, SelectEvent, SelectState},
+    sheet::Sheet,
+    spinner::Spinner,
+    tab::{Tab, TabBar, TabVariant},
+    v_flex,
+};
 use schema::backend_config::BackendConfig;
 
 use crate::{entity::DataEntities, interface_config::InterfaceConfig};
@@ -16,11 +25,20 @@ struct Settings {
     get_configuration_task: Option<Task<()>>,
 }
 
-pub fn build_settings_sheet(data: &DataEntities, window: &mut Window, cx: &mut App) -> impl Fn(Sheet, &mut Window, &mut App) -> Sheet + 'static {
+pub fn build_settings_sheet(
+    data: &DataEntities,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl Fn(Sheet, &mut Window, &mut App) -> Sheet + 'static {
     let theme_folder = data.theme_folder.clone();
     let settings = cx.new(|cx| {
-        let theme_select_delegate = SearchableVec::new(ThemeRegistry::global(cx).sorted_themes()
-            .iter().map(|cfg| cfg.name.clone()).collect::<Vec<_>>());
+        let theme_select_delegate = SearchableVec::new(
+            ThemeRegistry::global(cx)
+                .sorted_themes()
+                .iter()
+                .map(|cfg| cfg.name.clone())
+                .collect::<Vec<_>>(),
+        );
 
         let theme_select = cx.new(|cx| {
             let mut state = SelectState::new(theme_select_delegate, Default::default(), window, cx).searchable(true);
@@ -35,12 +53,17 @@ pub fn build_settings_sheet(data: &DataEntities, window: &mut Window, cx: &mut A
 
             InterfaceConfig::get_mut(cx).active_theme = theme_name.clone();
 
-            let Some(theme) = gpui_component::ThemeRegistry::global(cx).themes().get(&SharedString::new(theme_name.trim_ascii())).cloned() else {
+            let Some(theme) = gpui_component::ThemeRegistry::global(cx)
+                .themes()
+                .get(&SharedString::new(theme_name.trim_ascii()))
+                .cloned()
+            else {
                 return;
             };
 
             gpui_component::Theme::global_mut(cx).apply_config(&theme);
-        }).detach();
+        })
+        .detach();
 
         let mut settings = Settings {
             theme_folder,
@@ -67,16 +90,13 @@ pub fn build_settings_sheet(data: &DataEntities, window: &mut Window, cx: &mut A
                 // todo: switch
             });
 
-        sheet
-            .title("Settings")
-            .overlay_top(crate::root::sheet_margin_top(window))
-            .p_0()
-            .child(v_flex()
+        sheet.title("Settings").overlay_top(crate::root::sheet_margin_top(window)).p_0().child(
+            v_flex()
                 .border_t_1()
                 .border_color(cx.theme().border)
                 .child(tab_bar)
-                .child(settings.clone())
-            )
+                .child(settings.clone()),
+        )
     }
 }
 
@@ -102,9 +122,7 @@ impl Settings {
             });
         }));
 
-        self.backend_handle.send(MessageToBackend::GetBackendConfiguration {
-            channel: send,
-        });
+        self.backend_handle.send(MessageToBackend::GetBackendConfiguration { channel: send });
     }
 }
 
@@ -116,61 +134,79 @@ impl Render for Settings {
             .px_4()
             .py_3()
             .gap_3()
+            .child(crate::labelled("Theme", Select::new(&self.theme_select)))
+            .child(
+                Button::new("open-theme-folder")
+                    .info()
+                    .icon(IconName::FolderOpen)
+                    .label("Open theme folder")
+                    .on_click({
+                        let theme_folder = self.theme_folder.clone();
+                        move |_, window, cx| {
+                            crate::open_folder(&theme_folder, window, cx);
+                        }
+                    }),
+            )
+            .child(
+                Button::new("open-theme-repo")
+                    .info()
+                    .icon(IconName::Globe)
+                    .label("Open theme repository")
+                    .on_click({
+                        move |_, _, cx| {
+                            cx.open_url("https://github.com/longbridge/gpui-component/tree/main/themes");
+                        }
+                    }),
+            )
             .child(crate::labelled(
-                "Theme",
-                Select::new(&self.theme_select)
-            ))
-            .child(Button::new("open-theme-folder").info().icon(IconName::FolderOpen).label("Open theme folder").on_click({
-                let theme_folder = self.theme_folder.clone();
-                move |_, window, cx| {
-                    crate::open_folder(&theme_folder, window, cx);
-                }
-            }))
-            .child(Button::new("open-theme-repo").info().icon(IconName::Globe).label("Open theme repository").on_click({
-                move |_, _, cx| {
-                    cx.open_url("https://github.com/longbridge/gpui-component/tree/main/themes");
-                }
-            }))
-            .child(crate::labelled("Deletion",
-                v_flex().gap_2()
-                    .child(Checkbox::new("confirm-delete-mods")
-                        .label("Shift+Click to skip mod delete confirmation")
-                        .checked(interface_config.quick_delete_mods)
-                        .on_click(|value, _, cx| {
-                            InterfaceConfig::get_mut(cx).quick_delete_mods = *value;
-                        }))
-                    .child(Checkbox::new("confirm-delete-instance")
-                        .label("Shift+Click to skip instance delete confirmation")
-                        .checked(interface_config.quick_delete_instance).on_click(|value, _, cx| {
-                            InterfaceConfig::get_mut(cx).quick_delete_instance = *value;
-                        }))
+                "Deletion",
+                v_flex()
+                    .gap_2()
+                    .child(
+                        Checkbox::new("confirm-delete-mods")
+                            .label("Shift+Click to skip mod delete confirmation")
+                            .checked(interface_config.quick_delete_mods)
+                            .on_click(|value, _, cx| {
+                                InterfaceConfig::get_mut(cx).quick_delete_mods = *value;
+                            }),
                     )
-            );
+                    .child(
+                        Checkbox::new("confirm-delete-instance")
+                            .label("Shift+Click to skip instance delete confirmation")
+                            .checked(interface_config.quick_delete_instance)
+                            .on_click(|value, _, cx| {
+                                InterfaceConfig::get_mut(cx).quick_delete_instance = *value;
+                            }),
+                    ),
+            ));
 
         if let Some(backend_config) = &self.backend_config {
-            div = div
-                .child(crate::labelled(
-                    "Launching",
-                    v_flex().gap_2()
-                        .child(Checkbox::new("hide-on-launch")
+            div = div.child(crate::labelled(
+                "Launching",
+                v_flex()
+                    .gap_2()
+                    .child(
+                        Checkbox::new("hide-on-launch")
                             .label("Hide main window on launch")
                             .checked(interface_config.hide_main_window_on_launch)
                             .on_click(|value, _, cx| {
                                 InterfaceConfig::get_mut(cx).hide_main_window_on_launch = *value;
-                            }))
-                        .child(Checkbox::new("open-game-output")
+                            }),
+                    )
+                    .child(
+                        Checkbox::new("open-game-output")
                             .label("Open game output on launch")
                             .checked(!backend_config.dont_open_game_output_when_launching)
                             .on_click(cx.listener({
                                 let backend_handle = self.backend_handle.clone();
                                 move |settings, value, _, cx| {
-                                    backend_handle.send(MessageToBackend::SetOpenGameOutputAfterLaunching {
-                                        value: *value
-                                    });
+                                    backend_handle
+                                        .send(MessageToBackend::SetOpenGameOutputAfterLaunching { value: *value });
                                     settings.update_backend_configuration(cx);
                                 }
-                            })))
-                ))
+                            })),
+                    ),
+            ))
         } else {
             div = div.child(Spinner::new().large());
         }

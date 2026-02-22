@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use gpui::SharedString;
-use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui::*;
+use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 
-use crate::{entity::{DataEntities, instance::InstanceEntries}, ui::PageType};
+use crate::{
+    entity::{DataEntities, instance::InstanceEntries},
+    ui::PageType,
+};
 
 pub struct PagePath {
     pages: Arc<[PageType]>,
@@ -24,6 +27,7 @@ impl PagePath {
             let title = match pages[i] {
                 PageType::Instances => "Instances".into(),
                 PageType::Syncing => "Syncing".into(),
+                PageType::Skins => "Skins".into(),
                 PageType::Modrinth { installing_for, .. } => {
                     if installing_for.is_some() {
                         "Add from Modrinth".into()
@@ -39,7 +43,7 @@ impl PagePath {
 
             let mut item = BreadcrumbItem::new(title);
 
-            if i < pages.len()-1 {
+            if i < pages.len() - 1 {
                 let pages = pages.clone();
                 item = item.on_click(move |_, window, cx| {
                     let page = pages[i];

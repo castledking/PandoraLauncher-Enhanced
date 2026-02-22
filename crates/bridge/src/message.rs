@@ -187,6 +187,19 @@ pub enum MessageToBackend {
         update: UpdatePrompt,
         modal_action: ModalAction,
     },
+    GetMinecraftProfile {
+        modal_action: ModalAction,
+    },
+    SetSkin {
+        skin_url: Arc<str>,
+        skin_variant: Arc<str>,
+        modal_action: ModalAction,
+    },
+    UploadSkin {
+        skin_data: Arc<[u8]>,
+        skin_variant: Arc<str>,
+        modal_action: ModalAction,
+    },
 }
 
 #[derive(Debug)]
@@ -260,6 +273,31 @@ pub enum MessageToFrontend {
     UpdateAvailable {
         update: UpdatePrompt,
     },
+    MinecraftProfileResult {
+        profile: MinecraftProfileInfo,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct MinecraftProfileInfo {
+    pub id: Uuid,
+    pub name: Arc<str>,
+    pub skins: Vec<MinecraftSkinInfo>,
+    pub capes: Vec<MinecraftCapeInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MinecraftSkinInfo {
+    pub id: Arc<str>,
+    pub url: Arc<str>,
+    pub variant: Arc<str>,
+    pub state: Arc<str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MinecraftCapeInfo {
+    pub id: Arc<str>,
+    pub url: Arc<str>,
 }
 
 #[derive(Debug, Default)]

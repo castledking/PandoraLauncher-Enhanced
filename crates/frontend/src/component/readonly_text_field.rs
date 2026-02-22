@@ -3,7 +3,12 @@ use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::Button, h_flex, input::{Input, InputEvent, InputState}, scroll::{Scrollbar, ScrollbarHandle}, v_flex, ActiveTheme as _, Icon, IconName, Sizable
+    ActiveTheme as _, Icon, IconName, Sizable,
+    button::Button,
+    h_flex,
+    input::{Input, InputEvent, InputState},
+    scroll::{Scrollbar, ScrollbarHandle},
+    v_flex,
 };
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
@@ -75,7 +80,7 @@ impl ReadonlyTextField {
 
             if !item_state.search_query.is_empty() {
                 if let Some(found) = line.find(item_state.search_query.as_str()) {
-                    highlighted_text = Some(found..found+item_state.search_query.as_str().len());
+                    highlighted_text = Some(found..found + item_state.search_query.as_str().len());
                 }
                 if highlighted_text.is_none() {
                     // Item doesn't match search query, push skipped item
@@ -134,9 +139,11 @@ impl TextFieldLine {
         let mut recompute = true;
 
         if let Some(last_wrapped) = cache.item_lines.get(&self.index)
-            && (last_wrapped.wrap_width == wrap_width || (last_wrapped.lines.len() == 1 && last_wrapped.lines.first().unwrap().width < wrap_width)) {
-                recompute = false;
-            }
+            && (last_wrapped.wrap_width == wrap_width
+                || (last_wrapped.lines.len() == 1 && last_wrapped.lines.first().unwrap().width < wrap_width))
+        {
+            recompute = false;
+        }
 
         if recompute {
             let line = &self.line;
@@ -260,11 +267,13 @@ impl Element for ReadonlyTextFieldComponent {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self.interactivity.request_layout(global_id, inspector_id, window, cx, |mut style, window, cx| {
-            style.size.width = relative(1.0).into();
-            style.size.height = relative(1.0).into();
-            window.request_layout(style, None, cx)
-        });
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, inspector_id, window, cx, |mut style, window, cx| {
+                    style.size.width = relative(1.0).into();
+                    style.size.height = relative(1.0).into();
+                    window.request_layout(style, None, cx)
+                });
         (layout_id, ())
     }
 
@@ -277,15 +286,8 @@ impl Element for ReadonlyTextFieldComponent {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        self.interactivity.prepaint(
-            global_id,
-            inspector_id,
-            bounds,
-            bounds.size,
-            window,
-            cx,
-            |_, _, _, _, _| {}
-        )
+        self.interactivity
+            .prepaint(global_id, inspector_id, bounds, bounds.size, window, cx, |_, _, _, _, _| {})
     }
 
     fn paint(
@@ -299,14 +301,8 @@ impl Element for ReadonlyTextFieldComponent {
         cx: &mut App,
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            self.interactivity.paint(
-                global_id,
-                inspector_id,
-                bounds,
-                None,
-                window,
-                cx,
-                |_, window, cx| {
+            self.interactivity
+                .paint(global_id, inspector_id, bounds, None, window, cx, |_, window, cx| {
                     let visible_bounds = bounds;
                     let mut bounds = bounds.inset(px(12.0));
                     bounds.size.width += px(12.0);
@@ -324,13 +320,21 @@ impl Element for ReadonlyTextFieldComponent {
 
                         let mut line_wrapper = window.text_system().line_wrapper(inner.font.clone(), font_size);
 
-                        let scroll_render_info = inner.update_scrolling(line_height, wrap_width,
-                            font_size, &text_style, &mut line_wrapper, window.text_system());
+                        let scroll_render_info = inner.update_scrolling(
+                            line_height,
+                            wrap_width,
+                            font_size,
+                            &text_style,
+                            &mut line_wrapper,
+                            window.text_system(),
+                        );
 
-                        if let Some(item_state) = inner.item_state.as_mut() && !item_state.items.is_empty() {
+                        if let Some(item_state) = inner.item_state.as_mut()
+                            && !item_state.items.is_empty()
+                        {
                             if scroll_render_info.reverse {
                                 paint_lines::<true>(
-                                    item_state.items[..scroll_render_info.item+1].iter_mut().rev(),
+                                    item_state.items[..scroll_render_info.item + 1].iter_mut().rev(),
                                     visible_bounds,
                                     bounds,
                                     scroll_render_info.offset,
@@ -528,7 +532,8 @@ impl ReadonlyTextField {
                         }
                     }
 
-                    let render_offset = -(remainder_lines * line_height) + line_remainder + line_height - top_offset_for_inset;
+                    let render_offset =
+                        -(remainder_lines * line_height) + line_remainder + line_height - top_offset_for_inset;
 
                     if scroll_state.active_drag.is_some() {
                         let mut remaining_lines = ((scroll_state.bounds_y - render_offset) / line_height) as usize + 1;
@@ -848,7 +853,8 @@ impl ReadonlyTextFieldWithControls {
                     });
                     this.search_state.update(cx, |input, cx| input.set_loading(false, window, cx));
                     cx.notify();
-                }).unwrap();
+                })
+                .unwrap();
             });
         } else {
             self._search_task = cx.spawn_in(window, async move |this, window| {
@@ -857,7 +863,7 @@ impl ReadonlyTextFieldWithControls {
                 for item in &mut item_state.items {
                     let mut contains = None;
                     if let Some(found) = item.line.find(search_pattern.as_str()) {
-                        contains = Some(found..found+search_pattern.as_str().len());
+                        contains = Some(found..found + search_pattern.as_str().len());
                     }
                     if contains.is_some() {
                         lengths.push(item.total_lines);
@@ -930,13 +936,7 @@ impl Render for ReadonlyTextFieldWithControls {
                         interactivity: Interactivity::new(),
                         text_field: self.text_field.clone(),
                     })
-                    .child(
-                        div()
-                            .w_3()
-                            .h_full()
-                            .border_y_12()
-                            .child(Scrollbar::vertical(&self.scroll_handler)),
-                    ),
+                    .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scroll_handler))),
             )
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
                 let state = root.scroll_handler.state.borrow();

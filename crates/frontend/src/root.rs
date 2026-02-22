@@ -3,15 +3,25 @@ use std::{path::Path, sync::Arc};
 use bridge::{
     handle::BackendHandle,
     install::ContentInstall,
-    instance::{InstanceID, InstanceContentID},
+    instance::{InstanceContentID, InstanceID},
     message::{MessageToBackend, QuickPlayLaunch},
     modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{breadcrumb::Breadcrumb, scroll::{ScrollableElement, ScrollbarAxis}, v_flex, Root, StyledExt};
+use gpui_component::{
+    Root, StyledExt,
+    breadcrumb::Breadcrumb,
+    scroll::{ScrollableElement, ScrollbarAxis},
+    v_flex,
+};
 use parking_lot::RwLock;
 
-use crate::{entity::DataEntities, modals, ui::{LauncherUI, PageType}, CloseWindow, MAIN_FONT};
+use crate::{
+    CloseWindow, MAIN_FONT,
+    entity::DataEntities,
+    modals,
+    ui::{LauncherUI, PageType},
+};
 
 pub struct LauncherRootGlobal {
     pub root: Entity<LauncherRoot>,
@@ -28,11 +38,7 @@ pub struct LauncherRoot {
 }
 
 impl LauncherRoot {
-    pub fn new(
-        data: &DataEntities,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let launcher_ui = cx.new(|cx| LauncherUI::new(data, window, cx));
 
         let focus_handle = cx.focus_handle();
@@ -57,13 +63,27 @@ impl Render for LauncherRoot {
                 l: 0.25,
                 a: 1.,
             };
-            return v_flex().size_full().bg(purple).child(message.clone()).overflow_y_scrollbar().into_any_element();
+            return v_flex()
+                .size_full()
+                .bg(purple)
+                .child(message.clone())
+                .overflow_y_scrollbar()
+                .into_any_element();
         }
         if let Some(message) = &*self.panic_message.read() {
-            return v_flex().size_full().bg(gpui::blue()).child(message.clone()).overflow_y_scrollbar().into_any_element();
+            return v_flex()
+                .size_full()
+                .bg(gpui::blue())
+                .child(message.clone())
+                .overflow_y_scrollbar()
+                .into_any_element();
         }
         if self.backend_handle.is_closed() {
-            return v_flex().size_full().bg(gpui::red()).child("Backend has abruptly shutdown").into_any_element();
+            return v_flex()
+                .size_full()
+                .bg(gpui::red())
+                .child("Backend has abruptly shutdown")
+                .into_any_element();
         }
 
         let sheet_layer = Root::render_sheet_layer(window, cx);
@@ -100,11 +120,7 @@ pub fn sheet_margin_top(window: &Window) -> Pixels {
     }
 }
 
-pub fn start_new_account_login(
-    backend_handle: &BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn start_new_account_login(backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::default();
 
     backend_handle.send(MessageToBackend::AddNewAccount {
@@ -151,12 +167,7 @@ pub fn start_install(
     modals::generic::show_notification(window, cx, "Error installing content".into(), modal_action);
 }
 
-pub fn start_update_check(
-    instance: InstanceID,
-    backend_handle: &BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn start_update_check(instance: InstanceID, backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::default();
 
     backend_handle.send(MessageToBackend::UpdateCheck {
@@ -186,12 +197,7 @@ pub fn update_single_mod(
     modals::generic::show_notification(window, cx, "Error downloading update".into(), modal_action);
 }
 
-pub fn upload_log_file(
-    path: Arc<Path>,
-    backend_handle: &BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn upload_log_file(path: Arc<Path>, backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::default();
 
     backend_handle.send(MessageToBackend::UploadLogFile {
@@ -203,12 +209,7 @@ pub fn upload_log_file(
     modals::generic::show_modal(window, cx, title, "Error uploading log file".into(), modal_action);
 }
 
-pub fn switch_page(
-    page: PageType,
-    breadcrumbs: &[PageType],
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn switch_page(page: PageType, breadcrumbs: &[PageType], window: &mut Window, cx: &mut App) {
     cx.update_global::<LauncherRootGlobal, ()>(|global, cx| {
         global.root.update(cx, |launcher_root, cx| {
             launcher_root.ui.update(cx, |ui, cx| {

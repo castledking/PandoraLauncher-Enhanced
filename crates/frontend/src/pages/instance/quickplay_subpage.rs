@@ -6,7 +6,8 @@ use std::{
 use bridge::{
     handle::BackendHandle,
     instance::{InstanceID, InstanceServerSummary, InstanceWorldSummary},
-    message::{AtomicBridgeDataLoadState, MessageToBackend, QuickPlayLaunch}, serial::AtomicOptionSerial,
+    message::{AtomicBridgeDataLoadState, MessageToBackend, QuickPlayLaunch},
+    serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -70,7 +71,8 @@ impl InstanceQuickplaySubpage {
                 delegate.worlds = worlds.clone();
                 delegate.searched = worlds;
                 cx.notify();
-            }).detach();
+            })
+            .detach();
 
             ListState::new(worlds_list_delegate, window2, cx).selectable(false).searchable(true)
         });
@@ -82,7 +84,8 @@ impl InstanceQuickplaySubpage {
                 delegate.servers = servers.clone();
                 delegate.searched = servers;
                 cx.notify();
-            }).detach();
+            })
+            .detach();
 
             ListState::new(servers_list_delegate, window, cx).selectable(false).searchable(true)
         });
@@ -106,12 +109,14 @@ impl Render for InstanceQuickplaySubpage {
 
         let state = self.worlds_state.load(Ordering::SeqCst);
         if state.should_send_load_request() {
-            self.backend_handle.send_with_serial(MessageToBackend::RequestLoadWorlds { id: self.instance }, &self.worlds_serial);
+            self.backend_handle
+                .send_with_serial(MessageToBackend::RequestLoadWorlds { id: self.instance }, &self.worlds_serial);
         }
 
         let state = self.servers_state.load(Ordering::SeqCst);
         if state.should_send_load_request() {
-            self.backend_handle.send_with_serial(MessageToBackend::RequestLoadServers { id: self.instance }, &self.servers_serial);
+            self.backend_handle
+                .send_with_serial(MessageToBackend::RequestLoadServers { id: self.instance }, &self.servers_serial);
         }
 
         let worlds_header = div().mb_1().ml_1().text_lg().child("Worlds");
@@ -162,7 +167,12 @@ impl ListDelegate for WorldsListDelegate {
         self.searched.len()
     }
 
-    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
         let summary = self.searched.get(ix.row)?;
 
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
@@ -237,7 +247,12 @@ impl ListDelegate for ServersListDelegate {
         self.searched.len()
     }
 
-    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
         let summary = self.searched.get(ix.row)?;
 
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
@@ -246,9 +261,16 @@ impl ListDelegate for ServersListDelegate {
             gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
         };
 
-        let description = v_flex()
-            .child(SharedString::from(summary.name.clone()))
-            .child(div().text_color(Hsla { h: 0.0, s: 0.0, l: 0.5, a: 1.0}).child(SharedString::from(summary.ip.clone())));
+        let description = v_flex().child(SharedString::from(summary.name.clone())).child(
+            div()
+                .text_color(Hsla {
+                    h: 0.0,
+                    s: 0.0,
+                    l: 0.5,
+                    a: 1.0,
+                })
+                .child(SharedString::from(summary.ip.clone())),
+        );
 
         let play_icon = Icon::empty().path("icons/play.svg");
 

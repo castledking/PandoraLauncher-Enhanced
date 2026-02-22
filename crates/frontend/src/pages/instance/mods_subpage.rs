@@ -1,20 +1,42 @@
-use std::{hash::{DefaultHasher, Hash, Hasher}, path::{Path, PathBuf}, sync::{
-    atomic::{AtomicU64, AtomicUsize, Ordering}, Arc
-}};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+};
 
 use bridge::{
-    handle::BackendHandle, install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{AtomicContentUpdateStatus, InstanceID, InstanceContentID, InstanceContentSummary, ContentType, ContentSummary}, message::{AtomicBridgeDataLoadState, MessageToBackend}, serial::AtomicOptionSerial
+    handle::BackendHandle,
+    install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
+    instance::{
+        AtomicContentUpdateStatus, ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID,
+    },
+    message::{AtomicBridgeDataLoadState, MessageToBackend},
+    serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, IndexPath, Sizable, WindowExt, breadcrumb::{Breadcrumb, BreadcrumbItem}, button::{Button, ButtonVariants}, h_flex, input::SelectAll, list::{ListDelegate, ListItem, ListState}, notification::{Notification, NotificationType}, switch::Switch, v_flex
+    ActiveTheme as _, Icon, IconName, IndexPath, Sizable, WindowExt,
+    breadcrumb::{Breadcrumb, BreadcrumbItem},
+    button::{Button, ButtonVariants},
+    h_flex,
+    input::SelectAll,
+    list::{ListDelegate, ListItem, ListState},
+    notification::{Notification, NotificationType},
+    switch::Switch,
+    v_flex,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use schema::{content::ContentSource, loader::Loader, modrinth::ModrinthProjectType};
 use ustr::Ustr;
 
-use crate::{component::content_list::ContentListDelegate, entity::instance::InstanceEntry, interface_config::InterfaceConfig, png_render_cache, root, ui::PageType};
+use crate::{
+    component::content_list::ContentListDelegate, entity::instance::InstanceEntry, interface_config::InterfaceConfig,
+    png_render_cache, root, ui::PageType,
+};
 
 use super::instance_page::InstanceSubpageType;
 
@@ -55,7 +77,8 @@ impl InstanceModsSubpage {
                 let actual_mods = mods.read(cx);
                 list.delegate_mut().set_content(actual_mods);
                 cx.notify();
-            }).detach();
+            })
+            .detach();
 
             ListState::new(mods_list_delegate, window, cx).selectable(false).searchable(true)
         });
@@ -78,14 +101,19 @@ impl InstanceModsSubpage {
             target: InstallTarget::Instance(self.instance),
             loader_hint: self.instance_loader,
             version_hint: Some(self.instance_version.into()),
-            files: paths.into_iter().filter_map(|path| {
-                Some(ContentInstallFile {
-                    replace_old: None,
-                    path: bridge::install::ContentInstallPath::Raw(Path::new("mods").join(path.file_name()?).into()),
-                    download: ContentDownload::File { path: path.clone() },
-                    content_source: ContentSource::Manual,
+            files: paths
+                .into_iter()
+                .filter_map(|path| {
+                    Some(ContentInstallFile {
+                        replace_old: None,
+                        path: bridge::install::ContentInstallPath::Raw(
+                            Path::new("mods").join(path.file_name()?).into(),
+                        ),
+                        download: ContentDownload::File { path: path.clone() },
+                        content_source: ContentSource::Manual,
+                    })
                 })
-            }).collect(),
+                .collect(),
         };
         crate::root::start_install(content_install, &self.backend_handle, window, cx);
     }
@@ -97,7 +125,8 @@ impl Render for InstanceModsSubpage {
 
         let state = self.mods_state.load(Ordering::SeqCst);
         if state.should_send_load_request() {
-            self.backend_handle.send_with_serial(MessageToBackend::RequestLoadMods { id: self.instance }, &self.load_serial);
+            self.backend_handle
+                .send_with_serial(MessageToBackend::RequestLoadMods { id: self.instance }, &self.load_serial);
         }
 
         let header = h_flex()
@@ -117,9 +146,12 @@ impl Render for InstanceModsSubpage {
                 move |_, window, cx| {
                     let page = crate::ui::PageType::Modrinth {
                         installing_for: Some(instance),
-                        project_type: Some(ModrinthProjectType::Mod)
+                        project_type: Some(ModrinthProjectType::Mod),
                     };
-                    let path = &[PageType::Instances, PageType::InstancePage(instance, InstanceSubpageType::Mods)];
+                    let path = &[
+                        PageType::Instances,
+                        PageType::InstancePage(instance, InstanceSubpageType::Mods),
+                    ];
                     root::switch_page(page, path, window, cx);
                 }
             }))
@@ -129,7 +161,7 @@ impl Render for InstanceModsSubpage {
                         files: true,
                         directories: false,
                         multiple: true,
-                        prompt: Some("Select mods to install".into())
+                        prompt: Some("Select mods to install".into()),
                     });
 
                     let entity = cx.entity();
@@ -137,34 +169,27 @@ impl Render for InstanceModsSubpage {
                         let Ok(result) = receiver.await else {
                             return;
                         };
-                        _ = cx.update_window_entity(&entity, move |this, window, cx| {
-                            match result {
-                                Ok(Some(paths)) => {
-                                    this.install_paths(&paths, window, cx);
-                                },
-                                Ok(None) => {},
-                                Err(error) => {
-                                    let error = format!("{}", error);
-                                    let notification = Notification::new()
-                                        .autohide(false)
-                                        .with_type(NotificationType::Error)
-                                        .title(error);
-                                    window.push_notification(notification, cx);
-                                },
-                            }
+                        _ = cx.update_window_entity(&entity, move |this, window, cx| match result {
+                            Ok(Some(paths)) => {
+                                this.install_paths(&paths, window, cx);
+                            },
+                            Ok(None) => {},
+                            Err(error) => {
+                                let error = format!("{}", error);
+                                let notification =
+                                    Notification::new().autohide(false).with_type(NotificationType::Error).title(error);
+                                window.push_notification(notification, cx);
+                            },
                         });
                     });
                     this._add_from_file_task = Some(add_from_file_task);
                 })
             }));
 
-        v_flex().p_4().size_full()
-            .child(header)
-            .child(div()
+        v_flex().p_4().size_full().child(header).child(
+            div()
                 .id("mod-list-area")
-                .drag_over(|style, _: &ExternalPaths, _, cx| {
-                    style.bg(cx.theme().accent)
-                })
+                .drag_over(|style, _: &ExternalPaths, _, cx| style.bg(cx.theme().accent))
                 .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                     this.install_paths(paths.paths(), window, cx);
                 }))

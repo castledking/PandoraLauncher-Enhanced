@@ -1,13 +1,35 @@
 use std::sync::Arc;
 
-use bridge::{handle::BackendHandle, message::{EmbeddedOrRaw, MessageToBackend}};
+use bridge::{
+    handle::BackendHandle,
+    message::{EmbeddedOrRaw, MessageToBackend},
+};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dialog::Dialog, h_flex, input::{Input, InputEvent, InputState}, select::{Select, SelectState}, skeleton::Skeleton, v_flex, ActiveTheme, IconName, Selectable, WindowExt
+    ActiveTheme, IconName, Selectable, WindowExt,
+    alert::Alert,
+    button::{Button, ButtonGroup, ButtonVariants},
+    checkbox::Checkbox,
+    dialog::Dialog,
+    h_flex,
+    input::{Input, InputEvent, InputState},
+    select::{Select, SelectState},
+    skeleton::Skeleton,
+    v_flex,
 };
-use schema::{loader::Loader, version_manifest::{MinecraftVersionManifest, MinecraftVersionType}};
+use schema::{
+    loader::Loader,
+    version_manifest::{MinecraftVersionManifest, MinecraftVersionType},
+};
 
-use crate::{entity::{instance::InstanceEntries, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState}}, interface_config::InterfaceConfig, pages::instances_page::VersionList};
+use crate::{
+    entity::{
+        instance::InstanceEntries,
+        metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
+    },
+    interface_config::InterfaceConfig,
+    pages::instances_page::VersionList,
+};
 
 struct CreateInstanceModalState {
     metadata: Entity<FrontendMetadata>,
@@ -29,21 +51,26 @@ struct CreateInstanceModalState {
 }
 
 impl CreateInstanceModalState {
-    pub fn new(metadata: Entity<FrontendMetadata>, instances: Entity<InstanceEntries>, backend_handle: BackendHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        metadata: Entity<FrontendMetadata>,
+        instances: Entity<InstanceEntries>,
+        backend_handle: BackendHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let instance_names: Arc<[SharedString]> =
             instances.read(cx).entries.iter().map(|(_, v)| v.read(cx).name.clone()).collect();
 
         let minecraft_version_dropdown =
             cx.new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
 
-        let _version_selected_subscription = cx.observe_in(&minecraft_version_dropdown, window, |this, _, window, cx| {
-            this.update_fallback_name(window, cx);
-        });
+        let _version_selected_subscription =
+            cx.observe_in(&minecraft_version_dropdown, window, |this, _, window, cx| {
+                this.update_fallback_name(window, cx);
+            });
 
-        let name_input_state = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(SharedString::new_static("Unnamed Instance"))
-        });
+        let name_input_state =
+            cx.new(|cx| InputState::new(window, cx).placeholder(SharedString::new_static("Unnamed Instance")));
 
         let _name_input_subscription = {
             let instance_names = Arc::clone(&instance_names);
@@ -61,7 +88,8 @@ impl CreateInstanceModalState {
             })
         };
 
-        let versions = FrontendMetadata::request(&metadata, bridge::meta::MetadataRequest::MinecraftVersionManifest, cx);
+        let versions =
+            FrontendMetadata::request(&metadata, bridge::meta::MetadataRequest::MinecraftVersionManifest, cx);
 
         let _versions_updated_subscription = cx.observe_in(&versions, window, move |this, _, window, cx| {
             this.reload_version_dropdown(window, cx);
@@ -92,7 +120,8 @@ impl CreateInstanceModalState {
     }
 
     pub fn update_fallback_name(&mut self, window: &mut Window, cx: &mut App) {
-        let selected = self.minecraft_version_dropdown
+        let selected = self
+            .minecraft_version_dropdown
             .read(cx)
             .selected_value()
             .cloned()
@@ -202,14 +231,16 @@ impl CreateInstanceModalState {
                 .title("Error loading Minecraft versions");
 
             let metadata = self.metadata.clone();
-            let reload_button =
-                Button::new("reload-versions")
-                    .primary()
-                    .label("Reload Versions")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.error_loading_versions = None;
-                        FrontendMetadata::force_reload(&metadata, bridge::meta::MetadataRequest::MinecraftVersionManifest, cx);
-                    }));
+            let reload_button = Button::new("reload-versions").primary().label("Reload Versions").on_click(
+                cx.listener(move |this, _, _, cx| {
+                    this.error_loading_versions = None;
+                    FrontendMetadata::force_reload(
+                        &metadata,
+                        bridge::meta::MetadataRequest::MinecraftVersionManifest,
+                        cx,
+                    );
+                }),
+            );
 
             return modal
                 .confirm()
@@ -251,11 +282,7 @@ impl CreateInstanceModalState {
                         .label("Fabric")
                         .selected(self.selected_loader == Loader::Fabric),
                 )
-                .child(
-                    Button::new("loader-forge")
-                        .label("Forge")
-                        .selected(self.selected_loader == Loader::Forge),
-                )
+                .child(Button::new("loader-forge").label("Forge").selected(self.selected_loader == Loader::Forge))
                 .child(
                     Button::new("loader-neoforge")
                         .label("NeoForge")
@@ -279,17 +306,24 @@ impl CreateInstanceModalState {
                 "Name",
                 Input::new(&self.name_input_state).when(self.name_invalid, |this| this.border_color(cx.theme().danger)),
             ))
-            .child(crate::labelled("Version", v_flex().gap_2().child(version_dropdown).child(show_snapshots_button)))
+            .child(crate::labelled(
+                "Version",
+                v_flex().gap_2().child(version_dropdown).child(show_snapshots_button),
+            ))
             .child(crate::labelled("Modloader", loader_button_group))
             .child(h_flex().child(Button::new("icon").icon(IconName::Plus).label("Select Icon").on_click({
                 let entity = cx.entity();
                 move |_, window, cx| {
                     let entity = entity.clone();
-                    crate::modals::select_icon::open_select_icon(Box::new(move |icon, cx| {
-                        cx.update_entity(&entity, |this, _| {
-                            this.icon = icon;
-                        });
-                    }), window, cx);
+                    crate::modals::select_icon::open_select_icon(
+                        Box::new(move |icon, cx| {
+                            cx.update_entity(&entity, |this, _| {
+                                this.icon = icon;
+                            });
+                        }),
+                        window,
+                        cx,
+                    );
                 }
             })));
 
@@ -313,7 +347,8 @@ impl CreateInstanceModalState {
                     if name_is_invalid {
                         return false;
                     }
-                    let Some(selected_version) = this.minecraft_version_dropdown.read(cx).selected_value().cloned() else {
+                    let Some(selected_version) = this.minecraft_version_dropdown.read(cx).selected_value().cloned()
+                    else {
                         return false;
                     };
 
@@ -343,13 +378,9 @@ pub fn open_create_instance(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let state = cx.new(|cx| {
-        CreateInstanceModalState::new(metadata, instances, backend_handle, window, cx)
-    });
+    let state = cx.new(|cx| CreateInstanceModalState::new(metadata, instances, backend_handle, window, cx));
 
     window.open_dialog(cx, move |modal, window, cx| {
-        cx.update_entity(&state, |state, cx| {
-            state.render(modal, window, cx)
-        })
+        cx.update_entity(&state, |state, cx| state.render(modal, window, cx))
     });
 }

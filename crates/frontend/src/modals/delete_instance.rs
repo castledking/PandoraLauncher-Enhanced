@@ -1,9 +1,15 @@
-use std::sync::{atomic::{AtomicBool, AtomicU8, Ordering}, Arc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU8, Ordering},
+};
 
 use bridge::{handle::BackendHandle, instance::InstanceID};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::{Button, ButtonVariants}, input::{Input, InputEvent, InputState}, v_flex, Disableable, WindowExt
+    Disableable, WindowExt,
+    button::{Button, ButtonVariants},
+    input::{Input, InputEvent, InputState},
+    v_flex,
 };
 
 pub fn open_delete_instance(
@@ -17,7 +23,10 @@ pub fn open_delete_instance(
     let correct_name = Arc::new(AtomicBool::new(false));
 
     let title = SharedString::new(format!("Delete Instance: {}", instance_name));
-    let warning_message = SharedString::new(format!("This will permanently delete the '{}' instance and associated saves, resourcepacks, mods, configuration files, and more. These files will not be recoverable", instance_name));
+    let warning_message = SharedString::new(format!(
+        "This will permanently delete the '{}' instance and associated saves, resourcepacks, mods, configuration files, and more. These files will not be recoverable",
+        instance_name
+    ));
     let confirm_message = SharedString::new(format!("To confirm, type '{}' in the box below", instance_name));
 
     let input_state = cx.new(|cx| InputState::new(window, cx));
@@ -34,21 +43,16 @@ pub fn open_delete_instance(
     window.open_dialog(cx, move |dialog, _, _| {
         let _ = &_input_subscription;
 
-        let content = match stage.load(Ordering::Relaxed) {
-            0 => {
-                v_flex()
-                    .child(Button::new("delete").label("I want to delete this instance").on_click({
-                        let stage = stage.clone();
-                        move |_, _, _| {
-                            stage.store(1, Ordering::Relaxed);
-                        }
-                    }))
-            }
-            1 => {
-                v_flex()
-                    .gap_2()
-                    .child(warning_message.clone())
-                    .child(Button::new("confirm").label("I have read and understand these effects").on_click({
+        let content =
+            match stage.load(Ordering::Relaxed) {
+                0 => v_flex().child(Button::new("delete").label("I want to delete this instance").on_click({
+                    let stage = stage.clone();
+                    move |_, _, _| {
+                        stage.store(1, Ordering::Relaxed);
+                    }
+                })),
+                1 => v_flex().gap_2().child(warning_message.clone()).child(
+                    Button::new("confirm").label("I have read and understand these effects").on_click({
                         let stage = stage.clone();
                         let input_state = input_state.clone();
                         move |_, window, cx| {
@@ -57,35 +61,35 @@ pub fn open_delete_instance(
                             });
                             stage.store(2, Ordering::Relaxed);
                         }
-                    }))
-            }
-            2 => {
-                let correct = correct_name.load(Ordering::Relaxed);
-                // .div() and .child(div().h_2()) are workarounds for a weird layout bug
-                // where the Input would be set to its minimum width when confirm_message wrapped
-                div()
-                    .child(confirm_message.clone())
-                    .child(div().h_2())
-                    .child(Input::new(&input_state).border_color(gpui::red()))
-                    .child(div().h_2())
-                    .child(Button::new("confirm").label("Delete this instance").danger().disabled(!correct).on_click({
-                        let backend_handle = backend_handle.clone();
-                        move |_, window, cx| {
-                            backend_handle.send(bridge::message::MessageToBackend::DeleteInstance {
-                                id: instance
-                            });
-                            window.close_all_dialogs(cx);
-                        }
-                    }))
-            }
-            _ => {
-                unreachable!()
-            }
-        };
+                    }),
+                ),
+                2 => {
+                    let correct = correct_name.load(Ordering::Relaxed);
+                    // .div() and .child(div().h_2()) are workarounds for a weird layout bug
+                    // where the Input would be set to its minimum width when confirm_message wrapped
+                    div()
+                        .child(confirm_message.clone())
+                        .child(div().h_2())
+                        .child(Input::new(&input_state).border_color(gpui::red()))
+                        .child(div().h_2())
+                        .child(
+                            Button::new("confirm").label("Delete this instance").danger().disabled(!correct).on_click(
+                                {
+                                    let backend_handle = backend_handle.clone();
+                                    move |_, window, cx| {
+                                        backend_handle
+                                            .send(bridge::message::MessageToBackend::DeleteInstance { id: instance });
+                                        window.close_all_dialogs(cx);
+                                    }
+                                },
+                            ),
+                        )
+                },
+                _ => {
+                    unreachable!()
+                },
+            };
 
-        dialog
-            .title(title.clone())
-            .child(content)
+        dialog.title(title.clone()).child(content)
     });
-
 }

@@ -1,13 +1,26 @@
-use std::{hash::{DefaultHasher, Hash, Hasher}, sync::{
-    atomic::{AtomicUsize, Ordering}, Arc
-}};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use bridge::{
-    handle::BackendHandle, instance::{AtomicContentUpdateStatus, InstanceID, InstanceContentID, InstanceContentSummary, ContentType, ContentSummary}, message::MessageToBackend
+    handle::BackendHandle,
+    instance::{
+        AtomicContentUpdateStatus, ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID,
+    },
+    message::MessageToBackend,
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::{Button, ButtonVariants}, h_flex, list::{ListDelegate, ListItem, ListState}, switch::Switch, v_flex, ActiveTheme as _, Icon, IconName, IndexPath, Sizable
+    ActiveTheme as _, Icon, IconName, IndexPath, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
+    list::{ListDelegate, ListItem, ListState},
+    switch::Switch,
+    v_flex,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
@@ -65,18 +78,34 @@ impl ContentListDelegate {
         }
     }
 
-    pub fn render_summary(&self, summary: &InstanceContentSummary, selected: bool, expanded: bool, can_expand: bool, ix: usize, cx: &mut Context<ListState<Self>>) -> ListItem {
+    pub fn render_summary(
+        &self,
+        summary: &InstanceContentSummary,
+        selected: bool,
+        expanded: bool,
+        can_expand: bool,
+        ix: usize,
+        cx: &mut Context<ListState<Self>>,
+    ) -> ListItem {
         let icon = if let Some(png_icon) = summary.content_summary.png_icon.as_ref() {
             png_render_cache::render(Arc::clone(png_icon), cx)
         } else {
             gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
         };
 
-        const GRAY: Hsla = Hsla { h: 0.0, s: 0.0, l: 0.5, a: 1.0};
+        const GRAY: Hsla = Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.5,
+            a: 1.0,
+        };
 
-        let (desc1, desc2) = create_descriptions(summary.content_summary.name.clone(),
-            summary.content_summary.version_str.clone(), summary.content_summary.authors.clone(),
-            summary.filename.clone());
+        let (desc1, desc2) = create_descriptions(
+            summary.content_summary.name.clone(),
+            summary.content_summary.version_str.clone(),
+            summary.content_summary.authors.clone(),
+            summary.filename.clone(),
+        );
 
         let id = self.id;
         let content_id = summary.id;
@@ -89,13 +118,18 @@ impl ContentListDelegate {
                     cx.stop_propagation();
                     let delegate = this.delegate();
                     if delegate.is_selected(element_id) {
-                        let content_ids = delegate.content.iter().filter_map(|summary| {
-                            delegate.is_selected(summary.filename_hash).then(|| summary.id)
-                        }).collect();
+                        let content_ids = delegate
+                            .content
+                            .iter()
+                            .filter_map(|summary| delegate.is_selected(summary.filename_hash).then(|| summary.id))
+                            .collect();
 
                         backend_handle.send(MessageToBackend::DeleteContent { id, content_ids });
                     } else {
-                        backend_handle.send(MessageToBackend::DeleteContent { id, content_ids: vec![content_id] });
+                        backend_handle.send(MessageToBackend::DeleteContent {
+                            id,
+                            content_ids: vec![content_id],
+                        });
                     }
                 })
             })
@@ -103,58 +137,76 @@ impl ContentListDelegate {
             let trash_icon = Icon::default().path("icons/trash-2.svg");
             let confirming_delete = self.confirming_delete.clone();
             let backend_handle = self.backend_handle.clone();
-            Button::new(("delete", element_id)).danger().icon(trash_icon).on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                let delegate = this.delegate();
+            Button::new(("delete", element_id)).danger().icon(trash_icon).on_click(cx.listener(
+                move |this, click: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    let delegate = this.delegate();
 
-                // If quick_delete_mods is enabled and shift clicking, delete instantly
-                if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
-                    if delegate.is_selected(element_id) {
-                        let content_ids = delegate.content.iter().filter_map(|summary| {
-                            delegate.is_selected(summary.filename_hash).then(|| summary.id)
-                        }).collect();
+                    // If quick_delete_mods is enabled and shift clicking, delete instantly
+                    if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
+                        if delegate.is_selected(element_id) {
+                            let content_ids = delegate
+                                .content
+                                .iter()
+                                .filter_map(|summary| delegate.is_selected(summary.filename_hash).then(|| summary.id))
+                                .collect();
 
-                        backend_handle.send(MessageToBackend::DeleteContent { id, content_ids });
-                    } else {
-                        backend_handle.send(MessageToBackend::DeleteContent { id, content_ids: vec![content_id] });
+                            backend_handle.send(MessageToBackend::DeleteContent { id, content_ids });
+                        } else {
+                            backend_handle.send(MessageToBackend::DeleteContent {
+                                id,
+                                content_ids: vec![content_id],
+                            });
+                        }
+                        return;
                     }
-                    return;
-                }
 
-                let mut confirming_delete = confirming_delete.lock();
-                confirming_delete.clear();
-                if delegate.is_selected(element_id) {
-                    confirming_delete.extend(&delegate.selected);
-                    confirming_delete.extend(&delegate.selected_range);
-                } else {
-                    confirming_delete.insert(element_id);
-                }
-            }))
+                    let mut confirming_delete = confirming_delete.lock();
+                    confirming_delete.clear();
+                    if delegate.is_selected(element_id) {
+                        confirming_delete.extend(&delegate.selected);
+                        confirming_delete.extend(&delegate.selected_range);
+                    } else {
+                        confirming_delete.insert(element_id);
+                    }
+                },
+            ))
         };
 
         let update_button = match summary.content_summary.update_status.load(Ordering::Relaxed) {
             bridge::instance::ContentUpdateStatus::Unknown => None,
             bridge::instance::ContentUpdateStatus::ManualInstall => Some(
-                Button::new(("update", element_id)).warning().icon(Icon::default().path("icons/file-question-mark.svg"))
-                    .tooltip("Installed manually - cannot automatically update")
+                Button::new(("update", element_id))
+                    .warning()
+                    .icon(Icon::default().path("icons/file-question-mark.svg"))
+                    .tooltip("Installed manually - cannot automatically update"),
             ),
             bridge::instance::ContentUpdateStatus::ErrorNotFound => Some(
-                Button::new(("update", element_id)).danger().icon(Icon::default().path("icons/triangle-alert.svg"))
-                    .tooltip("Error while checking updates - 404 not found")
+                Button::new(("update", element_id))
+                    .danger()
+                    .icon(Icon::default().path("icons/triangle-alert.svg"))
+                    .tooltip("Error while checking updates - 404 not found"),
             ),
             bridge::instance::ContentUpdateStatus::ErrorInvalidHash => Some(
-                Button::new(("update", element_id)).danger().icon(Icon::default().path("icons/triangle-alert.svg"))
-                    .tooltip("Error while checking updates - returned invalid hash")
+                Button::new(("update", element_id))
+                    .danger()
+                    .icon(Icon::default().path("icons/triangle-alert.svg"))
+                    .tooltip("Error while checking updates - returned invalid hash"),
             ),
             bridge::instance::ContentUpdateStatus::AlreadyUpToDate => Some(
-                Button::new(("update", element_id)).icon(Icon::default().path("icons/check.svg"))
-                    .tooltip("Up-to-date as of last check")
+                Button::new(("update", element_id))
+                    .icon(Icon::default().path("icons/check.svg"))
+                    .tooltip("Up-to-date as of last check"),
             ),
             bridge::instance::ContentUpdateStatus::Modrinth => {
                 let loading = self.updating.lock().contains(&element_id);
                 Some(
-                    Button::new(("update", element_id)).success().loading(loading).icon(Icon::default().path("icons/download.svg"))
-                        .tooltip("Download update from Modrinth").on_click({
+                    Button::new(("update", element_id))
+                        .success()
+                        .loading(loading)
+                        .icon(Icon::default().path("icons/download.svg"))
+                        .tooltip("Download update from Modrinth")
+                        .on_click({
                             let backend_handle = self.backend_handle.clone();
                             let updating = self.updating.clone();
                             cx.listener(move |this, _, window, cx| {
@@ -164,7 +216,13 @@ impl ContentListDelegate {
                                 let delegate = this.delegate_mut();
                                 if delegate.is_selected(element_id) {
                                     for summary in &delegate.content {
-                                        if delegate.is_selected(summary.filename_hash) && summary.content_summary.update_status.load(Ordering::Relaxed).can_update() {
+                                        if delegate.is_selected(summary.filename_hash)
+                                            && summary
+                                                .content_summary
+                                                .update_status
+                                                .load(Ordering::Relaxed)
+                                                .can_update()
+                                        {
                                             updating.insert(summary.filename_hash);
                                             crate::root::update_single_mod(id, summary.id, &backend_handle, window, cx);
                                         }
@@ -177,7 +235,7 @@ impl ContentListDelegate {
                                     crate::root::update_single_mod(id, content_id, &backend_handle, window, cx);
                                 }
                             })
-                        })
+                        }),
                 )
             },
         };
@@ -189,13 +247,17 @@ impl ContentListDelegate {
             .on_click(cx.listener(move |this, checked, _, _| {
                 let delegate = this.delegate();
                 if delegate.is_selected(element_id) {
-                    let content_ids = delegate.content.iter().filter_map(|summary| {
-                        if delegate.is_selected(summary.filename_hash) {
-                            Some(summary.id)
-                        } else {
-                            None
-                        }
-                    }).collect();
+                    let content_ids = delegate
+                        .content
+                        .iter()
+                        .filter_map(|summary| {
+                            if delegate.is_selected(summary.filename_hash) {
+                                Some(summary.id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
 
                     backend_handle.send(MessageToBackend::SetContentEnabled {
                         id,
@@ -221,24 +283,26 @@ impl ContentListDelegate {
                 IconName::ArrowRight
             };
 
-            let expand_control = Button::new(("expand", element_id)).icon(expand_icon).compact().small().info().on_click({
-                let expanded = self.expanded.clone();
-                let index = ix+1;
-                move |_, _, _| {
-                    let value = expanded.load(Ordering::Relaxed);
-                    if value == index {
-                        expanded.store(0, Ordering::Relaxed);
-                    } else {
-                        expanded.store(index, Ordering::Relaxed);
+            let expand_control =
+                Button::new(("expand", element_id)).icon(expand_icon).compact().small().info().on_click({
+                    let expanded = self.expanded.clone();
+                    let index = ix + 1;
+                    move |_, _, _| {
+                        let value = expanded.load(Ordering::Relaxed);
+                        if value == index {
+                            expanded.store(0, Ordering::Relaxed);
+                        } else {
+                            expanded.store(index, Ordering::Relaxed);
+                        }
                     }
-                }
-            });
+                });
 
             v_flex()
                 .items_center()
                 .gap_1()
                 .child(toggle_control)
-                .child(expand_control).into_any_element()
+                .child(expand_control)
+                .into_any_element()
         };
 
         let mut item_content = h_flex()
@@ -249,94 +313,101 @@ impl ContentListDelegate {
             .child(desc1)
             .when_some(desc2, |div, desc2| div.child(desc2))
             .border_1()
-            .when(selected, |content| content.border_color(cx.theme().selection).bg(cx.theme().selection.alpha(0.2)));
+            .when(selected, |content| {
+                content.border_color(cx.theme().selection).bg(cx.theme().selection.alpha(0.2))
+            });
 
         if let Some(update_button) = update_button {
-            item_content = item_content.child(h_flex().absolute().right_4().gap_2().child(update_button).child(delete_button))
+            item_content =
+                item_content.child(h_flex().absolute().right_4().gap_2().child(update_button).child(delete_button))
         } else {
             item_content = item_content.child(delete_button.absolute().right_4())
         }
 
-        ListItem::new(("item", element_id)).p_1().child(item_content).on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
-            cx.stop_propagation();
-            if click.standard_click() {
-                let delegate = this.delegate_mut();
-                delegate.confirming_delete.lock().clear();
-                if click.modifiers().shift && let Some(from) = delegate.last_clicked_non_range {
-                    delegate.selected_range.clear();
+        ListItem::new(("item", element_id)).p_1().child(item_content).on_click(cx.listener(
+            move |this, click: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                if click.standard_click() {
+                    let delegate = this.delegate_mut();
+                    delegate.confirming_delete.lock().clear();
+                    if click.modifiers().shift
+                        && let Some(from) = delegate.last_clicked_non_range
+                    {
+                        delegate.selected_range.clear();
 
-                    if let Some(searched) = &delegate.searched {
-                        let from_index = searched.iter().position(|element| match element {
-                            SummaryOrChild::Summary(summary) => summary.filename_hash == from,
-                            SummaryOrChild::Child(_) => false,
-                        });
+                        if let Some(searched) = &delegate.searched {
+                            let from_index = searched.iter().position(|element| match element {
+                                SummaryOrChild::Summary(summary) => summary.filename_hash == from,
+                                SummaryOrChild::Child(_) => false,
+                            });
 
-                        let Some(from_index) = from_index else {
-                            return;
-                        };
+                            let Some(from_index) = from_index else {
+                                return;
+                            };
 
-                        let to_index = searched.iter().position(|element| match element {
-                            SummaryOrChild::Summary(summary) => summary.filename_hash == element_id,
-                            SummaryOrChild::Child(_) => false,
-                        });
+                            let to_index = searched.iter().position(|element| match element {
+                                SummaryOrChild::Summary(summary) => summary.filename_hash == element_id,
+                                SummaryOrChild::Child(_) => false,
+                            });
 
-                        let Some(to_index) = to_index else {
-                            return;
-                        };
+                            let Some(to_index) = to_index else {
+                                return;
+                            };
 
-                        let min_index = from_index.min(to_index);
-                        let max_index = from_index.max(to_index);
+                            let min_index = from_index.min(to_index);
+                            let max_index = from_index.max(to_index);
 
-                        for add in searched[min_index..=max_index].iter() {
-                            match add {
-                                SummaryOrChild::Summary(summary) => {
-                                    delegate.selected_range.insert(summary.filename_hash);
-                                },
-                                SummaryOrChild::Child(_) => {},
+                            for add in searched[min_index..=max_index].iter() {
+                                match add {
+                                    SummaryOrChild::Summary(summary) => {
+                                        delegate.selected_range.insert(summary.filename_hash);
+                                    },
+                                    SummaryOrChild::Child(_) => {},
+                                }
+                            }
+                        } else {
+                            let from_index = delegate.content.iter().position(|element| element.filename_hash == from);
+
+                            let Some(from_index) = from_index else {
+                                return;
+                            };
+
+                            let to_index =
+                                delegate.content.iter().position(|element| element.filename_hash == element_id);
+
+                            let Some(to_index) = to_index else {
+                                return;
+                            };
+
+                            let min_index = from_index.min(to_index);
+                            let max_index = from_index.max(to_index);
+
+                            for add in delegate.content[min_index..=max_index].iter() {
+                                delegate.selected_range.insert(add.filename_hash);
                             }
                         }
-                    } else {
-                        let from_index = delegate.content.iter().position(|element| element.filename_hash == from);
+                    } else if click.modifiers().secondary() || click.modifiers().shift {
+                        // Cmd+Click (macos), Ctrl+Click (win/linux)
 
-                        let Some(from_index) = from_index else {
-                            return;
-                        };
+                        delegate.selected.extend(&delegate.selected_range);
+                        delegate.selected_range.clear();
 
-                        let to_index = delegate.content.iter().position(|element| element.filename_hash == element_id);
-
-                        let Some(to_index) = to_index else {
-                            return;
-                        };
-
-                        let min_index = from_index.min(to_index);
-                        let max_index = from_index.max(to_index);
-
-                        for add in delegate.content[min_index..=max_index].iter() {
-                            delegate.selected_range.insert(add.filename_hash);
+                        if delegate.selected.contains(&element_id) {
+                            delegate.selected.remove(&element_id);
+                        } else {
+                            delegate.selected.insert(element_id);
                         }
-                    }
-                } else if click.modifiers().secondary() || click.modifiers().shift {
-                    // Cmd+Click (macos), Ctrl+Click (win/linux)
 
-                    delegate.selected.extend(&delegate.selected_range);
-                    delegate.selected_range.clear();
-
-                    if delegate.selected.contains(&element_id) {
-                        delegate.selected.remove(&element_id);
+                        delegate.last_clicked_non_range = Some(element_id);
                     } else {
+                        delegate.selected_range.clear();
+                        delegate.selected.clear();
                         delegate.selected.insert(element_id);
+                        delegate.last_clicked_non_range = Some(element_id);
                     }
-
-                    delegate.last_clicked_non_range = Some(element_id);
-                } else {
-                    delegate.selected_range.clear();
-                    delegate.selected.clear();
-                    delegate.selected.insert(element_id);
-                    delegate.last_clicked_non_range = Some(element_id);
                 }
-            }
-
-        }))
+            },
+        ))
     }
 
     fn render_child_entry(&self, child: &ContentEntryChild, cx: &mut Context<ListState<Self>>) -> ListItem {
@@ -347,9 +418,12 @@ impl ContentListDelegate {
             gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
         };
 
-        let (desc1, desc2) = create_descriptions(summary.name.clone(),
-            summary.version_str.clone(), summary.authors.clone(),
-            child.path.clone());
+        let (desc1, desc2) = create_descriptions(
+            summary.name.clone(),
+            summary.version_str.clone(),
+            summary.authors.clone(),
+            child.path.clone(),
+        );
 
         let mut hasher = DefaultHasher::new();
         child.parent_filename_hash.hash(&mut hasher);
@@ -368,25 +442,11 @@ impl ContentListDelegate {
 
         let delete_button = if self.confirming_delete_children.lock().contains(&element_id) {
             let confirming_delete_children = self.confirming_delete_children.clone();
-            Button::new(("delete-child", element_id)).danger().icon(IconName::Check).on_click(cx.listener(move |this, _, _, _| {
-                this.delegate().confirming_delete_children.lock().clear();
-                backend_handle.send(MessageToBackend::SetContentChildEnabled {
-                    id,
-                    content_id,
-                    child_id: child_id.clone(),
-                    child_name: child_name.clone(),
-                    child_filename: path.clone(),
-                    enabled: false,
-                    delete: true,
-                });
-            }))
-        } else {
-            let confirming_delete_children = self.confirming_delete_children.clone();
-            Button::new(("delete-child", element_id)).danger().icon(Icon::default().path("icons/trash-2.svg")).on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                let delegate = this.delegate();
-
-                if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
+            Button::new(("delete-child", element_id))
+                .danger()
+                .icon(IconName::Check)
+                .on_click(cx.listener(move |this, _, _, _| {
+                    this.delegate().confirming_delete_children.lock().clear();
                     backend_handle.send(MessageToBackend::SetContentChildEnabled {
                         id,
                         content_id,
@@ -396,12 +456,32 @@ impl ContentListDelegate {
                         enabled: false,
                         delete: true,
                     });
-                    return;
-                }
+                }))
+        } else {
+            let confirming_delete_children = self.confirming_delete_children.clone();
+            Button::new(("delete-child", element_id))
+                .danger()
+                .icon(Icon::default().path("icons/trash-2.svg"))
+                .on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    let delegate = this.delegate();
 
-                delegate.confirming_delete_children.lock().clear();
-                delegate.confirming_delete_children.lock().insert(element_id);
-            }))
+                    if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
+                        backend_handle.send(MessageToBackend::SetContentChildEnabled {
+                            id,
+                            content_id,
+                            child_id: child_id.clone(),
+                            child_name: child_name.clone(),
+                            child_filename: path.clone(),
+                            enabled: false,
+                            delete: true,
+                        });
+                        return;
+                    }
+
+                    delegate.confirming_delete_children.lock().clear();
+                    delegate.confirming_delete_children.lock().insert(element_id);
+                }))
         };
 
         let item_content = h_flex()
@@ -429,7 +509,7 @@ impl ContentListDelegate {
                             });
                         }
                     })
-                    .px_2()
+                    .px_2(),
             )
             .child(icon.size_16().min_w_16().min_h_16().grayscale(!visually_enabled))
             .when(!visually_enabled, |this| this.line_through())
@@ -460,7 +540,10 @@ impl ContentListDelegate {
         for modification in new_content.iter() {
             mods.push(modification.clone());
 
-            if let ContentType::ModrinthModpack { downloads, summaries, .. } = &modification.content_summary.extra {
+            if let ContentType::ModrinthModpack {
+                downloads, summaries, ..
+            } = &modification.content_summary.extra
+            {
                 let mut inner_children = Vec::new();
                 for (index, download) in downloads.iter().enumerate() {
                     if !download.path.starts_with("mods/") {
@@ -473,9 +556,13 @@ impl ContentListDelegate {
 
                     let summary = summaries.get(index).cloned().flatten().unwrap_or(unknown.clone());
 
-                    let enabled = if let Some(id) = &summary.id && modification.disabled_children.disabled_ids.contains(id) {
+                    let enabled = if let Some(id) = &summary.id
+                        && modification.disabled_children.disabled_ids.contains(id)
+                    {
                         false
-                    } else if let Some(name) = &summary.name && modification.disabled_children.disabled_names.contains(name) {
+                    } else if let Some(name) = &summary.name
+                        && modification.disabled_children.disabled_names.contains(name)
+                    {
                         false
                     } else {
                         !modification.disabled_children.disabled_filenames.contains(&*download.path)
@@ -483,7 +570,10 @@ impl ContentListDelegate {
 
                     let lowercase_filename: Arc<str> = download.path.to_lowercase().into();
 
-                    let lowercase_search_keys = summary.id.clone().into_iter()
+                    let lowercase_search_keys = summary
+                        .id
+                        .clone()
+                        .into_iter()
                         .chain(summary.name.clone().into_iter())
                         .chain(std::iter::once(lowercase_filename))
                         .collect();
@@ -499,7 +589,10 @@ impl ContentListDelegate {
                     });
                 }
                 inner_children.sort_by(|a, b| {
-                    lexical_sort::natural_lexical_cmp(&a.lowercase_search_keys.last().unwrap(), &b.lowercase_search_keys.last().unwrap())
+                    lexical_sort::natural_lexical_cmp(
+                        &a.lowercase_search_keys.last().unwrap(),
+                        &b.lowercase_search_keys.last().unwrap(),
+                    )
                 });
                 children.push(inner_children);
             } else {
@@ -608,7 +701,12 @@ impl ListDelegate for ContentListDelegate {
         }
     }
 
-    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
         let mut index = ix.row;
 
         if let Some(searched) = &self.searched {
@@ -637,8 +735,14 @@ impl ListDelegate for ContentListDelegate {
 
         let summary = self.content.get(index)?;
         let selected = self.is_selected(summary.filename_hash);
-        Some(self.render_summary(summary, selected, index+1 == expanded, !self.children[index].is_empty(), ix.row, cx))
-
+        Some(self.render_summary(
+            summary,
+            selected,
+            index + 1 == expanded,
+            !self.children[index].is_empty(),
+            ix.row,
+            cx,
+        ))
     }
 
     fn set_selected_index(&mut self, _ix: Option<IndexPath>, _window: &mut Window, _cx: &mut Context<ListState<Self>>) {
@@ -650,7 +754,12 @@ impl ListDelegate for ContentListDelegate {
     }
 }
 
-fn create_descriptions(name: Option<Arc<str>>, version: Arc<str>, authors: Arc<str>, filename: Arc<str>) -> (Div, Option<Div>) {
+fn create_descriptions(
+    name: Option<Arc<str>>,
+    version: Arc<str>,
+    authors: Arc<str>,
+    filename: Arc<str>,
+) -> (Div, Option<Div>) {
     if name.is_none() && authors.is_empty() {
         let description1 = v_flex()
             .w_2_5()
@@ -666,10 +775,13 @@ fn create_descriptions(name: Option<Arc<str>>, version: Arc<str>, authors: Arc<s
         .child(SharedString::from(name.clone().unwrap_or(filename.clone())))
         .child(SharedString::from(version));
 
-    const GRAY: Hsla = Hsla { h: 0.0, s: 0.0, l: 0.5, a: 1.0};
-    let mut description2 = v_flex()
-        .text_color(GRAY)
-        .child(SharedString::from(authors));
+    const GRAY: Hsla = Hsla {
+        h: 0.0,
+        s: 0.0,
+        l: 0.5,
+        a: 1.0,
+    };
+    let mut description2 = v_flex().text_color(GRAY).child(SharedString::from(authors));
 
     if name.is_some() {
         description2 = description2.child(SharedString::from(filename));

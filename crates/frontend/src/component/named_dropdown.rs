@@ -7,7 +7,7 @@ use gpui_component::{
 #[derive(Clone)]
 pub struct NamedDropdownItem<T: Clone> {
     pub name: SharedString,
-    pub item: T
+    pub item: T,
 }
 
 impl<T: Clone> SelectItem for NamedDropdownItem<T> {
@@ -28,9 +28,7 @@ pub struct NamedDropdown<T: Clone> {
 
 impl<T: Clone> NamedDropdown<T> {
     pub fn new(items: Vec<NamedDropdownItem<T>>) -> Self {
-        Self {
-            items
-        }
+        Self { items }
     }
 
     pub fn create(items: Vec<NamedDropdownItem<T>>, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
@@ -66,12 +64,7 @@ impl<T: Clone> SelectDelegate for NamedDropdown<T> {
         None
     }
 
-    fn perform_search(
-        &mut self,
-        _query: &str,
-        _window: &mut Window,
-        _: &mut Context<SelectState<Self>>,
-    ) -> Task<()> {
+    fn perform_search(&mut self, _query: &str, _window: &mut Window, _: &mut Context<SelectState<Self>>) -> Task<()> {
         Task::ready(())
     }
 }

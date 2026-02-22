@@ -5,7 +5,7 @@ use gpui::*;
 use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 
 use crate::{
-    entity::{DataEntities, instance::InstanceEntries},
+    entity::{instance::InstanceEntries, DataEntities},
     ui::PageType,
 };
 
@@ -28,6 +28,7 @@ impl PagePath {
                 PageType::Instances => "Instances".into(),
                 PageType::Syncing => "Syncing".into(),
                 PageType::Skins => "Skins".into(),
+                PageType::Import => "Import".into(),
                 PageType::Modrinth { installing_for, .. } => {
                     if installing_for.is_some() {
                         "Add from Modrinth".into()

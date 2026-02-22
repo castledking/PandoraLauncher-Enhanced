@@ -20,6 +20,7 @@ mod instance;
 mod java_manifest;
 mod launch;
 mod launch_wrapper;
+mod launcher_import;
 mod lockfile;
 mod log_reader;
 mod metadata;

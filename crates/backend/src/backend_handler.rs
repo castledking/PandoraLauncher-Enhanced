@@ -1144,6 +1144,10 @@ impl BackendState {
                     }
                 }
             },
+            MessageToBackend::GetImportFromOtherLauncherPaths { channel } => {
+                let result = crate::launcher_import::discover_instances_from_other_launchers();
+                _ = channel.send(result);
+            },
             MessageToBackend::GetSyncState { channel } => {
                 let result = crate::syncing::get_sync_state(self.config.write().get().sync_targets, &self.directories);
 
@@ -1413,6 +1417,9 @@ impl BackendState {
             },
             MessageToBackend::InstallUpdate { update, modal_action } => {
                 tokio::task::spawn(crate::update::install_update(self.redirecting_http_client.clone(), self.directories.clone(), self.send.clone(), update, modal_action));
+            },
+            MessageToBackend::ImportFromOtherLauncher { launcher, import_accounts, import_instances, modal_action } => {
+                crate::launcher_import::import_from_other_launcher(self, launcher, import_accounts, import_instances, modal_action).await;
             }
         }
     }

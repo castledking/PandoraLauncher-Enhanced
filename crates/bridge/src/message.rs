@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::{
     account::Account,
     game_output::GameOutputLogLevel,
+    import::{ImportFromOtherLaunchers, OtherLauncher},
     install::ContentInstall,
     instance::{
         InstanceContentID, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus,
@@ -199,6 +200,15 @@ pub enum MessageToBackend {
         skin_data: Arc<[u8]>,
         skin_variant: Arc<str>,
         modal_action: ModalAction,
+    },
+    ImportFromOtherLauncher {
+        launcher: OtherLauncher,
+        import_accounts: bool,
+        import_instances: bool,
+        modal_action: ModalAction,
+    },
+    GetImportFromOtherLauncherPaths {
+        channel: tokio::sync::oneshot::Sender<ImportFromOtherLaunchers>,
     },
 }
 

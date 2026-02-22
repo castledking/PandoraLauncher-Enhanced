@@ -520,12 +520,12 @@ impl InstanceSettingsSubpage {
             if let Some(auto) = auto
                 && path == auto
             {
-                LwjglLibraryPath::Auto(path.clone())
+                LwjglLibraryPath::Auto
             } else {
                 LwjglLibraryPath::Explicit(path.clone())
             }
         } else {
-            LwjglLibraryPath::None
+            LwjglLibraryPath::Auto
         }
     }
 

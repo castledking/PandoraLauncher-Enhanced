@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use ustr::Ustr;
 
-use crate::{id_slab::{GetId, Id}, mod_metadata::ModMetadataManager, persistent::Persistent, BackendStateInstances, IoOrSerializationError};
+use crate::{id_slab::{GetId, Id}, launcher_import, mod_metadata::ModMetadataManager, persistent::Persistent, BackendStateInstances, IoOrSerializationError};
 
 #[derive(Debug)]
 pub struct Instance {
@@ -641,7 +641,11 @@ impl Instance {
 
         let info_path: Arc<Path> = path.join("info_v1.json").into();
 
-        let instance_info: Persistent<InstanceConfiguration> = Persistent::try_load(info_path.clone())?;
+        let instance_info = if !info_path.exists() && let Some(fallback) = launcher_import::try_load_from_other_launcher_formats(&path) {
+            Persistent::load_or(info_path.clone(), fallback)
+        } else {
+            Persistent::try_load(info_path.clone())?
+        };
 
         let mut dot_minecraft_path = path.to_owned();
         dot_minecraft_path.push(".minecraft");

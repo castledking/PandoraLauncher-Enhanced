@@ -166,6 +166,7 @@ mod inner {
 
             let uuid = uuid.as_hyphenated();
             account.msa_refresh = read(format!("PandoraLauncher_MsaRefresh_{}", uuid))?;
+            account.msa_refresh_force_client_id = read(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid))?;
             account.msa_access = read(format!("PandoraLauncher_MsaAccess_{}", uuid))?;
             account.xbl = read(format!("PandoraLauncher_Xbl_{}", uuid))?;
             account.xsts = read(format!("PandoraLauncher_Xsts_{}", uuid))?;
@@ -214,6 +215,7 @@ mod inner {
 
             let uuid = uuid.as_hyphenated();
             write(format!("PandoraLauncher_MsaRefresh_{}", uuid), credentials.msa_refresh.as_ref())?;
+            write(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid), credentials.msa_refresh_force_client_id.as_ref())?;
             write(format!("PandoraLauncher_MsaAccess_{}", uuid), credentials.msa_access.as_ref())?;
             write(format!("PandoraLauncher_Xbl_{}", uuid), credentials.xbl.as_ref())?;
             write(format!("PandoraLauncher_Xsts_{}", uuid), credentials.xsts.as_ref())?;
@@ -233,6 +235,7 @@ mod inner {
 
             [
                 delete(format!("PandoraLauncher_MsaRefresh_{}", uuid)),
+                delete(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid)),
                 delete(format!("PandoraLauncher_MsaAccess_{}", uuid)),
                 delete(format!("PandoraLauncher_Xbl_{}", uuid)),
                 delete(format!("PandoraLauncher_Xsts_{}", uuid)),

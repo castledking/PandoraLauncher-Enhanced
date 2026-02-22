@@ -15,3 +15,4 @@ enumset.workspace = true
 relative-path.workspace = true
 enum-map.workspace = true
 strum.workspace = true
+once_cell.workspace = true

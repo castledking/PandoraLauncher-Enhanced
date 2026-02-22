@@ -465,11 +465,12 @@ impl BackendState {
 
                     credentials.msa_access = Some(msa_tokens.access);
                     credentials.msa_refresh = msa_tokens.refresh;
+                    credentials.msa_refresh_force_client_id = None;
                 },
                 auth::credentials::AuthStageWithData::MsaRefresh(refresh) => {
                     log::debug!("Auth Flow: MsaRefresh");
 
-                    match authenticator.refresh_msa(&refresh).await {
+                    match authenticator.refresh_msa(&refresh, &credentials.msa_refresh_force_client_id).await {
                         Ok(Some(msa_tokens)) => {
                             credentials.msa_access = Some(msa_tokens.access);
                             credentials.msa_refresh = msa_tokens.refresh;
@@ -479,6 +480,7 @@ impl BackendState {
                                 return Err(MsaAuthorizationError::InvalidGrant.into());
                             }
                             credentials.msa_refresh = None;
+                            credentials.msa_refresh_force_client_id = None;
                         },
                         Err(error) => {
                             if !allow_backwards || error.is_connection_error() {
@@ -488,6 +490,7 @@ impl BackendState {
                                 log::warn!("Error using msa refresh to get msa access: {:?}", error);
                             }
                             credentials.msa_refresh = None;
+                            credentials.msa_refresh_force_client_id = None;
                         },
                     }
                 },

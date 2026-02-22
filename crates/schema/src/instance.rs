@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use ustr::Ustr;
 
@@ -23,6 +24,22 @@ pub struct InstanceConfiguration {
     pub system_libraries: Option<InstanceSystemLibrariesConfiguration>,
     #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
     pub instance_fallback_icon: Option<Ustr>,
+}
+
+impl InstanceConfiguration {
+    pub fn new(minecraft_version: Ustr, loader: Loader) -> Self {
+        Self {
+            minecraft_version,
+            loader,
+            preferred_loader_version: None,
+            memory: None,
+            jvm_flags: None,
+            jvm_binary: None,
+            linux_wrapper: None,
+            system_libraries: None,
+            instance_fallback_icon: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
@@ -125,14 +142,14 @@ pub struct InstanceSystemLibrariesConfiguration {
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub enum LwjglLibraryPath {
     #[default]
-    None,
-    Auto(Arc<Path>),
+    Auto,
+    AutoPreferred(Arc<Path>),
     Explicit(Arc<Path>),
 }
 
 fn is_default_system_libraries_configuration(config: &Option<InstanceSystemLibrariesConfiguration>) -> bool {
     if let Some(config) = config {
-        matches!(config.glfw, LwjglLibraryPath::None) && matches!(config.openal, LwjglLibraryPath::None)
+        matches!(config.glfw, LwjglLibraryPath::Auto) && matches!(config.openal, LwjglLibraryPath::Auto)
     } else {
         true
     }
@@ -141,10 +158,10 @@ fn is_default_system_libraries_configuration(config: &Option<InstanceSystemLibra
 impl LwjglLibraryPath {
     pub fn get_or_auto(self, auto: &Option<Arc<Path>>) -> Option<Arc<Path>> {
         match self {
-            LwjglLibraryPath::None => auto.clone(),
-            LwjglLibraryPath::Auto(path) => {
-                if path.exists() {
-                    Some(path)
+            LwjglLibraryPath::Auto => auto.clone(),
+            LwjglLibraryPath::AutoPreferred(preferred) => {
+                if preferred.exists() {
+                    Some(preferred)
                 } else {
                     auto.clone()
                 }
@@ -154,12 +171,36 @@ impl LwjglLibraryPath {
             },
         }
     }
+}
 
-    pub fn get_path(&self) -> Option<&Path> {
-        match self {
-            LwjglLibraryPath::None => None,
-            LwjglLibraryPath::Auto(path) => Some(&**path),
-            LwjglLibraryPath::Explicit(path) => Some(&**path),
+pub static AUTO_LIBRARY_PATH_GLFW: Lazy<Option<Arc<Path>>> = Lazy::new(|| get_shared_library_path_for_name("glfw"));
+pub static AUTO_LIBRARY_PATH_OPENAL: Lazy<Option<Arc<Path>>> = Lazy::new(|| get_shared_library_path_for_name("openal"));
+
+#[cfg(not(unix))]
+fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
+    None
+}
+
+#[cfg(unix)]
+fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
+    let filename = format!("{}{}{}", std::env::consts::DLL_PREFIX, name, std::env::consts::DLL_SUFFIX);
+
+    let search_paths = &[
+        "/lib/",
+        "/lib64/",
+        "/usr/lib/",
+        "/usr/lib64/",
+        "/usr/local/lib/",
+        #[cfg(target_os = "macos")]
+        "/opt/homebrew/lib/"
+    ];
+
+    for search_path in search_paths {
+        let path = Path::new(search_path).join(&filename);
+        if path.exists() {
+            return Some(path.into());
         }
     }
+
+    None
 }

@@ -31,6 +31,7 @@ use crate::{
     interface_config::InterfaceConfig,
     modals,
     pages::{
+        import::ImportPage,
         instance::instance_page::{InstancePage, InstanceSubpageType},
         instances_page::InstancesPage,
         modrinth_page::ModrinthSearchPage,
@@ -57,6 +58,7 @@ pub enum PageType {
     Instances,
     Syncing,
     Skins,
+    Import,
     Modrinth {
         installing_for: Option<InstanceID>,
         project_type: Option<ModrinthProjectType>,
@@ -70,6 +72,7 @@ impl PageType {
             PageType::Instances => SerializedPageType::Instances,
             PageType::Syncing => SerializedPageType::Syncing,
             PageType::Skins => SerializedPageType::Skins,
+            PageType::Import => SerializedPageType::Import,
             PageType::Modrinth { installing_for, .. } => {
                 if let Some(installing_for) = installing_for {
                     if let Some(name) = InstanceEntries::find_name_by_id(&data.instances, *installing_for, cx) {
@@ -95,6 +98,7 @@ impl PageType {
             SerializedPageType::Instances => PageType::Instances,
             SerializedPageType::Syncing => PageType::Syncing,
             SerializedPageType::Skins => PageType::Skins,
+            SerializedPageType::Import => PageType::Import,
             SerializedPageType::Modrinth { installing_for } => {
                 if let Some(installing_for) = installing_for {
                     if let Some(id) = InstanceEntries::find_id_by_name(&data.instances, installing_for, cx) {
@@ -127,6 +131,7 @@ pub enum SerializedPageType {
     Instances,
     Syncing,
     Skins,
+    Import,
     Modrinth {
         installing_for: Option<SharedString>,
     },
@@ -138,6 +143,7 @@ pub enum LauncherPage {
     Instances(Entity<InstancesPage>),
     Syncing(Entity<SyncingPage>),
     Skins(Entity<SkinsPage>),
+    Import(Entity<ImportPage>),
     Modrinth {
         installing_for: Option<InstanceID>,
         page: Entity<ModrinthSearchPage>,
@@ -151,6 +157,7 @@ impl LauncherPage {
             LauncherPage::Instances(entity) => entity.into_any_element(),
             LauncherPage::Syncing(entity) => entity.into_any_element(),
             LauncherPage::Skins(entity) => entity.into_any_element(),
+            LauncherPage::Import(entity) => entity.into_any_element(),
             LauncherPage::Modrinth { page, .. } => page.into_any_element(),
             LauncherPage::InstancePage(_, _, entity) => entity.into_any_element(),
         }
@@ -161,6 +168,7 @@ impl LauncherPage {
             LauncherPage::Instances(_) => PageType::Instances,
             LauncherPage::Syncing(_) => PageType::Syncing,
             LauncherPage::Skins(_) => PageType::Skins,
+            LauncherPage::Import(_) => PageType::Import,
             LauncherPage::Modrinth { installing_for, .. } => PageType::Modrinth {
                 installing_for: *installing_for,
                 project_type: None,
@@ -266,6 +274,7 @@ impl LauncherUI {
             PageType::Instances => LauncherPage::Instances(cx.new(|cx| InstancesPage::new(data, window, cx))),
             PageType::Syncing => LauncherPage::Syncing(cx.new(|cx| SyncingPage::new(data, window, cx))),
             PageType::Skins => LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx))),
+            PageType::Import => LauncherPage::Import(cx.new(|cx| ImportPage::new(data, window, cx))),
             PageType::Modrinth {
                 installing_for,
                 project_type,
@@ -340,6 +349,11 @@ impl Render for LauncherUI {
             .child(MenuGroupItem::new("Syncing").active(page_type == PageType::Syncing).on_click(cx.listener(
                 |launcher, _, window, cx| {
                     launcher.switch_page(PageType::Syncing, &[], window, cx);
+                },
+            )))
+            .child(MenuGroupItem::new("Import").active(page_type == PageType::Import).on_click(cx.listener(
+                |launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Import, &[], window, cx);
                 },
             )))
             .child(MenuGroupItem::new("Skins").active(page_type == PageType::Skins).on_click(cx.listener(

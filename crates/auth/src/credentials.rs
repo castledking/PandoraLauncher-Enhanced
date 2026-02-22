@@ -7,10 +7,17 @@ use crate::models::{MinecraftAccessToken, TokenWithExpiry, XstsToken};
 
 #[derive(Default, Deserialize, Serialize)]
 pub struct AccountCredentials {
+    #[serde(default, skip_serializing_if = "skip_if_none")]
     pub msa_refresh: Option<Arc<str>>,
+    #[serde(default, skip_serializing_if = "skip_if_none")]
+    pub msa_refresh_force_client_id: Option<Arc<str>>,
+    #[serde(default, skip_serializing_if = "skip_if_none")]
     pub msa_access: Option<TokenWithExpiry>,
+    #[serde(default, skip_serializing_if = "skip_if_none")]
     pub xbl: Option<TokenWithExpiry>,
+    #[serde(default, skip_serializing_if = "skip_if_none")]
     pub xsts: Option<XstsToken>,
+    #[serde(default, skip_serializing_if = "skip_if_none")]
     pub access_token: Option<TokenWithExpiry>,
 }
 
@@ -90,4 +97,8 @@ impl AccountCredentials {
         // No valid stage, return initial stage
         AuthStageWithData::Initial
     }
+}
+
+fn skip_if_none<T>(value: &Option<T>) -> bool {
+    value.is_none()
 }

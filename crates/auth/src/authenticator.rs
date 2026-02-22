@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, time::Duration};
+use std::{cell::OnceCell, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use oauth2::{
@@ -183,11 +183,19 @@ impl Authenticator {
         })
     }
 
-    pub async fn refresh_msa(&mut self, refresh: &str) -> Result<Option<MsaTokens>, MsaAuthorizationError> {
-        let token_response = self
-            .oauth2_client()
+    pub async fn refresh_msa(&mut self, refresh: &str, force_client_id: &Option<Arc<str>>) -> Result<Option<MsaTokens>, MsaAuthorizationError> {
+        let client = if let Some(force_client_id) = force_client_id && &**force_client_id != constants::CLIENT_ID {
+            &Client::new(ClientId::new(force_client_id.to_string()))
+                .set_auth_type(oauth2::AuthType::RequestBody)
+                .set_auth_uri(AuthUrl::new(constants::AUTH_URL.to_string()).unwrap())
+                .set_token_uri(TokenUrl::new(constants::TOKEN_URL.to_string()).unwrap())
+                .set_redirect_uri(RedirectUrl::new(constants::REDIRECT_URL.to_string()).unwrap())
+        } else {
+            self.oauth2_client()
+        };
+
+        let token_response = client
             .exchange_refresh_token(&RefreshToken::new(refresh.to_string()))
-            // .set_pkce_verifier(finished.pending.pkce_verifier)
             .request_async(&self.client)
             .await;
 

@@ -11,7 +11,7 @@ use rc_zip_sync::{ArchiveHandle, ReadZip};
 use regex::Regex;
 use rustc_hash::FxHashMap;
 use schema::{
-    assets_index::AssetsIndex, fabric_launch::FabricLaunch, forge::{ForgeInstallProfile, ForgeInstallProfileLegacy, ForgeSide, VersionFragment}, instance::InstanceConfiguration, java_runtime_component::{JavaRuntimeComponentFile, JavaRuntimeComponentManifest}, loader::Loader, maven::{MavenCoordinate, MavenMetadataXml}, version::{
+    assets_index::AssetsIndex, fabric_launch::FabricLaunch, forge::{ForgeInstallProfile, ForgeInstallProfileLegacy, ForgeSide, VersionFragment}, instance::{InstanceConfiguration, AUTO_LIBRARY_PATH_GLFW, AUTO_LIBRARY_PATH_OPENAL}, java_runtime_component::{JavaRuntimeComponentFile, JavaRuntimeComponentManifest}, loader::Loader, maven::{MavenCoordinate, MavenMetadataXml}, version::{
         GameLibrary, GameLibraryArtifact, GameLibraryDownloads, GameLibraryExtractOptions, GameLogging, LaunchArgument, LaunchArgumentValue, MinecraftVersion, OsArch, OsName, PartialMinecraftVersion, Rule, RuleAction
     }, version_manifest::MinecraftVersionManifest
 };
@@ -2188,17 +2188,21 @@ impl LaunchContext {
         }
 
         if let Some(system_libraries) = self.configuration.system_libraries {
-            if let Some(path) = system_libraries.glfw.get_path() {
-                stdin_arguments.push_str("property\n");
-                stdin_arguments.push_str("org.lwjgl.glfw.libname\n");
-                stdin_arguments.push_str(&path.to_string_lossy());
-                stdin_arguments.push('\n');
+            if system_libraries.override_glfw {
+                if let Some(path) = system_libraries.glfw.get_or_auto(&*AUTO_LIBRARY_PATH_GLFW) {
+                    stdin_arguments.push_str("property\n");
+                    stdin_arguments.push_str("org.lwjgl.glfw.libname\n");
+                    stdin_arguments.push_str(&path.to_string_lossy());
+                    stdin_arguments.push('\n');
+                }
             }
-            if let Some(path) = system_libraries.openal.get_path() {
-                stdin_arguments.push_str("property\n");
-                stdin_arguments.push_str("org.lwjgl.openal.libname\n");
-                stdin_arguments.push_str(&path.to_string_lossy());
-                stdin_arguments.push('\n');
+            if system_libraries.override_openal {
+                if let Some(path) = system_libraries.openal.get_or_auto(&*AUTO_LIBRARY_PATH_OPENAL) {
+                    stdin_arguments.push_str("property\n");
+                    stdin_arguments.push_str("org.lwjgl.openal.libname\n");
+                    stdin_arguments.push_str(&path.to_string_lossy());
+                    stdin_arguments.push('\n');
+                }
             }
         }
 

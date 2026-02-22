@@ -566,7 +566,7 @@ impl ListDelegate for ContentListDelegate {
         }
 
         let expanded = self.expanded.load(Ordering::Relaxed);
-        if expanded > 0 {
+        if expanded > 0 && expanded <= self.children.len() {
             self.content.len() + self.children[expanded - 1].len()
         } else {
             self.content.len()
@@ -591,11 +591,13 @@ impl ListDelegate for ContentListDelegate {
 
         let expanded = self.expanded.load(Ordering::Relaxed);
 
-        if expanded > 0 && index >= expanded {
-            if let Some(child) = self.children[expanded - 1].get(index-expanded) {
+        if expanded > 0 && expanded <= self.children.len() && index >= expanded {
+            if let Some(child) = self.children.get(expanded - 1).and_then(|c| c.get(index - expanded)) {
                 return Some(self.render_child_entry(child, cx));
             }
-            index -= self.children[expanded - 1].len();
+            if let Some(children_for_expanded) = self.children.get(expanded - 1) {
+                index -= children_for_expanded.len();
+            }
         }
 
         let summary = self.content.get(index)?;

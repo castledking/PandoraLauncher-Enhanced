@@ -297,7 +297,8 @@ impl ModrinthSearchPage {
 
                                 if let Some(mod_id) = &bundled.id {
                                     let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
-                                    self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content);
+                                    self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content.clone());
+                                    self.installed_mods_by_filename_prefix.entry(mod_id_key).or_insert(bundled_content);
                                 }
 
                                 if let Some(ref project) = modpack_project {

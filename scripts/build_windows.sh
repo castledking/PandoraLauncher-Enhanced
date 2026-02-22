@@ -46,7 +46,7 @@ if [[ -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then
             }
         }
     }
-}" > dist/update_windows.json
+}" > dist/update_manifest_windows.json
 
     rm dist/*.sig
 fi

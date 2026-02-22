@@ -28,6 +28,7 @@ jobs:
             buildscript: ./scripts/build_mac.sh
 
     runs-on: ${{ matrix.platform.os }}
+    environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -60,7 +60,7 @@ if [[ -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then
             }
         }
     }
-}" > dist/update_macos.json
+}" > dist/update_manifest_macos.json
 
     rm dist/*.sig
 fi

@@ -32,7 +32,7 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
 
     let current_version = schema::forge::VersionFragment::string_to_parts(version);
 
-    let url = format!("{repository_url}/releases/latest/download/update_{}.json", std::env::consts::OS);
+    let url = format!("{repository_url}/releases/latest/download/update_manifest_{}.json", std::env::consts::OS);
     let response = http_client.get(url).send().await;
 
     let response = match response {

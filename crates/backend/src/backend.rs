@@ -212,6 +212,12 @@ impl BackendState {
 
             let path = entry.path();
 
+            if let Some(file_name) = path.file_name() {
+                if file_name.to_string_lossy().starts_with('.') {
+                    continue;
+                }
+            }
+
             let mut time = SystemTime::UNIX_EPOCH;
             if let Ok(metadata) = path.metadata() {
                 if let Ok(created) = metadata.created() {
@@ -301,10 +307,6 @@ impl BackendState {
                 existing_instance.copy_basic_attributes_from(instance);
 
                 let _ = self.send.send(existing_instance.create_modify_message());
-
-                if show_success {
-                    self.send.send_info(format!("Instance '{}' updated", existing_instance.name));
-                }
 
                 return true;
             }
@@ -1125,18 +1127,61 @@ impl BackendState {
             return;
         }
 
-        let new_instance_dir = self.directories.instances_dir.join(name);
-
-        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            if instance.child.is_some() {
-                self.send.send_warning("Unable to rename instance, instance is running".to_string());
+        let old_path = {
+            let instance_state = self.instance_state.read();
+            if let Some(instance) = instance_state.instances.get(id) {
+                if instance.child.is_some() {
+                    self.send.send_warning("Unable to rename instance, instance is running".to_string());
+                    return;
+                }
+                instance.root_path.clone()
+            } else {
                 return;
             }
-            let result = std::fs::rename(&instance.root_path, new_instance_dir);
-            if let Err(err) = result {
-                self.send.send_error(format!("Unable to rename instance folder: {}", err));
-            }
+        };
+
+        let new_instance_dir: Arc<Path> = self.directories.instances_dir.join(name).into();
+        let new_instance_dir_path = new_instance_dir.as_ref().to_path_buf();
+
+        {
+            let mut file_watching = self.file_watching.write();
+            file_watching.watching.remove(&*old_path);
+            file_watching.watching.insert(new_instance_dir.clone(), WatchTarget::InstanceDir { id });
         }
+
+        if let Err(err) = copy_dir_all(&old_path, &new_instance_dir_path) {
+            if new_instance_dir_path.exists() {
+                let _ = std::fs::remove_dir_all(&new_instance_dir_path);
+            }
+            {
+                let mut file_watching = self.file_watching.write();
+                file_watching.watching.remove(&*new_instance_dir);
+                file_watching.watching.insert(old_path.clone(), WatchTarget::InstanceDir { id });
+            }
+            self.send.send_error(format!("Unable to rename instance folder: {}", err));
+            return;
+        }
+
+        if let Err(err) = std::fs::remove_dir_all(&old_path) {
+            self.send.send_warning(format!("Instance renamed but failed to remove old folder: {}", err));
+        }
+
+        let mut new_dot_minecraft = new_instance_dir_path.clone();
+        new_dot_minecraft.push(".minecraft");
+
+        let new_instance_dir_for_map = new_instance_dir.as_ref().to_path_buf();
+        {
+            let mut instance_state = self.instance_state.write();
+            instance_state.instance_by_path.remove(&*old_path);
+            if let Some(instance) = instance_state.instances.get_mut(id) {
+                instance.root_path = new_instance_dir;
+                instance.dot_minecraft_path = new_dot_minecraft.into();
+                instance.name = name.into();
+            }
+            instance_state.instance_by_path.insert(new_instance_dir_for_map, id);
+        }
+
+        self.send.send_info(format!("Instance renamed to '{}'", name));
     }
 
     pub async fn set_instance_icon(&self, id: InstanceID, icon: Option<bridge::message::EmbeddedOrRaw>) {
@@ -1332,6 +1377,21 @@ impl BackendStateFileWatching {
 
         paths
     }
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(thiserror::Error, Debug)]

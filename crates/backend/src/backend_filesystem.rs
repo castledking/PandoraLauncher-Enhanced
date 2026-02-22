@@ -316,6 +316,11 @@ impl BackendState {
             }
             WatchTarget::InstancesDir => {
                 if path.is_dir() {
+                    if let Some(file_name) = path.file_name() {
+                        if file_name.to_string_lossy().starts_with('.') {
+                            return;
+                        }
+                    }
                     let success = self.load_instance_from_path(path, false, true);
                     if !success {
                         self.file_watching.write().watch_filesystem(path.clone(), WatchTarget::InvalidInstanceDir);

@@ -1,13 +1,20 @@
 use bridge::handle::BackendHandle;
 use bridge::instance::InstanceStatus;
 use bridge::message::MessageToBackend;
-use gpui::{prelude::*, *};
+use gpui::{prelude::*, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, *};
 use gpui_component::Icon;
 use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     table::{Column, ColumnSort, TableDelegate, TableState},
-    v_flex, ActiveTheme, IconName, Sizable,
+    v_flex, ActiveTheme, IconName, Sizable, StyledExt,
+};
+
+const GRAY: Hsla = Hsla {
+    h: 0.0,
+    s: 0.0,
+    l: 0.5,
+    a: 1.0,
 };
 
 use crate::{
@@ -95,8 +102,10 @@ impl InstanceList {
         let theme = cx.theme();
         let backend_handle = self.backend_handle.clone();
         let backend_handle_for_delete = self.backend_handle.clone();
+        let backend_handle_for_rename = self.backend_handle.clone();
         let id = item.id;
         let name = item.name.clone();
+        let name_for_rename = item.name.clone();
         let trash_icon = Icon::default().path("icons/trash-2.svg");
         let edit_icon = Icon::default().path("icons/brush.svg").text_color(white());
 
@@ -164,11 +173,46 @@ impl InstanceList {
                     }),
             )
             .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(icon)
-                    .child(v_flex().truncate().w_full().child(item.name.clone()).child(loader_and_version)),
+                h_flex().w_full().gap_2().child(icon).child(
+                    v_flex()
+                        .truncate()
+                        .w_full()
+                        .relative()
+                        .child(
+                            div()
+                                .id(("name", index))
+                                .cursor_pointer()
+                                .w_full()
+                                .on_click(move |_, window, cx| {
+                                    let backend_handle = backend_handle_for_rename.clone();
+                                    modals::rename_instance::open_rename_instance(
+                                        id,
+                                        name_for_rename.clone(),
+                                        backend_handle.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .child(item.name.clone())
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left_0()
+                                        .top_0()
+                                        .bottom_0()
+                                        .right_6()
+                                        .bg(black().clone().opacity(0.5))
+                                        .opacity(0.0)
+                                        .hover(|this| this.opacity(1.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_start()
+                                        .pl_1()
+                                        .child(edit_icon.clone().size_4()),
+                                ),
+                        )
+                        .child(div().text_color(GRAY).text_xs().child(loader_and_version)),
+                ),
             )
             .child(
                 h_flex()
@@ -264,8 +308,8 @@ impl TableDelegate for InstanceList {
         &mut self,
         row_ix: usize,
         col_ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let item = &self.items[row_ix];
         if let Some(col) = self.columns.get(col_ix) {
@@ -293,7 +337,7 @@ impl TableDelegate for InstanceList {
                                     )
                                 },
                                 InstanceStatus::Launching => Button::new("starting")
-                                    .w(relative(0.5))
+                                    .w_auto()
                                     .small()
                                     .warning()
                                     .icon(IconName::Loader)

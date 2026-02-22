@@ -16,45 +16,11 @@ use schema::{
 use uuid::Uuid;
 
 use crate::{
-    component::{error_alert::ErrorAlert, instance_dropdown::InstanceDropdown},
     entity::{
-        DataEntities, instance::InstanceEntry, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState}
+        DataEntities, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState}
     },
-    root, ts,
+    ts,
 };
-
-// struct VersionMatrixLoaders {
-//     loaders: EnumSet<ModrinthLoader>,
-//     same_loaders_for_all_versions: bool,
-// }
-
-// struct InstallNotification {
-//     title: SharedString,
-//     name: SharedString,
-
-//     project_versions: Arc<[ModrinthProjectVersion]>,
-//     data: DataEntities,
-//     project_type: ModrinthProjectType,
-
-//     version_matrix: FxHashMap<&'static str, VersionMatrixLoaders>,
-//     instances: Option<Entity<SelectState<InstanceDropdown>>>,
-//     unsupported_instances: usize,
-
-//     target: Option<InstallTarget>,
-
-//     last_selected_minecraft_version: Option<SharedString>,
-//     last_selected_loader: Option<SharedString>,
-
-//     fixed_minecraft_version: Option<&'static str>,
-//     minecraft_version_select_state: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
-
-//     fixed_loader: Option<ModrinthLoader>,
-//     loader_select_state: Option<Entity<SelectState<Vec<SharedString>>>>,
-//     skip_loader_check_for_mod_version: bool,
-//     install_dependencies: bool,
-
-//     mod_version_select_state: Option<Entity<SelectState<SearchableVec<ModVersionItem>>>>,
-// }
 
 struct AutoInstallNotificationType;
 
@@ -78,7 +44,7 @@ pub fn open(
     );
 
     let key = Uuid::new_v4();
-    let title = ts!("instance.content.install.title");
+    let title = ts!("instance.content.install.title", name = name);
 
     if handle_project_versions(data, title.clone(), key, project_id.clone(), project_type, install_for, &project_versions, window, cx) {
         return;

@@ -175,9 +175,10 @@ impl InstanceList {
             .child(
                 h_flex().w_full().gap_2().child(icon).child(
                     v_flex()
+                        .flex_1()
                         .truncate()
-                        .w_full()
                         .relative()
+                        .pr_4()
                         .child(
                             div()
                                 .id(("name", index))

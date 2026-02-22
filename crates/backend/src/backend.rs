@@ -1175,8 +1175,10 @@ impl BackendState {
             instance_state.instance_by_path.remove(&*old_path);
             if let Some(instance) = instance_state.instances.get_mut(id) {
                 instance.root_path = new_instance_dir;
-                instance.dot_minecraft_path = new_dot_minecraft.into();
+                instance.dot_minecraft_path = new_dot_minecraft.clone().into();
                 instance.name = name.into();
+                instance.content_state[ContentFolder::Mods].path = ContentFolder::Mods.path().to_path(&new_dot_minecraft).into();
+                instance.content_state[ContentFolder::ResourcePacks].path = ContentFolder::ResourcePacks.path().to_path(&new_dot_minecraft).into();
             }
             instance_state.instance_by_path.insert(new_instance_dir_for_map, id);
         }

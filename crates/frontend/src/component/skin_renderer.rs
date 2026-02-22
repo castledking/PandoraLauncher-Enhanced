@@ -1,8 +1,5 @@
-use gpui::{
-    canvas, div, img, App, Bounds, Context, Global, ImageSource, InteractiveElement, Interactivity, IntoElement,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
-    SharedUri, StatefulInteractiveElement, Styled, Task, Window,
-};
+use gpui::{prelude::*, *};
+use gpui_component::StyledExt;
 use image::{Frame, RgbaImage};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -288,35 +285,38 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
         let tp2 = t(p2);
         let tp3 = t(p3);
 
-        // Calculate normal
-        let vec1 = tp1 - tp0;
+        // Correct winding for CCW in screen space (Y-down): TL, BL, BR and TL, BR, TR
+        // This ensures triangles are NOT culled when facing the camera.
+        let vec1 = tp3 - tp0;
         let vec2 = tp2 - tp0;
         let normal = vec1.cross(vec2).normalize();
 
         tris.push(Triangle {
-            v: [(tp0, (u0, v0)), (tp1, (u1, v1)), (tp2, (u2, v2))],
+            v: [(tp0, (u0, v0)), (tp3, (u3, v3)), (tp2, (u2, v2))],
             normal,
         });
         tris.push(Triangle {
-            v: [(tp0, (u0, v0)), (tp2, (u2, v2)), (tp3, (u3, v3))],
+            v: [(tp0, (u0, v0)), (tp2, (u2, v2)), (tp1, (u1, v1))],
             normal,
         });
     };
 
     // Minecraft skin UV mapping - standard cube faces (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
-    // Front face (Z=sd)
+    // Front face (touching player back for cape, chest for others)
     let front_u = if part.limb == Limb::Cape { u + d + w + d } else { u + d };
     add_face(p011, p111, p101, p001, front_u, v + d, w, h);
-    // Back face (Z=0)
+    // Back face (visible part for cape, back for others)
     let back_u = if part.limb == Limb::Cape { u + d } else { u + d + w + d };
     add_face(p110, p010, p000, p100, back_u, v + d, w, h);
-    // Right face (X=sw)
-    add_face(p111, p110, p100, p101, u, v + d, d, h);
-    // Left face (X=0)
-    add_face(p010, p011, p001, p000, u + d + w, v + d, d, h);
-    // Top face (Y=sh)
+    // Right face
+    let right_u = if part.limb == Limb::Cape { u + d + w } else { u };
+    add_face(p111, p110, p100, p101, right_u, v + d, d, h);
+    // Left face
+    let left_u = if part.limb == Limb::Cape { u } else { u + d + w };
+    add_face(p010, p011, p001, p000, left_u, v + d, d, h);
+    // Top face
     add_face(p010, p110, p111, p011, u + d, v, w, d);
-    // Bottom face (Y=0)
+    // Bottom face
     add_face(p001, p101, p100, p000, u + d + w, v, w, d);
 
     tris
@@ -335,8 +335,11 @@ pub struct SkinRenderer {
     is_dragging: bool,
     last_mouse: Option<Point<Pixels>>,
     pub slim: bool,
+    pub is_static: bool,
+    pub nameplate: Option<SharedString>,
     pub cape_bytes: Option<Arc<[u8]>>,
     parsed_cape: Option<RgbaImage>,
+    _window_event_subscription: Option<Subscription>,
 }
 
 impl SkinRenderer {
@@ -351,13 +354,16 @@ impl SkinRenderer {
             image_bytes,
             parsed_image,
             start_time: Instant::now(),
-            yaw: -0.5,
+            yaw: 0.5,
             pitch: 0.1,
             is_dragging: false,
             last_mouse: None,
             slim,
+            is_static: false,
+            nameplate: None,
             cape_bytes: None,
             parsed_cape: None,
+            _window_event_subscription: None,
         }
     }
 
@@ -399,19 +405,23 @@ impl SkinRenderer {
         self.cape_bytes = cape_bytes;
     }
 
-    fn render_to_buffer(&self, width: u32, height: u32) -> Option<Arc<RenderImage>> {
+    pub fn render_to_buffer(&self, width: u32, height: u32) -> Option<Arc<RenderImage>> {
+        self.render_to_buffer_with_params(width, height, self.yaw, self.pitch, self.is_static)
+    }
+
+    pub fn render_to_buffer_with_params(&self, width: u32, height: u32, yaw: f32, pitch: f32, is_static: bool) -> Option<Arc<RenderImage>> {
         let tex = self.parsed_image.as_ref()?;
         let is_64x32 = tex.height() == 32;
 
-        let mut zbuf = vec![std::f32::MAX; (width * height) as usize];
+        let mut zbuf = vec![std::f32::MIN; (width * height) as usize];
         let mut colorbuf = vec![0u8; (width * height * 4) as usize];
 
-        let time = self.start_time.elapsed().as_secs_f32();
+        let time = if is_static { 2.0 } else { self.start_time.elapsed().as_secs_f32() };
         let mut parts = build_parts(self.slim);
 
         // Animations - slightly more complex to mimic Modrinth
-        let breathe = (time * 1.8).sin() * 0.4;
-        let swing_base = (time * 1.5).sin();
+        let breathe = if is_static { 0.0 } else { (time * 1.8).sin() * 0.4 };
+        let swing_base = if is_static { 0.0 } else { (time * 1.5).sin() };
         let arm_swing = swing_base * 0.3;
         let leg_swing = swing_base * 0.4;
 
@@ -457,12 +467,21 @@ impl SkinRenderer {
             }
         }
 
-        let scale = height as f32 / 38.0;
+        let is_card = width <= 200 && height <= 200;
+        let scale = if is_card {
+            height as f32 / 20.0
+        } else {
+            height as f32 / 38.0
+        };
         let offset_x = width as f32 / 2.0;
-        let offset_y = height as f32 / 2.0 + 16.0 * scale;
+        let offset_y = if is_card {
+            height as f32 / 2.0 + 26.0 * scale
+        } else {
+            height as f32 / 2.0 + 18.0 * scale
+        };
 
-        let global_pitch = self.pitch;
-        let global_yaw = self.yaw;
+        let global_pitch = pitch;
+        let global_yaw = yaw;
         let light_dir = Vec3 { x: -3.0, y: 4.0, z: 2.0 }.normalize(); // Light from front-top-left
 
         for part in parts {
@@ -531,7 +550,7 @@ impl SkinRenderer {
                             let z = w0 * v_proj[0].0.z + w1 * v_proj[1].0.z + w2 * v_proj[2].0.z;
                             let idx = (y as usize) * (width as usize) + (x as usize);
 
-                            if z < zbuf[idx] {
+                            if z > zbuf[idx] {
                                 let u = w0 * v_proj[0].1 .0 + w1 * v_proj[1].1 .0 + w2 * v_proj[2].1 .0;
                                 let v = w0 * v_proj[0].1 .1 + w1 * v_proj[1].1 .1 + w2 * v_proj[2].1 .1;
 
@@ -573,6 +592,10 @@ impl Render for SkinRenderer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity().clone();
 
+        if self._window_event_subscription.is_none() {
+            // Global mouse up reset - skip for now if on_window_event is missing
+        }
+
         div()
             .size_full()
             .on_mouse_down(
@@ -607,18 +630,37 @@ impl Render for SkinRenderer {
                         window.request_animation_frame();
                         let w_f32: f32 = bounds.size.width.into();
                         let h_f32: f32 = bounds.size.height.into();
-                        entity.update(cx, |this: &mut SkinRenderer, _cx: &mut Context<SkinRenderer>| {
-                            let w = w_f32 as u32;
-                            let h = h_f32 as u32;
-                            if w > 0 && h > 0 {
-                                if let Some(render_img) = this.render_to_buffer(w, h) {
-                                    let _ = window.paint_image(bounds, gpui::Corners::default(), render_img, 0, false);
-                                }
+                        let w = w_f32 as u32;
+                        let h = h_f32 as u32;
+                        if w > 0 && h > 0 {
+                            if let Some(render_img) = entity.read(cx).render_to_buffer(w, h) {
+                                let _ = window.paint_image(bounds, gpui::Corners::default(), render_img, 0, false);
                             }
-                        });
+                        }
                     },
                 )
                 .size_full(),
             )
+            .when_some(self.nameplate.clone(), |this, name| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_1()
+                        .w_full()
+                        .h_flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .px_3()
+                                .py_1()
+                                .bg(gpui::rgba(0x000000a0))
+                                .rounded_md()
+                                .child(name)
+                                .text_lg()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(gpui::white())
+                        )
+                )
+            })
     }
 }

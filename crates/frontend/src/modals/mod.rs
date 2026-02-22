@@ -6,4 +6,5 @@ pub mod modrinth_install_auto;
 pub mod rename_instance;
 pub mod select_icon;
 pub mod settings;
+pub mod upload_skin_modal;
 pub mod update_prompt;

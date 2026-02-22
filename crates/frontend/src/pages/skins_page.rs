@@ -5,7 +5,7 @@ use bridge::{
     message::{MessageToBackend, MinecraftProfileInfo},
     modal_action::ModalAction,
 };
-use gpui::{prelude::*, *};
+use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, prelude::*, *};
 use gpui_component::{
     Disableable, Icon, IconName, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
@@ -19,6 +19,7 @@ use crate::{
     component::skin_renderer::SkinRenderer,
     entity::{account::AccountEntries, minecraft_profile::MinecraftProfileEntries, DataEntities},
     ui,
+    modals::upload_skin_modal,
 };
 
 enum SkinPageState {
@@ -34,23 +35,20 @@ pub struct SkinsPage {
     accounts: Entity<AccountEntries>,
     state: SkinPageState,
     selected_skin_id: Option<Arc<str>>,
-    custom_skin_url: Entity<InputState>,
-    custom_skin_variant: Arc<str>,
     _subscription: Subscription,
     _get_profile_task: Task<()>,
-    custom_skin_file_data: Option<Arc<[u8]>>,
-    custom_skin_file_name: Option<SharedString>,
-    upload_error: Option<SharedString>,
-    _select_file_task: Task<()>,
     skin_renderer: Entity<SkinRenderer>,
     _download_active_skin_task: Option<Task<()>>,
     last_rendered_skin_url: Option<String>,
     _download_active_cape_task: Option<Task<()>>,
     last_rendered_cape_url: Option<String>,
+    
+    thumbnail_cache: std::collections::HashMap<Arc<str>, (Arc<RenderImage>, Arc<RenderImage>)>,
+    _thumbnail_tasks: std::collections::HashMap<Arc<str>, Task<()>>,
 }
 
 impl SkinsPage {
-    pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(data: &DataEntities, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let profile = data.minecraft_profile.read(cx).profile.clone();
 
         let state = match profile {
@@ -58,11 +56,9 @@ impl SkinsPage {
             None => SkinPageState::Loading,
         };
 
-        let custom_skin_url =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Custom skin URL (e.g. https://.../skin.png)"));
-
         let _subscription = cx.subscribe(&data.minecraft_profile, |this, _, _, cx| {
             this.refresh_from_entity(cx);
+            this.update_skin_renderer(cx);
             cx.notify();
         });
 
@@ -72,21 +68,18 @@ impl SkinsPage {
             accounts: data.accounts.clone(),
             state,
             selected_skin_id: None,
-            custom_skin_url,
-            custom_skin_variant: "CLASSIC".into(),
             _subscription,
             _get_profile_task: Task::ready(()),
-            custom_skin_file_data: None,
-            custom_skin_file_name: None,
-            upload_error: None,
-            _select_file_task: Task::ready(()),
             skin_renderer: cx.new(|_| SkinRenderer::new(None, false)),
             _download_active_skin_task: None,
             last_rendered_skin_url: None,
             _download_active_cape_task: None,
             last_rendered_cape_url: None,
+            thumbnail_cache: std::collections::HashMap::new(),
+            _thumbnail_tasks: std::collections::HashMap::new(),
         };
         page.load_profile(cx);
+        page.update_skin_renderer(cx);
         page
     }
 
@@ -136,6 +129,7 @@ impl SkinsPage {
                     } else {
                         this.state = SkinPageState::NotAuthenticated;
                     }
+                    this.update_skin_renderer(cx);
                     cx.notify();
                 }
             });
@@ -150,40 +144,6 @@ impl SkinsPage {
         });
     }
 
-    fn select_skin_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(SharedString::new_static("Select Skin PNG (64x64 or 64x32)")),
-        });
-
-        let this_entity = cx.entity();
-        self._select_file_task = window.spawn(cx, async move |cx| {
-            let Ok(result) = receiver.await else { return };
-            let Ok(Some(paths)) = result else { return };
-            let Some(path) = paths.first() else { return };
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-
-            let Ok(bytes) = std::fs::read(path) else { return };
-            let Ok(img) = image::load_from_memory(&bytes) else {
-                return;
-            };
-
-            let (w, h) = (img.width(), img.height());
-            if (w == 64 && h == 64) || (w == 64 && h == 32) {
-                let rgba = img.to_rgba8();
-                let data: Arc<[u8]> = Arc::from(rgba.into_raw());
-                let _ = cx.update_window_entity(&this_entity, move |this, _window, cx| {
-                    this.custom_skin_file_data = Some(data);
-                    this.custom_skin_file_name = Some(file_name.into());
-                    this.upload_error = None;
-                    this.update_skin_renderer(cx);
-                });
-            }
-        });
-    }
-
     fn upload_skin(&mut self, data: Arc<[u8]>, variant: Arc<str>) {
         self.backend_handle.send(MessageToBackend::UploadSkin {
             skin_data: data,
@@ -193,13 +153,13 @@ impl SkinsPage {
     }
 
     fn update_skin_renderer(&mut self, cx: &mut Context<Self>) {
-        if let Some(custom) = &self.custom_skin_file_data {
-            let is_slim = self.custom_skin_variant.as_ref() == "SLIM";
-            self.skin_renderer.update(cx, |r, _| r.update_image(Some(custom.clone()), is_slim));
-            return;
-        }
-
         if let SkinPageState::Ready(profile) = &self.state {
+            // Update nameplate with profile name
+            let profile_name = profile.name.clone();
+            self.skin_renderer.update(cx, |r, _| {
+                r.nameplate = Some(profile_name.clone().into());
+            });
+
             if let Some(active) = profile.skins.iter().find(|s| s.state.as_ref() == "ACTIVE") {
                 let url = active.url.to_string();
                 let is_slim = active.variant.as_ref() == "SLIM";
@@ -245,13 +205,46 @@ impl SkinsPage {
                 self.skin_renderer.update(cx, |r, _| r.update_cape(None));
                 self.last_rendered_cape_url = None;
             }
+
+            // Lazy load thumbnails
+            for skin in &profile.skins {
+                let id = skin.id.clone();
+                let url = skin.url.to_string();
+                let is_slim = skin.variant.as_ref() == "SLIM";
+
+                if !self.thumbnail_cache.contains_key(&id) && !self._thumbnail_tasks.contains_key(&id) {
+                    let client = cx.http_client();
+                    let id_clone = id.clone();
+                    let task = cx.spawn(async move |this, cx| {
+                        if let Ok(mut response) = client.get(&url, ().into(), true).await {
+                            use futures::AsyncReadExt;
+                            let mut bytes = Vec::new();
+                            if response.body_mut().read_to_end(&mut bytes).await.is_ok() {
+                                let data: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
+                                let renderer = SkinRenderer::new(Some(data), is_slim);
+                                // Render both front and back - adjust for forward-facing logic
+                                // Yaw ~0.3 radians for front, PI + 0.3 for back.
+                                let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
+                                let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
+                                
+                                if let (Some(f), Some(b)) = (front, back) {
+                                    let _ = this.update(cx, |this, cx| {
+                                        this.thumbnail_cache.insert(id_clone, (f, b));
+                                        cx.notify();
+                                    });
+                                }
+                            }
+                        }
+                    });
+                    self._thumbnail_tasks.insert(id, task);
+                }
+            }
         }
     }
 }
 
 impl Render for SkinsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.update_skin_renderer(cx);
         let content = v_flex().p_4().gap_4().children(match &self.state {
             SkinPageState::Loading => {
                 vec![div().child("Loading...").into_any_element()]
@@ -270,7 +263,7 @@ impl Render for SkinsPage {
             },
             SkinPageState::Ready(profile) => {
                 let left_panel = v_flex()
-                    .w(px(300.0))
+                    .w(px(350.0))
                     .h_full()
                     .p_4()
                     .bg(gpui::rgba(0x1e1e24ff))
@@ -286,98 +279,49 @@ impl Render for SkinsPage {
                         self.skin_renderer.clone()
                     );
 
-                let skins_list = h_flex().gap_4().flex_wrap().children(profile.skins.iter().map(|skin| {
+                let add_skin_card = div()
+                    .flex()
+                    .flex_col()
+                    .w(px(155.0))
+                    .h(px(220.0))
+                    .bg(gpui::rgba(0x2d2d35ff))
+                    .rounded_lg()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                        upload_skin_modal::open(this.backend_handle.clone(), window, cx);
+                    }))
+                    .child(div().text_3xl().child("+"))
+                    .child(div().text_sm().child("Add a skin"));
+
+                let mut skin_cards = Vec::new();
+                skin_cards.push(add_skin_card.into_any_element());
+                
+                for skin in &profile.skins {
                     let is_active = skin.state.as_ref() == "ACTIVE";
+                    let (front, back) = self.thumbnail_cache.get(&skin.id).cloned().map(|(f, b)| (Some(f), Some(b))).unwrap_or((None, None));
                     let url = skin.url.clone();
                     let variant = skin.variant.clone();
+                    let this_entity = cx.entity().clone();
 
-                    v_flex()
-                        .gap_2()
-                        .child(gpui::img(SharedUri::from(url.to_string())).w_24().h_24().rounded_md().bg(rgb(0x202020)))
-                        .child(
-                            Button::new(SharedString::from(format!("set_skin_{}", skin.id)))
-                                .label(if is_active { "Active" } else { "Set Active" })
-                                .when(is_active, |b| b.success())
-                                .disabled(is_active)
-                                .on_click(cx.listener(move |this, _, _, _| {
+                    skin_cards.push(
+                        crate::component::skin_card::render_skin_card(
+                            skin.id.clone(),
+                            is_active,
+                            skin.url.clone(),
+                            skin.variant.clone(),
+                            front,
+                            back,
+                            move |_, cx| {
+                                let _ = this_entity.update(cx, |this, _| {
                                     this.set_skin(url.clone(), variant.clone());
-                                })),
-                        )
-                }));
-
-                let custom_skin_section = v_flex()
-                    .gap_4()
-                    .mt_8()
-                    .child(div().text_lg().font_weight(FontWeight::BOLD).child("Upload Custom Skin"))
-                    .child(h_flex().gap_4().child(Input::new(&self.custom_skin_url).flex_1()).child(
-                        Button::new("set-custom-url").label("Set from URL").success().on_click(cx.listener(
-                            |this, _, _, cx| {
-                                let url = this.custom_skin_url.read(cx).value();
-                                if !url.is_empty() {
-                                    this.set_skin(url.into(), this.custom_skin_variant.clone());
-                                }
-                            },
-                        )),
-                    ))
-                    .child(
-                        h_flex()
-                            .gap_4()
-                            .items_center()
-                            .child(
-                                Button::new("select-file").label("Select Local File...").icon(IconName::File).on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.select_skin_file(window, cx);
-                                    }),
-                                ),
-                            )
-                            .child(
-                                div()
-                                    .child(if let Some(err) = &self.upload_error {
-                                        err.clone()
-                                    } else if let Some(name) = &self.custom_skin_file_name {
-                                        SharedString::from(format!("Selected: {}", name))
-                                    } else {
-                                        SharedString::from("No file selected")
-                                    })
-                                    .text_color(if self.upload_error.is_some() {
-                                        gpui::red()
-                                    } else {
-                                        gpui::rgba(0xaaaaaaff).into()
-                                    }),
-                            )
-                            .child(
-                                Button::new("upload-file")
-                                    .label("Upload File")
-                                    .success()
-                                    .disabled(self.custom_skin_file_data.is_none() || self.upload_error.is_some())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(data) = &this.custom_skin_file_data {
-                                            this.upload_skin(data.clone(), this.custom_skin_variant.clone());
-                                        }
-                                    })),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .mt_2()
-                            .child(
-                                Button::new("variant-classic")
-                                    .label("Classic Model")
-                                    .when(self.custom_skin_variant.as_ref() == "CLASSIC", |b| b.info())
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        this.custom_skin_variant = "CLASSIC".into();
-                                    })),
-                            )
-                            .child(
-                                Button::new("variant-slim")
-                                    .label("Slim Model")
-                                    .when(self.custom_skin_variant.as_ref() == "SLIM", |b| b.info())
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        this.custom_skin_variant = "SLIM".into();
-                                    })),
-                            ),
+                                });
+                            }
+                        ).into_any_element()
                     );
+                }
 
                 let right_panel = v_flex()
                     .flex_1()
@@ -392,8 +336,12 @@ impl Render for SkinsPage {
                             .mb_4(),
                     )
                     .child(div().text_lg().font_weight(FontWeight::BOLD).child("Owned Skins").mb_2())
-                    .child(skins_list)
-                    .child(custom_skin_section);
+                    .child(
+                        h_flex()
+                            .gap_4()
+                            .flex_wrap()
+                            .children(skin_cards)
+                    );
 
                 vec![h_flex().w_full().h_full().gap_6().child(left_panel).child(right_panel).into_any_element()]
             },

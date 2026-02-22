@@ -1,6 +1,6 @@
 use std::{ops::Range, sync::{atomic::AtomicBool, Arc}, time::Duration};
 
-use bridge::{instance::{AtomicContentUpdateStatus, ContentUpdateStatus, InstanceID, InstanceContentID, InstanceContentSummary}, message::MessageToBackend, meta::MetadataRequest, modal_action::ModalAction};
+use bridge::{instance::{AtomicContentUpdateStatus, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID}, message::{AtomicBridgeDataLoadState, MessageToBackend}, meta::MetadataRequest, modal_action::ModalAction, serial::AtomicOptionSerial};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Selectable, StyledExt, WindowExt, breadcrumb::Breadcrumb, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, label::Label, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, tooltip::Tooltip, v_flex
@@ -37,6 +37,7 @@ pub struct ModrinthSearchPage {
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
     image_cache: Entity<RetainAllImageCache>,
+    mods_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>
 }
 
 struct InstalledMod {
@@ -51,6 +52,7 @@ impl ModrinthSearchPage {
         let mut can_install_latest = false;
         let mut installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledMod>> = FxHashMap::default();
 
+        let mut mods_load_state = None;
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
                 let instance = entry.read(cx);
@@ -68,6 +70,25 @@ impl ModrinthSearchPage {
                         status: summary.content_summary.update_status.clone(),
                     })
                 }
+
+                mods_load_state = Some((instance.mods_state.clone(), AtomicOptionSerial::default()));
+
+                let mods = instance.mods.clone();
+                cx.observe(&mods, |page, entity, cx| {
+                    page.installed_mods_by_project.clear();
+                    let mods = entity.read(cx);
+                    for summary in mods.iter() {
+                        let ContentSource::ModrinthProject { project } = &summary.content_source else {
+                            continue;
+                        };
+
+                        let installed = page.installed_mods_by_project.entry(project.clone()).or_default();
+                        installed.push(InstalledMod {
+                            mod_id: summary.id,
+                            status: summary.content_summary.update_status.clone(),
+                        })
+                    }
+                }).detach();
             }
         }
 
@@ -104,6 +125,7 @@ impl ModrinthSearchPage {
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
             image_cache: RetainAllImageCache::new(cx),
+            mods_load_state,
         };
         page.load_more(cx);
         page
@@ -641,6 +663,15 @@ impl Render for ModrinthSearchPage {
         let scroll_handle = self.scroll_handle.clone();
 
         let item_count = self.hits.len() + if can_load_more || self.search_error.is_some() { 1 } else { 0 };
+
+        if let Some((mods_state, load_serial)) = &self.mods_load_state
+            && let Some(install_for) = self.install_for
+        {
+            let state = mods_state.load(std::sync::atomic::Ordering::SeqCst);
+            if state.should_send_load_request() {
+                self.data.backend_handle.send_with_serial(MessageToBackend::RequestLoadMods { id: install_for }, load_serial);
+            }
+        }
 
         let list = h_flex()
             .image_cache(self.image_cache.clone())

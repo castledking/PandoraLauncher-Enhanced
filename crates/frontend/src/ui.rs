@@ -313,7 +313,7 @@ impl LauncherUI {
 }
 
 impl Render for LauncherUI {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let page_type = self.page.page_type();
 
         let library_group = MenuGroup::new("Play").child(
@@ -614,15 +614,33 @@ impl Render for LauncherUI {
             .child(v_flex().flex_1().min_h_0().px_3().gap_y_3().children(groups).overflow_y_scrollbar())
             .child(footer);
 
-        h_resizable("container")
-            .with_state(&self.sidebar_state)
+        div()
+            .w_full()
+            .h_full()
+            .on_mouse_up(gpui::MouseButton::Left, {
+                let page = self.page.clone();
+                cx.listener(move |_, _: &gpui::MouseUpEvent, _, cx| {
+                    if let LauncherPage::Skins(skins_page) = &page {
+                        let skin_renderer = skins_page.read(cx).skin_renderer.clone();
+                        skin_renderer.update(cx, |r, _| {
+                            r.is_dragging = false;
+                            r.is_mouse_down = false;
+                            r.last_mouse = None;
+                        });
+                    }
+                })
+            })
             .child(
-                resizable_panel()
-                    .size(px(self.default_sidebar_width))
-                    .size_range(px(130.)..px(200.))
-                    .child(sidebar),
+                h_resizable("container")
+                    .with_state(&self.sidebar_state)
+                    .child(
+                        resizable_panel()
+                            .size(px(self.default_sidebar_width))
+                            .size_range(px(130.)..px(200.))
+                            .child(sidebar),
+                    )
+                    .child(self.page.clone().into_any_element())
             )
-            .child(self.page.clone().into_any_element())
     }
 }
 

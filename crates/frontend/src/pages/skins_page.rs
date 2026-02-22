@@ -37,7 +37,7 @@ pub struct SkinsPage {
     selected_skin_id: Option<Arc<str>>,
     _subscription: Subscription,
     _get_profile_task: Task<()>,
-    skin_renderer: Entity<SkinRenderer>,
+    pub skin_renderer: Entity<SkinRenderer>,
     _download_active_skin_task: Option<Task<()>>,
     last_rendered_skin_url: Option<String>,
     _download_active_cape_task: Option<Task<()>>,
@@ -275,15 +275,13 @@ impl Render for SkinsPage {
                             .text_color(gpui::rgba(0xccccccff))
                             .child("(Drag to rotate)"),
                     )
-                    .child(
-                        self.skin_renderer.clone()
-                    );
+                    .child(self.skin_renderer.clone());
 
                 let add_skin_card = div()
                     .flex()
                     .flex_col()
                     .w(px(155.0))
-                    .h(px(220.0))
+                    .h(px(155.0))
                     .bg(gpui::rgba(0x2d2d35ff))
                     .rounded_lg()
                     .items_center()
@@ -343,7 +341,34 @@ impl Render for SkinsPage {
                             .children(skin_cards)
                     );
 
-                vec![h_flex().w_full().h_full().gap_6().child(left_panel).child(right_panel).into_any_element()]
+                let skin_cards_flex = h_flex()
+                    .w_full()
+                    .h_full()
+                    .gap_6()
+                    .on_mouse_up(gpui::MouseButton::Left, {
+                        let skin_renderer = self.skin_renderer.clone();
+                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                            skin_renderer.update(cx, |r, _| {
+                                r.is_dragging = false;
+                                r.is_mouse_down = false;
+                                r.last_mouse = None;
+                            });
+                        })
+                    })
+                    .on_mouse_up(gpui::MouseButton::Right, {
+                        let skin_renderer = self.skin_renderer.clone();
+                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                            skin_renderer.update(cx, |r, _| {
+                                r.is_dragging = false;
+                                r.is_mouse_down = false;
+                                r.last_mouse = None;
+                            });
+                        })
+                    })
+                    .child(left_panel)
+                    .child(right_panel);
+
+                vec![skin_cards_flex.into_any_element()]
             },
         });
 

@@ -1,6 +1,6 @@
-use std::sync::Arc;
-use gpui::{InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window, prelude::*, *};
+use gpui::{prelude::*, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window, *};
 use gpui_component::StyledExt;
+use std::sync::Arc;
 
 pub fn render_skin_card(
     skin_id: Arc<str>,
@@ -14,11 +14,15 @@ pub fn render_skin_card(
     div()
         .id(format!("skin-card-{}", skin_id))
         .w(px(155.0))
-        .h(px(220.0))
+        .h(px(155.0))
         .bg(gpui::rgba(0x2d2d35ff))
         .rounded_lg()
         .border_2()
-        .border_color(if is_active { gpui::rgba(0x00ff00ff) } else { gpui::rgba(0x00000000) })
+        .border_color(if is_active {
+            gpui::rgba(0x00ff00ff)
+        } else {
+            gpui::rgba(0x00000000)
+        })
         .relative()
         .cursor_pointer()
         .group("skin-card")
@@ -40,14 +44,14 @@ pub fn render_skin_card(
                                 canvas(
                                     move |_, _, _| (),
                                     move |bounds, _, window, _| {
-                                        let _ = window.paint_image(bounds, gpui::Corners::default(), img.clone(), 0, false);
-                                    }
-                                ).size_full()
+                                        let _ =
+                                            window.paint_image(bounds, gpui::Corners::default(), img.clone(), 0, false);
+                                    },
+                                )
+                                .size_full(),
                             )
                         })
-                        .when(front_image.as_ref().is_none(), |this| {
-                            this.child("Loading...")
-                        })
+                        .when(front_image.as_ref().is_none(), |this| this.child("Loading...")),
                 )
                 .child(
                     // Back image (on hover)
@@ -62,12 +66,14 @@ pub fn render_skin_card(
                                 canvas(
                                     move |_, _, _| (),
                                     move |bounds, _, window, _| {
-                                        let _ = window.paint_image(bounds, gpui::Corners::default(), img.clone(), 0, false);
-                                    }
-                                ).size_full()
+                                        let _ =
+                                            window.paint_image(bounds, gpui::Corners::default(), img.clone(), 0, false);
+                                    },
+                                )
+                                .size_full(),
                             )
-                        })
-                )
+                        }),
+                ),
         )
         .when(is_active, |this| {
             this.child(
@@ -80,7 +86,7 @@ pub fn render_skin_card(
                     .text_xs()
                     .px_1()
                     .rounded_sm()
-                    .child("Equipped")
+                    .child("Equipped"),
             )
         })
 }

@@ -215,12 +215,12 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
             Limb::LeftArm => {
                 u = 40.0;
                 v = 16.0;
-            }
+            },
             Limb::LeftLeg => {
                 u = 0.0;
                 v = 16.0;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     let need_mirror = is_64x32 && is_left && !part.is_overlay;
@@ -330,10 +330,11 @@ pub struct SkinRenderer {
     pub image_bytes: Option<Arc<[u8]>>,
     parsed_image: Option<RgbaImage>,
     start_time: Instant,
-    yaw: f32,
+    pub yaw: f32,
     pitch: f32,
-    is_dragging: bool,
-    last_mouse: Option<Point<Pixels>>,
+    pub is_dragging: bool,
+    pub last_mouse: Option<Point<Pixels>>,
+    pub is_mouse_down: bool,
     pub slim: bool,
     pub is_static: bool,
     pub nameplate: Option<SharedString>,
@@ -358,6 +359,7 @@ impl SkinRenderer {
             pitch: 0.1,
             is_dragging: false,
             last_mouse: None,
+            is_mouse_down: false,
             slim,
             is_static: false,
             nameplate: None,
@@ -405,18 +407,34 @@ impl SkinRenderer {
         self.cape_bytes = cape_bytes;
     }
 
+    pub fn stop_drag(&mut self) {
+        self.is_dragging = false;
+        self.last_mouse = None;
+    }
+
     pub fn render_to_buffer(&self, width: u32, height: u32) -> Option<Arc<RenderImage>> {
         self.render_to_buffer_with_params(width, height, self.yaw, self.pitch, self.is_static)
     }
 
-    pub fn render_to_buffer_with_params(&self, width: u32, height: u32, yaw: f32, pitch: f32, is_static: bool) -> Option<Arc<RenderImage>> {
+    pub fn render_to_buffer_with_params(
+        &self,
+        width: u32,
+        height: u32,
+        yaw: f32,
+        pitch: f32,
+        is_static: bool,
+    ) -> Option<Arc<RenderImage>> {
         let tex = self.parsed_image.as_ref()?;
         let is_64x32 = tex.height() == 32;
 
         let mut zbuf = vec![std::f32::MIN; (width * height) as usize];
         let mut colorbuf = vec![0u8; (width * height * 4) as usize];
 
-        let time = if is_static { 2.0 } else { self.start_time.elapsed().as_secs_f32() };
+        let time = if is_static {
+            2.0
+        } else {
+            self.start_time.elapsed().as_secs_f32()
+        };
         let mut parts = build_parts(self.slim);
 
         // Animations - slightly more complex to mimic Modrinth
@@ -439,7 +457,7 @@ impl SkinRenderer {
                 0 => head_sub_tilt = pulse * 0.1,
                 1 => head_sub_yaw = pulse * 0.2,
                 2 => arm_sub_lift = pulse * 0.15,
-                _ => {}
+                _ => {},
             }
         }
 
@@ -457,9 +475,9 @@ impl SkinRenderer {
                 Limb::RightLeg => p.rot.x = leg_swing,
                 Limb::LeftLeg => p.rot.x = -leg_swing,
                 Limb::Cape => p.rot.x = 0.1 + (time * 1.5).cos().abs() * 0.4,
-                _ => {}
+                _ => {},
             }
-            
+
             // Random head look
             if p.limb == Limb::Head {
                 p.rot.y = (time * 0.4).sin() * 0.15 + head_sub_yaw;
@@ -482,7 +500,12 @@ impl SkinRenderer {
 
         let global_pitch = pitch;
         let global_yaw = yaw;
-        let light_dir = Vec3 { x: -3.0, y: 4.0, z: 2.0 }.normalize(); // Light from front-top-left
+        let light_dir = Vec3 {
+            x: -3.0,
+            y: 4.0,
+            z: 2.0,
+        }
+        .normalize(); // Light from front-top-left
 
         for part in parts {
             let tex_to_use = if part.limb == Limb::Cape {
@@ -554,9 +577,13 @@ impl SkinRenderer {
                                 let u = w0 * v_proj[0].1 .0 + w1 * v_proj[1].1 .0 + w2 * v_proj[2].1 .0;
                                 let v = w0 * v_proj[0].1 .1 + w1 * v_proj[1].1 .1 + w2 * v_proj[2].1 .1;
 
-                                let tx = (u * (tex_to_use.width() as f32 / 64.0)).clamp(0.0, (tex_to_use.width() - 1) as f32) as u32;
+                                let tx = (u * (tex_to_use.width() as f32 / 64.0))
+                                    .clamp(0.0, (tex_to_use.width() - 1) as f32)
+                                    as u32;
                                 let ty = if part.limb == Limb::Cape {
-                                    (v * (tex_to_use.height() as f32 / 32.0)).clamp(0.0, (tex_to_use.height() - 1) as f32) as u32
+                                    (v * (tex_to_use.height() as f32 / 32.0))
+                                        .clamp(0.0, (tex_to_use.height() - 1) as f32)
+                                        as u32
                                 } else {
                                     (v * (tex_to_use.height() as f32 / if is_64x32 { 32.0 } else { 64.0 }))
                                         .clamp(0.0, (tex_to_use.height() - 1) as f32)
@@ -601,6 +628,7 @@ impl Render for SkinRenderer {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, e: &MouseDownEvent, _, _| {
+                    this.is_mouse_down = true;
                     this.is_dragging = true;
                     this.last_mouse = Some(e.position);
                 }),
@@ -608,6 +636,7 @@ impl Render for SkinRenderer {
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, _| {
+                    this.is_mouse_down = false;
                     this.is_dragging = false;
                     this.last_mouse = None;
                 }),
@@ -621,6 +650,10 @@ impl Render for SkinRenderer {
                         this.yaw -= dx * 0.01;
                     }
                     this.last_mouse = Some(e.position);
+                }
+                if !this.is_mouse_down && this.is_dragging {
+                    this.is_dragging = false;
+                    this.last_mouse = None;
                 }
             }))
             .child(
@@ -643,23 +676,17 @@ impl Render for SkinRenderer {
             )
             .when_some(self.nameplate.clone(), |this, name| {
                 this.child(
-                    div()
-                        .absolute()
-                        .top_1()
-                        .w_full()
-                        .h_flex()
-                        .justify_center()
-                        .child(
-                            div()
-                                .px_3()
-                                .py_1()
-                                .bg(gpui::rgba(0x000000a0))
-                                .rounded_md()
-                                .child(name)
-                                .text_lg()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(gpui::white())
-                        )
+                    div().absolute().top_1().w_full().h_flex().justify_center().child(
+                        div()
+                            .px_3()
+                            .py_1()
+                            .bg(gpui::rgba(0x000000a0))
+                            .rounded_md()
+                            .child(name)
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(gpui::white()),
+                    ),
                 )
             })
     }

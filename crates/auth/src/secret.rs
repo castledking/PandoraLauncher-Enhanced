@@ -114,11 +114,25 @@ mod inner {
 
 #[cfg(target_os = "windows")]
 mod inner {
+    use std::path::PathBuf;
+
     use uuid::Uuid;
 
     use crate::{credentials::AccountCredentials, secret::SecretStorageError};
 
     use windows::Win32::Security::Credentials::*;
+
+    /// Windows Credential Manager limits each blob to 2560 bytes. Our tokens (e.g. JWT) can exceed this.
+    const CRED_MAX_BLOB_SIZE: usize = 2560;
+
+    fn credentials_dir() -> Result<PathBuf, SecretStorageError> {
+        let appdata = std::env::var("APPDATA").map_err(|_| SecretStorageError::UnknownError)?;
+        Ok(PathBuf::from(appdata).join("PandoraLauncher").join("credentials"))
+    }
+
+    fn credential_file_path(uuid: Uuid) -> Result<std::path::PathBuf, SecretStorageError> {
+        Ok(credentials_dir()?.join(format!("{}.json", uuid.as_hyphenated())))
+    }
 
     pub struct PlatformSecretStorage;
 
@@ -128,9 +142,19 @@ mod inner {
         }
 
         pub async fn read_credentials(&self, uuid: Uuid) -> Result<Option<AccountCredentials>, SecretStorageError> {
-            let target_name = format!("PandoraLauncher_MinecraftAccount_{}", uuid.as_hyphenated());
+            // Try file first (used when Credential Manager failed due to size/admin)
+            if let Ok(path) = credential_file_path(uuid) {
+                if path.exists() {
+                    if let Ok(data) = tokio::fs::read(&path).await {
+                        if let Ok(creds) = serde_json::from_slice::<AccountCredentials>(&data) {
+                            return Ok(Some(creds));
+                        }
+                    }
+                }
+            }
 
-            fn read<T: for<'a> serde::Deserialize<'a>>(target: String) -> Result<Option<T>, SecretStorageError> {
+            // Fall back to Credential Manager
+            fn read_cm<T: for<'a> serde::Deserialize<'a>>(target: String) -> Result<Option<T>, SecretStorageError> {
                 let mut target_name: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
 
                 let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
@@ -163,14 +187,14 @@ mod inner {
             }
 
             let mut account = AccountCredentials::default();
-
-            let uuid = uuid.as_hyphenated();
-            account.msa_refresh = read(format!("PandoraLauncher_MsaRefresh_{}", uuid))?;
-            account.msa_refresh_force_client_id = read(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid))?;
-            account.msa_access = read(format!("PandoraLauncher_MsaAccess_{}", uuid))?;
-            account.xbl = read(format!("PandoraLauncher_Xbl_{}", uuid))?;
-            account.xsts = read(format!("PandoraLauncher_Xsts_{}", uuid))?;
-            account.access_token = read(format!("PandoraLauncher_AccessToken_{}", uuid))?;
+            let uuid_fmt = uuid.as_hyphenated();
+            account.msa_refresh = read_cm(format!("PandoraLauncher_MsaRefresh_{}", uuid_fmt))?;
+            account.msa_refresh_force_client_id =
+                read_cm(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid_fmt))?;
+            account.msa_access = read_cm(format!("PandoraLauncher_MsaAccess_{}", uuid_fmt))?;
+            account.xbl = read_cm(format!("PandoraLauncher_Xbl_{}", uuid_fmt))?;
+            account.xsts = read_cm(format!("PandoraLauncher_Xsts_{}", uuid_fmt))?;
+            account.access_token = read_cm(format!("PandoraLauncher_AccessToken_{}", uuid_fmt))?;
 
             Ok(Some(account))
         }
@@ -180,67 +204,88 @@ mod inner {
             uuid: Uuid,
             credentials: &AccountCredentials,
         ) -> Result<(), SecretStorageError> {
-            fn write_inner(target: String, bytes: Option<Vec<u8>>) -> Result<(), SecretStorageError> {
+            fn write_cm_inner(target: String, bytes: Option<Vec<u8>>) -> Result<(), SecretStorageError> {
                 let mut target_name: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
 
                 if let Some(mut bytes) = bytes {
-                    let credentials = CREDENTIALW {
+                    if bytes.len() > CRED_MAX_BLOB_SIZE {
+                        return Err(SecretStorageError::UnknownError);
+                    }
+                    let cred = CREDENTIALW {
                         Flags: CRED_FLAGS(0),
                         Type: CRED_TYPE_GENERIC,
                         TargetName: windows::core::PWSTR::from_raw(target_name.as_mut_ptr()),
                         CredentialBlobSize: bytes.len() as u32,
                         CredentialBlob: bytes.as_mut_ptr(),
-                        Persist: CRED_PERSIST_LOCAL_MACHINE,
+                        Persist: CRED_PERSIST_SESSION,
                         ..CREDENTIALW::default()
                     };
-
-                    unsafe { Ok(CredWriteW(&credentials, 0)?) }
+                    unsafe { CredWriteW(&cred, 0)? };
+                    Ok(())
                 } else {
                     unsafe {
-                        Ok(CredDeleteW(
+                        CredDeleteW(
                             windows::core::PWSTR::from_raw(target_name.as_mut_ptr()),
                             CRED_TYPE_GENERIC,
                             None,
-                        )?)
+                        )?;
                     }
+                    Ok(())
                 }
             }
 
-            fn write(target: String, data: Option<&impl serde::Serialize>) -> Result<(), SecretStorageError> {
+            fn write_cm(target: String, data: Option<&impl serde::Serialize>) -> Result<(), SecretStorageError> {
                 let bytes = data
                     .map(|v| serde_json::to_vec(v).map_err(|_| SecretStorageError::SerializationError))
                     .transpose()?;
-                write_inner(target, bytes)
+                write_cm_inner(target, bytes)
             }
 
-            let uuid = uuid.as_hyphenated();
-            write(format!("PandoraLauncher_MsaRefresh_{}", uuid), credentials.msa_refresh.as_ref())?;
-            write(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid), credentials.msa_refresh_force_client_id.as_ref())?;
-            write(format!("PandoraLauncher_MsaAccess_{}", uuid), credentials.msa_access.as_ref())?;
-            write(format!("PandoraLauncher_Xbl_{}", uuid), credentials.xbl.as_ref())?;
-            write(format!("PandoraLauncher_Xsts_{}", uuid), credentials.xsts.as_ref())?;
-            write(format!("PandoraLauncher_AccessToken_{}", uuid), credentials.access_token.as_ref())?;
+            let uuid_fmt = uuid.as_hyphenated();
+            let cm_result = (|| -> Result<(), SecretStorageError> {
+                write_cm(format!("PandoraLauncher_MsaRefresh_{}", uuid_fmt), credentials.msa_refresh.as_ref())?;
+                write_cm(
+                    format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid_fmt),
+                    credentials.msa_refresh_force_client_id.as_ref(),
+                )?;
+                write_cm(format!("PandoraLauncher_MsaAccess_{}", uuid_fmt), credentials.msa_access.as_ref())?;
+                write_cm(format!("PandoraLauncher_Xbl_{}", uuid_fmt), credentials.xbl.as_ref())?;
+                write_cm(format!("PandoraLauncher_Xsts_{}", uuid_fmt), credentials.xsts.as_ref())?;
+                write_cm(format!("PandoraLauncher_AccessToken_{}", uuid_fmt), credentials.access_token.as_ref())?;
+                Ok(())
+            })();
+
+            if let Err(_) = cm_result {
+                // Credential Manager failed (admin, blob size, etc.). Store in file under APPDATA.
+                let dir = credentials_dir()?;
+                tokio::fs::create_dir_all(&dir).await.map_err(|_| SecretStorageError::IoError)?;
+                let path = credential_file_path(uuid)?;
+                let bytes = serde_json::to_vec(credentials).map_err(|_| SecretStorageError::SerializationError)?;
+                tokio::fs::write(&path, &bytes).await.map_err(|_| SecretStorageError::IoError)?;
+            }
 
             Ok(())
         }
 
         pub async fn delete_credentials(&self, uuid: Uuid) -> Result<(), SecretStorageError> {
-            fn delete(target: String) -> windows::core::Result<()> {
-                let mut target_name: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+            if let Ok(path) = credential_file_path(uuid) {
+                let _ = tokio::fs::remove_file(&path).await;
+            }
 
+            fn delete_cm(target: String) -> windows::core::Result<()> {
+                let mut target_name: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
                 unsafe {
                     CredDeleteW(windows::core::PWSTR::from_raw(target_name.as_mut_ptr()), CRED_TYPE_GENERIC, None)
                 }
             }
 
-            [
-                delete(format!("PandoraLauncher_MsaRefresh_{}", uuid)),
-                delete(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid)),
-                delete(format!("PandoraLauncher_MsaAccess_{}", uuid)),
-                delete(format!("PandoraLauncher_Xbl_{}", uuid)),
-                delete(format!("PandoraLauncher_Xsts_{}", uuid)),
-                delete(format!("PandoraLauncher_AccessToken_{}", uuid)),
-            ].into_iter().collect::<Result<(), _>>()?;
+            let uuid_fmt = uuid.as_hyphenated();
+            let _ = delete_cm(format!("PandoraLauncher_MsaRefresh_{}", uuid_fmt));
+            let _ = delete_cm(format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid_fmt));
+            let _ = delete_cm(format!("PandoraLauncher_MsaAccess_{}", uuid_fmt));
+            let _ = delete_cm(format!("PandoraLauncher_Xbl_{}", uuid_fmt));
+            let _ = delete_cm(format!("PandoraLauncher_Xsts_{}", uuid_fmt));
+            let _ = delete_cm(format!("PandoraLauncher_AccessToken_{}", uuid_fmt));
 
             Ok(())
         }

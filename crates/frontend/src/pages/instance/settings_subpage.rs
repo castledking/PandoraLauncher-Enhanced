@@ -589,7 +589,7 @@ impl InstanceSettingsSubpage {
 
     pub fn select_file(
         &mut self,
-        message: &'static str,
+        message: impl Into<SharedString>,
         handle: impl FnOnce(&mut Self, Option<Arc<Path>>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -598,7 +598,7 @@ impl InstanceSettingsSubpage {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some(SharedString::new_static(message)),
+            prompt: Some(message.into()),
         });
 
         let this_entity = cx.entity();
@@ -829,7 +829,7 @@ impl Render for InstanceSettingsSubpage {
                     .gap_1()
                     .child(
                         Checkbox::new("system_glfw")
-                            .label("Use System GLFW")
+                            .label(ts!("instance.glfw_lib"))
                             .checked(self.override_glfw_enabled)
                             .on_click(cx.listener(|page, value, _, cx| {
                                 if page.override_glfw_enabled != *value {
@@ -849,7 +849,7 @@ impl Render for InstanceSettingsSubpage {
                             .disabled(!self.override_glfw_enabled)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.select_file(
-                                    "Select GLFW Library",
+                                    ts!("instance.select_glfw_lib"),
                                     |this, path| {
                                         this.override_glfw_path = path;
                                         this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
@@ -868,7 +868,7 @@ impl Render for InstanceSettingsSubpage {
                     .gap_1()
                     .child(
                         Checkbox::new("system_openal")
-                            .label("Use System OpenAL")
+                            .label(ts!("instance.openal_lib"))
                             .checked(self.override_openal_enabled)
                             .on_click(cx.listener(|page, value, _, cx| {
                                 if page.override_openal_enabled != *value {
@@ -888,7 +888,7 @@ impl Render for InstanceSettingsSubpage {
                             .disabled(!self.override_openal_enabled)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.select_file(
-                                    "Select OpenAL Library",
+                                    ts!("instance.select_openal_lib"),
                                     |this, path| {
                                         this.override_openal_path = path;
                                         this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {

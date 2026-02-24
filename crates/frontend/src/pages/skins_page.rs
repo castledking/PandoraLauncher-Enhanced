@@ -7,7 +7,7 @@ use bridge::{
 };
 use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, prelude::*, *};
 use gpui_component::{
-    Disableable, Icon, IconName, Sizable, StyledExt, WindowExt,
+    Disableable, IconName, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputState},
@@ -34,6 +34,7 @@ pub struct SkinsPage {
     minecraft_profile: Entity<MinecraftProfileEntries>,
     accounts: Entity<AccountEntries>,
     skin_thumbnail_cache: Entity<SkinThumbnailCache>,
+    launcher_dir: Arc<Path>,
     state: SkinPageState,
     selected_skin_id: Option<Arc<str>>,
     _subscription: Subscription,
@@ -74,6 +75,7 @@ impl SkinsPage {
             minecraft_profile: data.minecraft_profile.clone(),
             accounts: data.accounts.clone(),
             skin_thumbnail_cache: data.skin_thumbnail_cache.clone(),
+            launcher_dir: data.launcher_dir.clone(),
             state,
             selected_skin_id: None,
             _subscription,
@@ -155,6 +157,14 @@ impl SkinsPage {
     fn upload_skin(&mut self, data: Arc<[u8]>, variant: Arc<str>) {
         self.backend_handle.send(MessageToBackend::UploadSkin {
             skin_data: data,
+            skin_variant: variant,
+            modal_action: ModalAction::default(),
+        });
+    }
+
+    fn set_skin_from_path(&mut self, path: Arc<str>, variant: Arc<str>) {
+        self.backend_handle.send(MessageToBackend::SetSkinFromPath {
+            path,
             skin_variant: variant,
             modal_action: ModalAction::default(),
         });
@@ -302,7 +312,9 @@ impl Render for SkinsPage {
             },
             SkinPageState::Ready(profile) => {
                 let left_panel = v_flex()
-                    .w(px(350.0))
+                    .w(gpui::relative(0.35))
+                    .min_w(px(250.0))
+                    .max_w(px(500.0))
                     .h_full()
                     .p_4()
                     .bg(gpui::rgba(0x1e1e24ff))
@@ -314,7 +326,12 @@ impl Render for SkinsPage {
                             .text_color(gpui::rgba(0xccccccff))
                             .child("(Drag to rotate)"),
                     )
-                    .child(self.skin_renderer.clone());
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.skin_renderer.clone()),
+                    );
 
                 let add_skin_card = div()
                     .flex()
@@ -336,14 +353,37 @@ impl Render for SkinsPage {
                 let mut skin_cards = Vec::new();
                 skin_cards.push(add_skin_card.into_any_element());
                 
-                for skin in &profile.skins {
+                for skin in profile.skins.iter().filter(|skin| {
+                    // Skip local skins whose file was deleted (card should disappear immediately)
+                    if let Some(local) = &skin.local_path {
+                        let path = Path::new(&**local);
+                        if !path.exists() {
+                            return false;
+                        }
+                    }
+                    true
+                }) {
                     let is_active = skin.state.as_ref() == "ACTIVE";
                     let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
                     let (front, back) = thumbnail_cache.get(&skin.url).map(|(f, b)| (Some(f.clone()), Some(b.clone()))).unwrap_or((None, None));
                     let _ = thumbnail_cache;
                     let url = skin.url.clone();
                     let variant = skin.variant.clone();
+                    let local_path = skin.local_path.clone();
                     let this_entity = cx.entity().clone();
+                    
+                    // Get file path for reveal (as string)
+                    let skin_file_path_str = if let Some(local) = &skin.local_path {
+                        let local_str: String = (&*local).to_string();
+                        let path = Path::new(&local_str);
+                        if path.exists() {
+                            Some(local_str)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
                     skin_cards.push(
                         crate::component::skin_card::render_skin_card(
@@ -354,10 +394,42 @@ impl Render for SkinsPage {
                             front,
                             back,
                             move |_, cx| {
+                                // Don't re-equip the already equipped skin (avoids duplicate API calls/files)
+                                if is_active {
+                                    return;
+                                }
                                 let _ = this_entity.update(cx, |this, _| {
-                                    this.set_skin(url.clone(), variant.clone());
+                                    // Local skins (file://) must be uploaded; Microsoft API rejects file:// URLs
+                                    if let Some(path_str) = &local_path {
+                                        this.set_skin_from_path(path_str.clone(), variant.clone());
+                                    } else {
+                                        this.set_skin(url.clone(), variant.clone());
+                                    }
                                 });
-                            }
+                            },
+                            skin_file_path_str.map(|file_path| {
+                                let fp = file_path.clone();
+                                move |_: &mut Window, _: &mut App| {
+                                    let path = Path::new(&fp).to_path_buf();
+                                    std::thread::spawn(move || {
+                                        #[cfg(target_os = "macos")]
+                                        {
+                                            use std::process::Command;
+                                            let _ = Command::new("open").args(["-R", &path.to_string_lossy()]).spawn();
+                                        }
+                                        #[cfg(target_os = "windows")]
+                                        {
+                                            use std::process::Command;
+                                            let _ = Command::new("explorer").args(["/select,", &path.to_string_lossy()]).spawn();
+                                        }
+                                        #[cfg(target_os = "linux")]
+                                        {
+                                            use std::process::Command;
+                                            let _ = Command::new("xdg-open").arg(path.parent().unwrap_or(&path)).spawn();
+                                        }
+                                    });
+                                }
+                            }),
                         ).into_any_element()
                     );
                 }
@@ -368,13 +440,36 @@ impl Render for SkinsPage {
                     .overflow_y_scrollbar()
                     .pr_4()
                     .child(
-                        div()
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .child(format!("{}'s Skins", profile.name))
-                            .mb_4(),
+                        h_flex()
+                            .items_center()
+                            .mb_4()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(format!("{}'s Skins", profile.name)),
+                            )
+                            .child(
+                                Button::new("open_skins_folder")
+                                    .ml_2()
+                                    .icon(IconName::FolderOpen)
+                                    .label("Open skins folder")
+                                    .on_click({
+                                        let account_name: String = (&*profile.name).to_string();
+                                        let skins_folder = self.launcher_dir.join("owned_skins").join(&account_name);
+                                        move |_button, window, cx| {
+                                            crate::open_folder(&skins_folder, window, cx);
+                                        }
+                                    }),
+                            ),
                     )
-                    .child(div().text_lg().font_weight(FontWeight::BOLD).child("Owned Skins").mb_2())
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .mb_2()
+                            .child("Owned Skins"),
+                    )
                     .child(
                         h_flex()
                             .gap_4()

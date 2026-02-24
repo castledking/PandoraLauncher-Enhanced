@@ -16,6 +16,42 @@ use gpui_component::{
 };
 use image::ImageEncoder;
 
+fn detect_skin_variant(bytes: &[u8]) -> &'static str {
+    use image::GenericImageView;
+    
+    if let Ok(img) = image::load_from_memory(bytes) {
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        if w != 64 {
+            return "CLASSIC";
+        }
+        
+        // Check arm region at x=54, y=20 (2x12 pixels)
+        // Classic arms: area at x=54 has pixels (4px wide arm extends there)
+        // Slim arms: area at x=54 is transparent (arm is at x=50, only 3px wide)
+        let mut has_pixels = false;
+        for y in 20..32 {
+            for x in 54..56 {
+                if x < w as usize && y < h as usize {
+                    let pixel = rgba.get_pixel(x as u32, y as u32);
+                    if pixel[3] != 0 { // alpha != 0
+                        has_pixels = true;
+                        break;
+                    }
+                }
+            }
+            if has_pixels {
+                break;
+            }
+        }
+        
+        // If pixels found in this region → Classic, otherwise → Slim
+        if has_pixels { "CLASSIC" } else { "SLIM" }
+    } else {
+        "CLASSIC"
+    }
+}
+
 pub struct UploadSkinModal {
     backend_handle: BackendHandle,
     custom_skin_url: Entity<InputState>,
@@ -76,9 +112,14 @@ impl UploadSkinModal {
                 let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
                 encoder.write_image(&img.to_rgba8(), w, h, image::ExtendedColorType::Rgba8).unwrap();
                 let data: Arc<[u8]> = Arc::from(png_data);
+                
+                // Auto-detect skin variant
+                let detected_variant = detect_skin_variant(&bytes);
+                
                 let _ = cx.update_window_entity(&this_entity, move |this, _window, cx| {
                     this.selected_file_data = Some(data);
                     this.selected_file_name = Some(file_name.into());
+                    this.variant = detected_variant.into();
                     this.upload_error = None;
                     cx.notify();
                 });

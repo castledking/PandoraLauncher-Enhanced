@@ -24,6 +24,7 @@ pub struct DataEntities {
     pub skin_thumbnail_cache: Entity<SkinThumbnailCache>,
     pub backend_handle: BackendHandle,
     pub theme_folder: Arc<Path>,
+    pub launcher_dir: Arc<Path>,
     pub panic_messages: Arc<PanicMessages>,
 }
 

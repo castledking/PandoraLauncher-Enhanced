@@ -183,6 +183,12 @@ pub struct OwnedSkin {
     pub file_name: String,
     pub variant: String,
     pub skin_id: String,
+    /// URL for deduplication - same URL = same skin
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Stable texture hash from URL (last path segment). skin.id changes every equip - use this for dedup.
+    #[serde(default)]
+    pub texture_key: Option<String>,
 }
 
 pub enum HeadCacheEntry {
@@ -602,11 +608,13 @@ impl BackendState {
                 HeadCacheEntry::Success { head } => {
                     let head = head.clone();
                     drop(head_cache);
-                    self.account_info.write().modify(move |account_info| {
+                    let mut account_info = self.account_info.write();
+                    account_info.modify(move |account_info| {
                         if let Some(account) = account_info.accounts.get_mut(&profile.id) {
                             account.head = Some(head);
                         }
                     });
+                    self.send.send(account_info.get().create_update_message());
                 },
                 HeadCacheEntry::Failed => {}
             }
@@ -617,6 +625,7 @@ impl BackendState {
 
         let head_cache = self.head_cache.clone();
         let account_info = self.account_info.clone();
+        let send = self.send.clone();
         let skin_url = skin.url;
 
         let http_client = self.http_client.clone();
@@ -678,6 +687,7 @@ impl BackendState {
                     }
                 }
             });
+            send.send(account_info.get().create_update_message());
         });
     }
 

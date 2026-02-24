@@ -1,5 +1,5 @@
 use gpui::{prelude::*, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window, *};
-use gpui_component::StyledExt;
+use gpui_component::{button::Button, IconName, StyledExt};
 use std::sync::Arc;
 
 pub fn render_skin_card(
@@ -10,7 +10,23 @@ pub fn render_skin_card(
     front_image: Option<Arc<RenderImage>>,
     back_image: Option<Arc<RenderImage>>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
+    on_reveal: Option<impl Fn(&mut Window, &mut App) + 'static>,
 ) -> impl IntoElement {
+    let reveal_button = on_reveal.map(|on_reveal| {
+        Button::new(format!("reveal-{}", skin_id))
+            .icon(IconName::FolderOpen)
+            .size_6()
+            .absolute()
+            .top_2()
+            .right_2()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_click(move |_, window, cx| {
+                on_reveal(window, cx);
+            })
+    });
+
     div()
         .id(format!("skin-card-{}", skin_id))
         .w(px(155.0))
@@ -89,4 +105,5 @@ pub fn render_skin_card(
                     .child("Equipped"),
             )
         })
+        .when_some(reveal_button, |this, btn| this.child(btn))
 }

@@ -312,6 +312,9 @@ impl BackendState {
                     let mut account_info = self.account_info.write();
                     account_info.mark_changed(&path);
                     self.send.send(account_info.get().create_update_message());
+                } else if path.starts_with(self.directories.owned_skins_dir.as_ref()) {
+                    // Owned skins folder changed (file added/removed) - reload profile so cards update
+                    self.request_minecraft_profile_reload().await;
                 }
             }
             WatchTarget::InstancesDir => {

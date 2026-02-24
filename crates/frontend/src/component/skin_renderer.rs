@@ -625,6 +625,8 @@ impl Render for SkinRenderer {
 
         div()
             .size_full()
+            .relative()
+            .overflow_hidden()
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, e: &MouseDownEvent, _, _| {
@@ -676,17 +678,23 @@ impl Render for SkinRenderer {
             )
             .when_some(self.nameplate.clone(), |this, name| {
                 this.child(
-                    div().absolute().top_1().w_full().h_flex().justify_center().child(
-                        div()
-                            .px_3()
-                            .py_1()
-                            .bg(gpui::rgba(0x000000a0))
-                            .rounded_md()
-                            .child(name)
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(gpui::white()),
-                    ),
+                    div()
+                        .absolute()
+                        .top_2()
+                        .w_full()
+                        .h_flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .bg(gpui::rgba(0x000000a0))
+                                .rounded_md()
+                                .child(name)
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(gpui::white()),
+                        ),
                 )
             })
     }

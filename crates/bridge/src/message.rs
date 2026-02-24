@@ -201,6 +201,11 @@ pub enum MessageToBackend {
         skin_variant: Arc<str>,
         modal_action: ModalAction,
     },
+    SetSkinFromPath {
+        path: Arc<str>,
+        skin_variant: Arc<str>,
+        modal_action: ModalAction,
+    },
     ImportFromOtherLauncher {
         launcher: OtherLauncher,
         import_accounts: bool,

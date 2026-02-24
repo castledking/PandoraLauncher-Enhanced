@@ -181,6 +181,7 @@ pub fn start(
                 minecraft_profile,
                 skin_thumbnail_cache,
                 theme_folder: theme_folder.into(),
+                launcher_dir: launcher_dir.into(),
                 panic_messages: Arc::new(PanicMessages {
                     panic_message,
                     deadlock_message,

@@ -645,37 +645,6 @@ impl Render for SkinRenderer {
             .size_full()
             .relative()
             .overflow_hidden()
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, e: &MouseDownEvent, _, _| {
-                    this.is_mouse_down = true;
-                    this.is_dragging = true;
-                    this.last_mouse = Some(e.position);
-                }),
-            )
-            .on_mouse_up(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, _| {
-                    this.is_mouse_down = false;
-                    this.is_dragging = false;
-                    this.last_mouse = None;
-                }),
-            )
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, _| {
-                if this.is_dragging {
-                    if let Some(last) = this.last_mouse {
-                        let e_x: f32 = e.position.x.into();
-                        let l_x: f32 = last.x.into();
-                        let dx = e_x - l_x;
-                        this.yaw -= dx * 0.01;
-                    }
-                    this.last_mouse = Some(e.position);
-                }
-                if !this.is_mouse_down && this.is_dragging {
-                    this.is_dragging = false;
-                    this.last_mouse = None;
-                }
-            }))
             .child(
                 canvas(
                     |_, _, _| (),
@@ -693,6 +662,47 @@ impl Render for SkinRenderer {
                     },
                 )
                 .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.is_mouse_down = true;
+                            this.is_dragging = true;
+                            this.last_mouse = Some(e.position);
+                            cx.notify();
+                        }),
+                    )
+                    .on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, _, _| {
+                            this.is_mouse_down = false;
+                            this.is_dragging = false;
+                            this.last_mouse = None;
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                        if this.is_dragging {
+                            cx.stop_propagation();
+                            if let Some(last) = this.last_mouse {
+                                let e_x: f32 = e.position.x.into();
+                                let l_x: f32 = last.x.into();
+                                let dx = e_x - l_x;
+                                this.yaw -= dx * 0.01;
+                            }
+                            this.last_mouse = Some(e.position);
+                            cx.notify();
+                        }
+                        if !this.is_mouse_down && this.is_dragging {
+                            this.is_dragging = false;
+                            this.last_mouse = None;
+                        }
+                    })),
             )
             .when_some(self.nameplate.clone(), |this, name| {
                 this.child(

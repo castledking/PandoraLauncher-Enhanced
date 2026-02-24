@@ -798,20 +798,22 @@ impl ModrinthSearchPage {
                         let install_for = self.install_for.clone();
                         let project_type = hit.project_type;
                         let main_action = main_action.clone();
+                        let can_install_latest = self.can_install_latest;
 
                         move |_, window, cx| {
                             if project_type != ModrinthProjectType::Other {
                                 match &main_action {
                                     PrimaryAction::Install | PrimaryAction::Reinstall => {
                                         if let Some(install_for_id) = install_for {
-                                            crate::modals::modrinth_install::open_version_picker(
+                                            crate::modals::modrinth_install::open_with_version(
                                                 name.as_str(),
                                                 project_id.clone(),
                                                 project_type,
-                                                install_for_id,
+                                                Some(install_for_id),
                                                 &data,
                                                 window,
                                                 cx,
+                                                None,
                                             );
                                         } else {
                                             crate::modals::modrinth_install::open(
@@ -841,6 +843,7 @@ impl ModrinthSearchPage {
                                         let name = name.clone();
                                         let install_for = install_for;
                                         let data = data.clone();
+                                        let can_install_latest = can_install_latest;
                                         window.open_dialog(cx, move |dialog, _, _| {
                                             let type_str = match project_type {
                                                 ModrinthProjectType::Modpack => "modpack",
@@ -862,17 +865,30 @@ impl ModrinthSearchPage {
                                                     let name = name.clone();
                                                     let install_for = install_for;
                                                     let data = data.clone();
+                                                    let can_install_latest = can_install_latest;
                                                     move |_, window, cx| {
                                                         window.close_all_dialogs(cx);
-                                                        if let Some(install_for_id) = install_for {
-                                                            crate::modals::modrinth_install::open_version_picker(
+                                                        let install_latest = can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
+                                                        if install_latest && install_for.is_some() {
+                                                            crate::modals::modrinth_install_auto::open(
                                                                 name.as_str(),
                                                                 project_id.clone(),
                                                                 project_type,
-                                                                install_for_id,
+                                                                install_for.unwrap(),
                                                                 &data,
                                                                 window,
                                                                 cx,
+                                                            );
+                                                        } else if let Some(install_for_id) = install_for {
+                                                            crate::modals::modrinth_install::open_with_version(
+                                                                name.as_str(),
+                                                                project_id.clone(),
+                                                                project_type,
+                                                                Some(install_for_id),
+                                                                &data,
+                                                                window,
+                                                                cx,
+                                                                None,
                                                             );
                                                         } else {
                                                             crate::modals::modrinth_install::open(

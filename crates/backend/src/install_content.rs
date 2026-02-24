@@ -360,7 +360,10 @@ impl BackendState {
             return;
         };
 
-        if old_aux_path != new_aux_path {
+        if matches!(&new_summary.extra, ContentType::ModrinthModpack { .. }) {
+            // Modpack reinstall: delete old aux so new modpack starts fresh (new modrinth.index.json, no old disabled_children/applied_overrides)
+            _ = std::fs::remove_file(&old_aux_path);
+        } else if old_aux_path != new_aux_path {
             _ = std::fs::rename(&old_aux_path, &new_aux_path);
         }
     }

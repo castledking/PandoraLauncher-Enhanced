@@ -718,13 +718,17 @@ impl BackendState {
                     && let Some((instance_mod, folder)) = instance.try_get_content(mod_id)
                 {
                     if delete {
-                        let file_to_delete = instance_mod.path.parent()
-                            .map(|p| p.join(&*child_filename));
-                        if let Some(file_path) = file_to_delete {
-                            if file_path.exists() {
-                                if let Err(e) = std::fs::remove_file(&file_path) {
-                                    log::error!("Failed to delete child file {:?}: {}", file_path, e);
+                        let file_to_delete = instance.dot_minecraft_path.join(&*child_filename);
+                        let mut paths_to_try = vec![file_to_delete.clone()];
+                        if let (Some(parent), Some(filename)) = (file_to_delete.parent(), file_to_delete.file_name()) {
+                            paths_to_try.push(parent.join(format!(".pandora.{}", filename.to_string_lossy())));
+                        }
+                        for path_to_try in paths_to_try {
+                            if path_to_try.exists() {
+                                if let Err(e) = std::fs::remove_file(&path_to_try) {
+                                    log::error!("Failed to delete child file {:?}: {}", path_to_try, e);
                                 }
+                                break;
                             }
                         }
                     }

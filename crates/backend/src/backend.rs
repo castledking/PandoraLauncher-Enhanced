@@ -927,12 +927,13 @@ impl BackendState {
                 let path = crate::create_content_library_path(content_library_dir, expected_hash, dest_path.extension());
 
                 if file.path.starts_with("mods/") && file.path.ends_with(".jar") {
-                    if loader_supports_add_mods {
-                        add_mods.push(path);
-                    } else if let Some(filename) = dest_path.file_name() {
+                    if let Some(filename) = dest_path.file_name() {
                         let filename = format!(".pandora.{filename}");
-                        let hidden_dest_path = mod_dir.join(filename);
-                        let _ = std::fs::hard_link(path, hidden_dest_path);
+                        let hidden_dest_path = mod_dir.join(&filename);
+                        let _ = std::fs::hard_link(&path, &hidden_dest_path);
+                        if loader_supports_add_mods {
+                            add_mods.push(hidden_dest_path);
+                        }
                     }
                 } else {
                     let dest_path = dest_path.to_path(&dot_minecraft_path);
@@ -969,12 +970,13 @@ impl BackendState {
                     }
 
                     if rel_path.starts_with("mods") && let Some(extension) = rel_path.extension() && extension == "jar" {
-                        if loader_supports_add_mods {
-                            add_mods.push(path);
-                        } else if let Some(filename) = rel_path.file_name() {
+                        if let Some(filename) = rel_path.file_name() {
                             let filename = format!(".pandora.{filename}");
-                            let hidden_dest_path = mod_dir.join(filename);
-                            let _ = std::fs::hard_link(path, hidden_dest_path);
+                            let hidden_dest_path = mod_dir.join(&filename);
+                            let _ = std::fs::hard_link(&path, &hidden_dest_path);
+                            if loader_supports_add_mods {
+                                add_mods.push(hidden_dest_path);
+                            }
                         }
                     } else {
                         let dest_path = rel_path.to_path(&dot_minecraft_path);

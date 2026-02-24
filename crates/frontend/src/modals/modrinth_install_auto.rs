@@ -2,7 +2,7 @@ use std::{cmp::Ordering, sync::Arc};
 
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
-    instance::InstanceID,
+    instance::{ContentType, InstanceID},
     message::MessageToBackend,
     meta::MetadataRequest,
     modal_action::ModalAction,
@@ -252,6 +252,16 @@ fn handle_project_versions(
                 return true;
             };
 
+            let replace_old = (project_type == ModrinthProjectType::Modpack).then(|| {
+                let mods = instance.read(cx).mods.read(cx);
+                mods.iter()
+                    .find(|mod_summary| {
+                        matches!(&mod_summary.content_source, ContentSource::ModrinthProject { project } if project.as_ref() == project_id.as_ref())
+                            && matches!(&mod_summary.content_summary.extra, ContentType::ModrinthModpack { .. })
+                    })
+                    .map(|mod_summary| mod_summary.path.clone())
+            }).flatten();
+
             let mut files = Vec::new();
 
             let required_dependencies = version.dependencies.as_ref().map(|deps| {
@@ -278,7 +288,7 @@ fn handle_project_versions(
             }
 
             files.push(ContentInstallFile {
-                replace_old: None,
+                replace_old,
                 path: bridge::install::ContentInstallPath::Safe(path),
                 download: ContentDownload::Url {
                     url: install_file.url.clone(),

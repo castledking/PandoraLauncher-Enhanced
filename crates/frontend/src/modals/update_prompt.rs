@@ -14,19 +14,24 @@ use gpui_component::{
 };
 use schema::pandora_update::UpdatePrompt;
 
-pub fn open_update_prompt(update: UpdatePrompt, handle: BackendHandle, window: &mut Window, cx: &mut App) {
-    let title = SharedString::new_static("Update Pandora?");
-    let old_version = SharedString::new(format!("Current version: {}", update.old_version));
-    let new_version = SharedString::new(format!("New version: {}", update.new_version));
+pub fn open_update_prompt(
+    update: UpdatePrompt,
+    handle: BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let title = ts!("system.update.title");
+    let old_version = ts!("system.update.current", ver = update.old_version);
+    let new_version = ts!("system.update.new", ver = update.new_version);
 
     let size = if update.exe.size < 1000 * 10 {
-        format!("Update size: {} bytes", update.exe.size)
+        ts!("system.update.size", num = format!("{} bytes", update.exe.size))
     } else if update.exe.size < 1000 * 1000 * 10 {
-        format!("Update size: {}kb", update.exe.size / 1000)
+        ts!("system.update.size", num = format!("{}kB", update.exe.size / 1000))
     } else if update.exe.size < 1000 * 1000 * 1000 * 10 {
-        format!("Update size: {}MB", update.exe.size / 1000 / 1000)
+        ts!("system.update.size", num = format!("{}MB", update.exe.size / 1000 / 1000))
     } else {
-        format!("Update size: {}GB", update.exe.size / 1000 / 1000 / 1000)
+        ts!("system.update.size", num = format!("{}GB", update.exe.size / 1000 / 1000 / 1000))
     };
 
     let size = SharedString::new(size);

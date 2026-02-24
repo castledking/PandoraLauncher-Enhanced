@@ -18,7 +18,7 @@ use indexmap::IndexSet;
 use parking_lot::RwLock;
 use reqwest::{StatusCode, redirect::Policy};
 use rustc_hash::{FxHashMap, FxHashSet};
-use schema::{auxiliary::AuxiliaryContentMeta, backend_config::BackendConfig, instance::InstanceConfiguration, loader::Loader, modrinth::ModrinthSideRequirement};
+use schema::{auxiliary::AuxiliaryContentMeta, backend_config::{BackendConfig, SyncTargets}, instance::InstanceConfiguration, loader::Loader, modrinth::ModrinthSideRequirement};
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use tokio::sync::{mpsc::Receiver, OnceCell};
@@ -756,9 +756,9 @@ impl BackendState {
         };
 
         if disable {
-            crate::syncing::apply_to_instance(enumset::EnumSet::empty(), &self.directories, path);
+            crate::syncing::apply_to_instance(&SyncTargets::default(), &self.directories, path);
         } else {
-            crate::syncing::apply_to_instance(self.config.write().get().sync_targets, &self.directories, path);
+            crate::syncing::apply_to_instance(&self.config.write().get().sync_targets, &self.directories, path);
         }
     }
 

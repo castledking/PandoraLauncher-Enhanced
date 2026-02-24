@@ -2011,7 +2011,7 @@ impl BackendState {
                 _ = channel.send(result);
             },
             MessageToBackend::GetSyncState { channel } => {
-                let result = crate::syncing::get_sync_state(self.config.write().get().sync_targets, &mut *self.instance_state.write(), &self.directories);
+                let result = crate::syncing::get_sync_state(&self.config.write().get().sync_targets, &mut *self.instance_state.write(), &self.directories);
 
                 match result {
                     Ok(state) => {
@@ -2022,19 +2022,19 @@ impl BackendState {
                     },
                 }
             },
-            MessageToBackend::SetSyncing { target, value } => {
+            MessageToBackend::SetSyncing { target, is_file, value } => {
                 let mut write = self.config.write();
 
                 let result = if value {
-                    crate::syncing::enable_all(target, &mut *self.instance_state.write(), &self.directories)
+                    crate::syncing::enable_all(&target, is_file, &mut *self.instance_state.write(), &self.directories)
                 } else {
-                    crate::syncing::disable_all(target, &self.directories).map(|_| true)
+                    crate::syncing::disable_all(&target, is_file, &self.directories).map(|_| true)
                 };
 
                 match result {
                     Ok(success) => {
                         if !success {
-                            self.send.send_error("Unable to enable syncing, cannot override existing directories");
+                            self.send.send_error("Unable to enable syncing");
                             return;
                         }
                     },
@@ -2044,15 +2044,20 @@ impl BackendState {
                     },
                 }
 
-                if value {
-                    write.modify(|config| {
-                        config.sync_targets.insert(target);
-                    });
-                } else {
-                    write.modify(|config| {
-                        config.sync_targets.remove(target);
-                    });
-                }
+                write.modify(|config| {
+                    let (set, other_set) = if is_file {
+                        (&mut config.sync_targets.files, &mut config.sync_targets.folders)
+                    } else {
+                        (&mut config.sync_targets.folders, &mut config.sync_targets.files)
+                    };
+
+                    other_set.remove(&target);
+                    if value {
+                        _ = set.insert(target);
+                    } else {
+                        set.remove(&target);
+                    }
+                });
             },
             MessageToBackend::GetBackendConfiguration { channel } => {
                 let configuration = self.config.write().get().clone();

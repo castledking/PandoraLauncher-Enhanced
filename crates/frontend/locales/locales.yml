@@ -632,6 +632,16 @@ instance:
       en: Folders
     mods:
       en: Mods
+    custom:
+      en: Custom
+    sync_name_file:
+      en: Sync %{name} file
+    sync_name_folder:
+      en: Sync %{name} folder
+    sync_file:
+      en: Sync file
+    sync_folder:
+      en: Sync folder
     disable_syncing:
       en: Disable Instance File Syncing
 

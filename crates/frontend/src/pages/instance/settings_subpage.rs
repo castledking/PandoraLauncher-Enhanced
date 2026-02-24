@@ -59,6 +59,8 @@ pub struct InstanceSettingsSubpage {
     loader_select_state: Entity<SelectState<Vec<&'static str>>>,
     loader_versions_state: TypelessFrontendMetadataResult,
     loader_version_select_state: Entity<SelectState<SearchableVec<&'static str>>>,
+    disable_file_syncing: bool,
+
     memory_override_enabled: bool,
     memory_min_input_state: Entity<InputState>,
     memory_max_input_state: Entity<InputState>,
@@ -103,8 +105,8 @@ impl InstanceSettingsSubpage {
         let entry = instance.read(cx);
         let instance_id = entry.id;
         let loader = entry.configuration.loader;
-        let preferred_loader_version =
-            entry.configuration.preferred_loader_version.map(|s| s.as_str()).unwrap_or("Latest");
+        let preferred_loader_version = entry.configuration.preferred_loader_version.map(|s| s.as_str()).unwrap_or("Latest");
+        let disable_file_syncing = entry.configuration.disable_file_syncing;
 
         let memory = entry.configuration.memory.unwrap_or_default();
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
@@ -187,6 +189,7 @@ impl InstanceSettingsSubpage {
             loader,
             loader_select_state,
             loader_version_select_state,
+            disable_file_syncing,
             memory_override_enabled: memory.enabled,
             memory_min_input_state,
             memory_max_input_state,
@@ -705,7 +708,24 @@ impl Render for InstanceSettingsSubpage {
             }
         }
 
-        basic_content = basic_content.child(crate::labelled("Version", version_content));
+        basic_content = basic_content
+            .child(crate::labelled(
+                ts!("instance.version"),
+                version_content,
+            ))
+            .child(crate::labelled(
+                ts!("instance.sync.label"),
+                Checkbox::new("syncing")
+                    .label(ts!("instance.sync.disable_syncing"))
+                    .checked(self.disable_file_syncing)
+                    .on_click(cx.listener(|page, value, _, _| {
+                        page.disable_file_syncing = *value;
+                        page.backend_handle.send(MessageToBackend::SetInstanceDisableFileSyncing {
+                            id: page.instance_id,
+                            disable_file_syncing: *value,
+                        });
+                    })),
+            ));
 
         let runtime_content = v_flex()
             .gap_4()

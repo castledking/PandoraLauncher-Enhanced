@@ -26,6 +26,8 @@ pub struct InstanceConfiguration {
     pub system_libraries: Option<InstanceSystemLibrariesConfiguration>,
     #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
     pub instance_fallback_icon: Option<Ustr>,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub disable_file_syncing: bool,
 }
 
 impl InstanceConfiguration {
@@ -41,6 +43,7 @@ impl InstanceConfiguration {
             linux_wrapper: None,
             system_libraries: None,
             instance_fallback_icon: None,
+            disable_file_syncing: false,
         }
     }
 }

@@ -623,6 +623,8 @@ instance:
       en: Folders
     mods:
       en: Mods
+    disable_syncing:
+      en: Disable Instance File Syncing
 
     targets:
       options:

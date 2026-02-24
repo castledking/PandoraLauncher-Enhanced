@@ -67,6 +67,10 @@ pub enum MessageToBackend {
         id: InstanceID,
         loader_version: Option<&'static str>,
     },
+    SetInstanceDisableFileSyncing {
+        id: InstanceID,
+        disable_file_syncing: bool,
+    },
     SetInstanceMemory {
         id: InstanceID,
         memory: InstanceMemoryConfiguration,

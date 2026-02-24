@@ -523,7 +523,15 @@ impl BackendState {
                         configuration.preferred_loader_version = loader_version.map(Ustr::from);
                     });
                 }
-            }
+            },
+            MessageToBackend::SetInstanceDisableFileSyncing { id, disable_file_syncing } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.disable_file_syncing = disable_file_syncing;
+                    });
+                }
+                self.apply_syncing_to_instance(id);
+            },
             MessageToBackend::SetInstanceMemory { id, memory } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
@@ -1999,7 +2007,7 @@ impl BackendState {
                 _ = channel.send(result);
             },
             MessageToBackend::GetSyncState { channel } => {
-                let result = crate::syncing::get_sync_state(self.config.write().get().sync_targets, &self.directories);
+                let result = crate::syncing::get_sync_state(self.config.write().get().sync_targets, &mut *self.instance_state.write(), &self.directories);
 
                 match result {
                     Ok(state) => {
@@ -2014,7 +2022,7 @@ impl BackendState {
                 let mut write = self.config.write();
 
                 let result = if value {
-                    crate::syncing::enable_all(target, &self.directories)
+                    crate::syncing::enable_all(target, &mut *self.instance_state.write(), &self.directories)
                 } else {
                     crate::syncing::disable_all(target, &self.directories).map(|_| true)
                 };

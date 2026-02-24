@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use schema::backend_config::SyncTarget;
 use strum::IntoEnumIterator;
 
-use crate::directories::LauncherDirectories;
+use crate::{directories::LauncherDirectories, BackendStateInstances};
 
 pub fn apply_to_instance(sync_targets: EnumSet<SyncTarget>, directories: &LauncherDirectories, dot_minecraft: Arc<Path>) {
     _ = std::fs::create_dir_all(&dot_minecraft);
@@ -187,14 +187,13 @@ fn read_options_txt(path: &Path) -> FxHashMap<String, String> {
     values
 }
 
-pub fn get_sync_state(want_sync: EnumSet<SyncTarget>, directories: &LauncherDirectories) -> std::io::Result<SyncState> {
+pub fn get_sync_state(want_sync: EnumSet<SyncTarget>, instances: &mut BackendStateInstances, directories: &LauncherDirectories) -> std::io::Result<SyncState> {
     let mut paths = Vec::new();
 
-    let read_dir = std::fs::read_dir(&directories.instances_dir)?;
-    for entry in read_dir {
-        let mut path = entry?.path();
-        path.push(".minecraft");
-        paths.push(path);
+    for instance in instances.instances.iter_mut() {
+        if !instance.configuration.get().disable_file_syncing {
+            paths.push(instance.dot_minecraft_path.clone());
+        }
     }
 
     let total = paths.len();
@@ -245,19 +244,17 @@ pub fn get_sync_state(want_sync: EnumSet<SyncTarget>, directories: &LauncherDire
     })
 }
 
-pub fn enable_all(target: SyncTarget, directories: &LauncherDirectories) -> std::io::Result<bool> {
+pub fn enable_all(target: SyncTarget, instances: &mut BackendStateInstances, directories: &LauncherDirectories) -> std::io::Result<bool> {
     let Some(sync_folder) = target.get_folder() else {
         return Ok(true);
     };
 
     let mut paths = Vec::new();
 
-    let read_dir = std::fs::read_dir(&directories.instances_dir)?;
-    for entry in read_dir {
-        let mut path = entry?.path();
-        path.push(".minecraft");
-        path.push(sync_folder);
-        paths.push(path);
+    for instance in instances.instances.iter_mut() {
+        if !instance.configuration.get().disable_file_syncing {
+            paths.push(instance.dot_minecraft_path.join(sync_folder));
+        }
     }
 
     let non_hidden_sync_folder = if sync_folder.starts_with(".") {

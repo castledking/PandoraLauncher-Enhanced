@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, Cursor, Read, Write}, path::{Path, PathBuf}, sync::Arc
+    io::{BufRead, Cursor, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, sync::Arc
 };
 
 use bridge::{instance::{AtomicContentUpdateStatus, ContentUpdateStatus, ContentType, ContentSummary}, safe_path::SafePath};
@@ -111,6 +111,9 @@ impl ModMetadataManager {
         if let Some(summary) = self.by_hash.read().get(&actual_hash) {
             return summary.clone();
         }
+
+        // Reset file position after hashing so load_mod_summary can read the archive
+        let _ = file.seek(SeekFrom::Start(0)).ok()?;
 
         let summary = self.load_mod_summary(actual_hash, file, true);
 

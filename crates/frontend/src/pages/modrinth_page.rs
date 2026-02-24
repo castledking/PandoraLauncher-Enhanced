@@ -1,5 +1,7 @@
 use std::{
+    cell::RefCell,
     ops::Range,
+    rc::Rc,
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
@@ -44,6 +46,54 @@ use crate::{
     interface_config::InterfaceConfig,
     ts, ts_short, ui,
 };
+
+fn show_vanilla_change_to_fabric_modal(
+    install_for_id: InstanceID,
+    backend_handle: bridge::handle::BackendHandle,
+    on_yes: impl FnOnce(&mut Window, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let on_yes = Rc::new(RefCell::new(Some(on_yes)));
+    let on_yes_for_button = on_yes.clone();
+    window.open_dialog(cx, move |dialog, _window, _cx| {
+        let on_yes_for_button = on_yes_for_button.clone();
+        let backend_handle = backend_handle.clone();
+        dialog
+            .title(ts!("modrinth.install.vanilla_change_to_fabric.title"))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(ts!("modrinth.install.vanilla_change_to_fabric.message"))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("yes")
+                                    .label(ts!("modrinth.install.vanilla_change_to_fabric.yes"))
+                                    .success()
+                                    .on_click(move |_, window, cx| {
+                                        window.close_all_dialogs(cx);
+                                        backend_handle.send(MessageToBackend::SetInstanceLoader {
+                                            id: install_for_id,
+                                            loader: Loader::Fabric,
+                                        });
+                                        if let Some(f) = on_yes_for_button.borrow_mut().take() {
+                                            f(window, cx);
+                                        }
+                                    }),
+                            )
+                            .child(
+                                Button::new("no")
+                                    .label(ts!("modrinth.install.vanilla_change_to_fabric.no"))
+                                    .on_click(|_, window, cx| {
+                                        window.close_all_dialogs(cx);
+                                    }),
+                            ),
+                    ),
+            )
+    });
+}
 
 pub struct ModrinthSearchPage {
     data: DataEntities,
@@ -805,16 +855,44 @@ impl ModrinthSearchPage {
                                 match &main_action {
                                     PrimaryAction::Install | PrimaryAction::Reinstall => {
                                         if let Some(install_for_id) = install_for {
-                                            crate::modals::modrinth_install::open_with_version(
-                                                name.as_str(),
-                                                project_id.clone(),
-                                                project_type,
-                                                Some(install_for_id),
-                                                &data,
-                                                window,
-                                                cx,
-                                                None,
-                                            );
+                                            let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
+                                                .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
+                                                .unwrap_or(false);
+                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                            if is_vanilla && is_mod_or_modpack {
+                                                let name = name.clone();
+                                                let project_id = project_id.clone();
+                                                let data = data.clone();
+                                                show_vanilla_change_to_fabric_modal(
+                                                    install_for_id,
+                                                    data.backend_handle.clone(),
+                                                    move |window, cx| {
+                                                        crate::modals::modrinth_install::open_with_version(
+                                                            name.as_str(),
+                                                            project_id.clone(),
+                                                            project_type,
+                                                            Some(install_for_id),
+                                                            &data,
+                                                            window,
+                                                            cx,
+                                                            None,
+                                                        );
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            } else {
+                                                crate::modals::modrinth_install::open_with_version(
+                                                    name.as_str(),
+                                                    project_id.clone(),
+                                                    project_type,
+                                                    Some(install_for_id),
+                                                    &data,
+                                                    window,
+                                                    cx,
+                                                    None,
+                                                );
+                                            }
                                         } else {
                                             crate::modals::modrinth_install::open(
                                                 name.as_str(),
@@ -828,15 +906,44 @@ impl ModrinthSearchPage {
                                         }
                                     },
                                     PrimaryAction::InstallLatest => {
-                                        crate::modals::modrinth_install_auto::open(
-                                            name.as_str(),
-                                            project_id.clone(),
-                                            project_type,
-                                            install_for.unwrap(),
-                                            &data,
-                                            window,
-                                            cx
-                                        );
+                                        if let Some(install_for_id) = install_for {
+                                            let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
+                                                .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
+                                                .unwrap_or(false);
+                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                            if is_vanilla && is_mod_or_modpack {
+                                                let name = name.clone();
+                                                let project_id = project_id.clone();
+                                                let data = data.clone();
+                                                show_vanilla_change_to_fabric_modal(
+                                                    install_for_id,
+                                                    data.backend_handle.clone(),
+                                                    move |window, cx| {
+                                                        crate::modals::modrinth_install_auto::open(
+                                                            name.as_str(),
+                                                            project_id.clone(),
+                                                            project_type,
+                                                            install_for_id,
+                                                            &data,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            } else {
+                                                crate::modals::modrinth_install_auto::open(
+                                                    name.as_str(),
+                                                    project_id.clone(),
+                                                    project_type,
+                                                    install_for_id,
+                                                    &data,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }
                                     },
                                     PrimaryAction::Installed => {
                                         let project_id = project_id.clone();
@@ -868,28 +975,71 @@ impl ModrinthSearchPage {
                                                     let can_install_latest = can_install_latest;
                                                     move |_, window, cx| {
                                                         window.close_all_dialogs(cx);
-                                                        let install_latest = can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
-                                                        if install_latest && install_for.is_some() {
-                                                            crate::modals::modrinth_install_auto::open(
-                                                                name.as_str(),
-                                                                project_id.clone(),
-                                                                project_type,
-                                                                install_for.unwrap(),
-                                                                &data,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        } else if let Some(install_for_id) = install_for {
-                                                            crate::modals::modrinth_install::open_with_version(
-                                                                name.as_str(),
-                                                                project_id.clone(),
-                                                                project_type,
-                                                                Some(install_for_id),
-                                                                &data,
-                                                                window,
-                                                                cx,
-                                                                None,
-                                                            );
+                                                        if let Some(install_for_id) = install_for {
+                                                            let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
+                                                                .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
+                                                                .unwrap_or(false);
+                                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                                            if is_vanilla && is_mod_or_modpack {
+                                                                let name = name.clone();
+                                                                let project_id = project_id.clone();
+                                                                let data = data.clone();
+                                                                let install_latest = can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
+                                                                show_vanilla_change_to_fabric_modal(
+                                                                    install_for_id,
+                                                                    data.backend_handle.clone(),
+                                                                    move |window, cx| {
+                                                                        if install_latest {
+                                                                            crate::modals::modrinth_install_auto::open(
+                                                                                name.as_str(),
+                                                                                project_id.clone(),
+                                                                                project_type,
+                                                                                install_for_id,
+                                                                                &data,
+                                                                                window,
+                                                                                cx,
+                                                                            );
+                                                                        } else {
+                                                                            crate::modals::modrinth_install::open_with_version(
+                                                                                name.as_str(),
+                                                                                project_id.clone(),
+                                                                                project_type,
+                                                                                Some(install_for_id),
+                                                                                &data,
+                                                                                window,
+                                                                                cx,
+                                                                                None,
+                                                                            );
+                                                                        }
+                                                                    },
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            } else {
+                                                                let install_latest = can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
+                                                                if install_latest {
+                                                                    crate::modals::modrinth_install_auto::open(
+                                                                        name.as_str(),
+                                                                        project_id.clone(),
+                                                                        project_type,
+                                                                        install_for_id,
+                                                                        &data,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                } else {
+                                                                    crate::modals::modrinth_install::open_with_version(
+                                                                        name.as_str(),
+                                                                        project_id.clone(),
+                                                                        project_type,
+                                                                        Some(install_for_id),
+                                                                        &data,
+                                                                        window,
+                                                                        cx,
+                                                                        None,
+                                                                    );
+                                                                }
+                                                            }
                                                         } else {
                                                             crate::modals::modrinth_install::open(
                                                                 name.as_str(),

@@ -561,6 +561,15 @@ instance:
           en: Create new instance with this file
       add_to_instance:
         en: Add to instance
+      vanilla_change_to_fabric:
+        title:
+          en: Change to Fabric?
+        message:
+          en: This instance uses Vanilla. Mods and modpacks require Fabric. Do you want to change to Fabric before installing?
+        yes:
+          en: Yes, change to Fabric
+        no:
+          en: No
       install_dependency:
         en: Install 1 dependency
       install_dependencies:

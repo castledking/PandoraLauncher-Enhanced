@@ -1,6 +1,6 @@
 [package]
 name = "pandora_launcher"
-version = "2.1.5"
+version = "2.1.6"
 edition = "2024"
 build = "build.rs"
 

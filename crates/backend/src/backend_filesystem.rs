@@ -76,14 +76,22 @@ impl BackendState {
         path: Arc<Path>,
         after_debounce_effects: &mut AfterDebounceEffects,
     ) {
-        let target = self.file_watching.read().get_target(&path).copied();
+        let target = {
+            let file_watching = self.file_watching.read();
+            file_watching.get_target(&path).copied()
+                .or_else(|| file_watching.get_target_for_path(&path))
+        };
         if let Some(target) = target && self.filesystem_handle_change(target, &path, after_debounce_effects).await {
             return;
         }
         let Some(parent_path) = path.parent() else {
             return;
         };
-        let parent = self.file_watching.read().get_target(parent_path).copied();
+        let parent = {
+            let file_watching = self.file_watching.read();
+            file_watching.get_target(parent_path).copied()
+                .or_else(|| file_watching.get_target_for_path(parent_path))
+        };
         if let Some(parent) = parent {
             self.filesystem_handle_child_change(parent, parent_path, &path, after_debounce_effects).await;
         }
@@ -103,7 +111,11 @@ impl BackendState {
         let Some(parent_path) = path.parent() else {
             return;
         };
-        let parent = self.file_watching.write().get_target(parent_path).copied();
+        let parent = {
+            let file_watching = self.file_watching.write();
+            file_watching.get_target(parent_path).copied()
+                .or_else(|| file_watching.get_target_for_path(parent_path))
+        };
         if let Some(parent) = parent {
             self.filesystem_handle_child_removed(parent, parent_path, &path, after_debounce_effects).await;
         }
@@ -200,6 +212,10 @@ impl BackendState {
                 instance_state.instance_by_path.clear();
                 instance_state.reload_immediately.clear();
 
+                true
+            },
+            WatchTarget::OwnedSkinsDir => {
+                self.request_minecraft_profile_reload().await;
                 true
             },
             WatchTarget::InstanceDir { id } => {
@@ -316,7 +332,11 @@ impl BackendState {
                     // Owned skins folder changed (file added/removed) - reload profile so cards update
                     self.request_minecraft_profile_reload().await;
                 }
-            }
+            },
+            WatchTarget::OwnedSkinsDir => {
+                // File added/removed/modified in owned_skins (copy, paste, move) - reload profile
+                self.request_minecraft_profile_reload().await;
+            },
             WatchTarget::InstancesDir => {
                 if path.is_dir() {
                     if let Some(file_name) = path.file_name() {
@@ -437,6 +457,9 @@ impl BackendState {
         after_debounce_effects: &mut AfterDebounceEffects,
     ) {
         match parent {
+            WatchTarget::OwnedSkinsDir => {
+                self.request_minecraft_profile_reload().await;
+            },
             WatchTarget::InstanceDir { id } => {
                 let Some(file_name) = path.file_name() else {
                     return;

@@ -11,7 +11,7 @@ use auth::{
 };
 use base64::Engine;
 use bridge::{
-    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{ContentType, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceWorldSummary}, message::{EmbeddedOrRaw, MessageToFrontend}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
+    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{ContentType, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceWorldSummary}, message::{EmbeddedOrRaw, MessageToBackend, MessageToFrontend}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 use image::ImageFormat;
 use indexmap::IndexSet;
@@ -90,13 +90,17 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
 
     // Create initial directories
     let _ = std::fs::create_dir_all(&directories.instances_dir);
+    let _ = std::fs::create_dir_all(&directories.owned_skins_dir);
     state_file_watching.watch_filesystem(directories.root_launcher_dir.clone(), WatchTarget::RootDir);
+    state_file_watching.watch_filesystem_recursive(directories.owned_skins_dir.clone(), WatchTarget::OwnedSkinsDir);
 
     // Load accounts
     let account_info = Persistent::load(directories.accounts_json.clone());
 
     // Load config
     let config = Persistent::load(directories.config_json.clone());
+
+    let (profile_reload_tx, profile_reload_rx) = tokio::sync::mpsc::channel::<()>(16);
 
     let mut state = BackendState {
         self_handle,
@@ -113,6 +117,7 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
         config: Arc::new(RwLock::new(config)),
         secret_storage: Arc::new(OnceCell::new()),
         head_cache: Default::default(),
+        profile_reload_tx,
     };
 
     log::debug!("Doing initial backend load");
@@ -122,7 +127,7 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
         state.load_all_instances().await;
     });
 
-    runtime.spawn(state.start(recv, watcher_rx));
+    runtime.spawn(state.start(recv, watcher_rx, profile_reload_rx));
 
     std::mem::forget(runtime);
 }
@@ -130,6 +135,7 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
 #[derive(Debug, Clone, Copy)]
 pub enum WatchTarget {
     RootDir,
+    OwnedSkinsDir,
     InstancesDir,
     InvalidInstanceDir,
     InstanceDir { id: InstanceID },
@@ -170,6 +176,7 @@ pub struct BackendState {
     pub config: Arc<RwLock<Persistent<BackendConfig>>>,
     pub secret_storage: Arc<OnceCell<Result<PlatformSecretStorage, SecretStorageError>>>,
     pub head_cache: Arc<RwLock<FxHashMap<Arc<str>, HeadCacheEntry>>>,
+    pub profile_reload_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -202,7 +209,12 @@ pub enum HeadCacheEntry {
 }
 
 impl BackendState {
-    async fn start(self, recv: BackendReceiver, watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
+    async fn start(
+        self,
+        recv: BackendReceiver,
+        watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>,
+        profile_reload_rx: tokio::sync::mpsc::Receiver<()>,
+    ) {
         log::info!("Starting backend");
 
         tokio::task::spawn(crate::update::check_for_updates(self.redirecting_http_client.clone(), self.send.clone()));
@@ -210,7 +222,7 @@ impl BackendState {
         // Pre-fetch version manifest
         self.meta.load(&MinecraftVersionManifestMetadataItem).await;
 
-        self.handle(recv, watcher_rx).await;
+        self.handle(recv, watcher_rx, profile_reload_rx).await;
     }
 
     pub async fn load_all_instances(&mut self) {
@@ -367,10 +379,50 @@ impl BackendState {
         true
     }
 
-    async fn handle(mut self, mut backend_recv: BackendReceiver, mut watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
+    async fn handle(
+        mut self,
+        mut backend_recv: BackendReceiver,
+        mut watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>,
+        mut profile_reload_rx: tokio::sync::mpsc::Receiver<()>,
+    ) {
         let mut interval = tokio::time::interval(Duration::from_millis(1000));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         tokio::pin!(interval);
+
+        // Debounce profile reload in a spawned task to avoid 429 from rapid file events.
+        // Cooldown prevents feedback loop: GetMinecraftProfile writes skins to owned_skins,
+        // file watcher fires, we'd reload again. Ignore reload requests within cooldown.
+        let backend = self.clone();
+        const PROFILE_RELOAD_DEBOUNCE: Duration = Duration::from_millis(500);
+        const PROFILE_RELOAD_COOLDOWN: Duration = Duration::from_secs(10);
+        const PROFILE_RELOAD_IDLE: Duration = Duration::from_secs(365 * 24 * 60 * 60); // 1 year - effectively never
+        tokio::spawn(async move {
+            let mut profile_reload_timer = tokio::time::sleep(PROFILE_RELOAD_IDLE);
+            tokio::pin!(profile_reload_timer);
+            let mut last_reload = None::<tokio::time::Instant>;
+            loop {
+                tokio::select! {
+                    msg = profile_reload_rx.recv() => {
+                        if msg.is_none() {
+                            break;
+                        }
+                        let now = tokio::time::Instant::now();
+                        if last_reload.map_or(true, |t| now.duration_since(t) >= PROFILE_RELOAD_COOLDOWN) {
+                            profile_reload_timer.as_mut().reset(now + PROFILE_RELOAD_DEBOUNCE);
+                        }
+                    },
+                    _ = profile_reload_timer.as_mut() => {
+                        profile_reload_timer.as_mut().reset(tokio::time::Instant::now() + PROFILE_RELOAD_IDLE);
+                        last_reload = Some(tokio::time::Instant::now());
+                        backend
+                            .handle_message(MessageToBackend::GetMinecraftProfile {
+                                modal_action: ModalAction::default(),
+                            })
+                            .await;
+                    }
+                }
+            }
+        });
 
         loop {
             tokio::select! {
@@ -1355,8 +1407,57 @@ impl BackendStateFileWatching {
         }
     }
 
+    pub fn watch_filesystem_recursive(&mut self, path: Arc<Path>, target: WatchTarget) {
+        let Ok(canonical) = path.canonicalize() else {
+            log::error!("Unable to watch {:?} because it could not be canonicalized", path);
+            return;
+        };
+        let canonical: Arc<Path> = if canonical == &*path {
+            log::debug!("Watching {:?} recursively as {:?}", path, target);
+            path.clone()
+        } else {
+            log::debug!("Watching {:?} (real path {:?}) recursively as {:?}", path, canonical, target);
+            canonical.into()
+        };
+
+        if let Err(err) = self.watcher.watch(&path, notify::RecursiveMode::Recursive) {
+            log::error!("Unable to watch filesystem recursively: {:?}", err);
+            return;
+        }
+        self.watching.insert(path.clone(), target);
+
+        if canonical != path {
+            self.symlink_src_to_links.entry(canonical.clone()).or_default().insert(path.clone());
+            self.symlink_link_to_src.insert(path, canonical);
+        }
+    }
+
     pub fn get_target(&self, path: &Path) -> Option<&WatchTarget> {
         self.watching.get(path)
+    }
+
+    /// Returns true if any ancestor of path is being watched (for recursive watches).
+    fn has_watched_ancestor(&self, path: &Path) -> bool {
+        let mut current = path;
+        while let Some(parent) = current.parent() {
+            if self.watching.contains_key(parent) {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    /// Finds the watch target for a path by walking up to a watched ancestor.
+    pub fn get_target_for_path(&self, path: &Path) -> Option<WatchTarget> {
+        let mut current = path;
+        while let Some(parent) = current.parent() {
+            if let Some(target) = self.watching.get(parent) {
+                return Some(*target);
+            }
+            current = parent;
+        }
+        None
     }
 
     pub fn remove(&mut self, path: &Path) -> Option<WatchTarget> {
@@ -1376,7 +1477,7 @@ impl BackendStateFileWatching {
 
         if self.watching.contains_key(&path) {
             paths.push(path.clone());
-        } else if let Some(parent) = path.parent() && self.watching.contains_key(parent) {
+        } else if self.has_watched_ancestor(&path) {
             paths.push(path.clone());
         }
 

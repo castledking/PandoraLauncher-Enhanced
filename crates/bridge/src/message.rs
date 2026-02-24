@@ -206,6 +206,10 @@ pub enum MessageToBackend {
         skin_variant: Arc<str>,
         modal_action: ModalAction,
     },
+    SetCape {
+        cape_id: Option<uuid::Uuid>,
+        modal_action: ModalAction,
+    },
     ImportFromOtherLauncher {
         launcher: OtherLauncher,
         import_accounts: bool,
@@ -314,6 +318,7 @@ pub struct MinecraftSkinInfo {
 pub struct MinecraftCapeInfo {
     pub id: Arc<str>,
     pub url: Arc<str>,
+    pub state: Arc<str>,
 }
 
 #[derive(Debug, Default)]

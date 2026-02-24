@@ -424,6 +424,20 @@ impl SkinRenderer {
         pitch: f32,
         is_static: bool,
     ) -> Option<Arc<RenderImage>> {
+        self.render_to_buffer_with_params_ext(width, height, yaw, pitch, is_static, false)
+    }
+
+    /// Renders to buffer. When `for_cape_thumbnail` is true, uses a wider view to fit
+    /// the whole player (except lower legs) and show the full cape.
+    pub fn render_to_buffer_with_params_ext(
+        &self,
+        width: u32,
+        height: u32,
+        yaw: f32,
+        pitch: f32,
+        is_static: bool,
+        for_cape_thumbnail: bool,
+    ) -> Option<Arc<RenderImage>> {
         let tex = self.parsed_image.as_ref()?;
         let is_64x32 = tex.height() == 32;
 
@@ -486,17 +500,21 @@ impl SkinRenderer {
         }
 
         let is_card = width <= 200 && height <= 200;
-        let scale = if is_card {
-            height as f32 / 20.0
+        let (scale, offset_y) = if for_cape_thumbnail {
+            // Fit whole player (except lower legs) to show full cape
+            let scale = height as f32 / 28.0;
+            let offset_y = height as f32 / 2.0 + 18.0 * scale;
+            (scale, offset_y)
+        } else if is_card {
+            let scale = height as f32 / 20.0;
+            let offset_y = height as f32 / 2.0 + 26.0 * scale;
+            (scale, offset_y)
         } else {
-            height as f32 / 38.0
+            let scale = height as f32 / 38.0;
+            let offset_y = height as f32 / 2.0 + 18.0 * scale;
+            (scale, offset_y)
         };
         let offset_x = width as f32 / 2.0;
-        let offset_y = if is_card {
-            height as f32 / 2.0 + 26.0 * scale
-        } else {
-            height as f32 / 2.0 + 18.0 * scale
-        };
 
         let global_pitch = pitch;
         let global_yaw = yaw;

@@ -29,6 +29,16 @@ fn texture_key_from_url(url: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Normalized key for skin deduplication. Strips .png from file paths so
+/// "hash.png" and "hash" compare equal.
+fn skin_dedup_key(url: &str) -> Option<String> {
+    texture_key_from_url(url).map(|k| {
+        k.strip_suffix(".png")
+            .map(|s| s.to_string())
+            .unwrap_or(k)
+    })
+}
+
 fn detect_skin_variant(bytes: &[u8]) -> &'static str {
     use image::GenericImageView;
     
@@ -179,7 +189,11 @@ impl BackendState {
                                 }
                                 let mut seen = FxHashSet::default();
                                 owned_skins.skins.retain(|s| {
-                                    let key = s.texture_key.as_deref().unwrap_or_else(|| s.file_name.as_str());
+                                    let key = s
+                                        .texture_key
+                                        .as_deref()
+                                        .or_else(|| s.file_name.strip_suffix(".png"))
+                                        .unwrap_or_else(|| s.file_name.as_str());
                                     seen.insert(key.to_string())
                                 });
                                 owned_skins.skins.retain(|o| account_skins_dir.join(&o.file_name).exists());
@@ -285,6 +299,7 @@ impl BackendState {
                                             let key = s
                                                 .texture_key
                                                 .as_deref()
+                                                .or_else(|| s.file_name.strip_suffix(".png"))
                                                 .unwrap_or_else(|| s.file_name.as_str());
                                             seen.insert(key.to_string())
                                         });
@@ -318,7 +333,7 @@ impl BackendState {
                                                 .or_else(|| owned.file_name.strip_suffix(".png"));
                                             let already_in_list = all_skins.iter().any(|s| {
                                                 s.id.as_ref() == owned.skin_id.as_str()
-                                                    || owned_key.is_some_and(|k| texture_key_from_url(&*s.url) == Some(k.to_string()))
+                                                    || owned_key.is_some_and(|k| skin_dedup_key(&*s.url) == Some(k.to_string()))
                                             });
                                             if file_path.exists() && !already_in_list {
                                                 let local_path_str = Some(file_path.to_string_lossy().to_string().into());
@@ -332,12 +347,22 @@ impl BackendState {
                                             }
                                         }
 
+                                        let mut seen_keys = FxHashSet::default();
+                                        all_skins.retain(|s| {
+                                            let key = skin_dedup_key(&*s.url).unwrap_or_else(|| s.id.as_ref().to_string());
+                                            seen_keys.insert(key)
+                                        });
+
                                         backend.update_profile_head(&profile);
 
                                         let capes: Vec<MinecraftCapeInfo> = profile.capes.iter().map(|c| {
                                             MinecraftCapeInfo {
                                                 id: format!("{}", c.id).into(),
                                                 url: c.url.clone(),
+                                                state: match c.state {
+                                                    auth::models::CapeState::Active => "ACTIVE".into(),
+                                                    auth::models::CapeState::Inactive => "INACTIVE".into(),
+                                                },
                                             }
                                         }).collect();
 
@@ -377,12 +402,9 @@ impl BackendState {
         }
     }
 
-    /// Reload Minecraft profile (e.g. when owned_skins directory changes). Uses a no-op modal.
+    /// Reload Minecraft profile (e.g. when owned_skins directory changes). Debounced to avoid 429.
     pub async fn request_minecraft_profile_reload(&self) {
-        self.handle_message(MessageToBackend::GetMinecraftProfile {
-            modal_action: ModalAction::default(),
-        })
-        .await;
+        let _ = self.profile_reload_tx.try_send(());
     }
 
     pub async fn handle_message(&self, message: MessageToBackend) {
@@ -897,6 +919,7 @@ impl BackendState {
                                                 let key = s
                                                     .texture_key
                                                     .as_deref()
+                                                    .or_else(|| s.file_name.strip_suffix(".png"))
                                                     .unwrap_or_else(|| s.file_name.as_str());
                                                 seen.insert(key.to_string())
                                             });
@@ -965,7 +988,7 @@ impl BackendState {
                                                 .or_else(|| owned.file_name.strip_suffix(".png"));
                                             let already_in_list = all_skins.iter().any(|s| {
                                                 s.id.as_ref() == owned.skin_id.as_str()
-                                                    || owned_key.is_some_and(|k| texture_key_from_url(&*s.url) == Some(k.to_string()))
+                                                    || owned_key.is_some_and(|k| skin_dedup_key(&*s.url) == Some(k.to_string()))
                                             });
                                             if file_path.exists() && !already_in_list {
                                                 let local_path_str = Some(file_path.to_string_lossy().to_string().into());
@@ -979,10 +1002,20 @@ impl BackendState {
                                             }
                                         }
 
+                                        let mut seen_keys = FxHashSet::default();
+                                        all_skins.retain(|s| {
+                                            let key = skin_dedup_key(&*s.url).unwrap_or_else(|| s.id.as_ref().to_string());
+                                            seen_keys.insert(key)
+                                        });
+
                                         let capes: Vec<MinecraftCapeInfo> = profile.capes.iter().map(|c| {
                                             MinecraftCapeInfo {
                                                 id: format!("{}", c.id).into(),
                                                 url: c.url.clone(),
+                                                state: match c.state {
+                                                    auth::models::CapeState::Active => "ACTIVE".into(),
+                                                    auth::models::CapeState::Inactive => "INACTIVE".into(),
+                                                },
                                             }
                                         }).collect();
 
@@ -1130,7 +1163,11 @@ impl BackendState {
                                         }
                                         let mut seen = FxHashSet::default();
                                         owned_skins.skins.retain(|s| {
-                                            let key = s.texture_key.as_deref().unwrap_or_else(|| s.file_name.as_str());
+                                            let key = s
+                                                .texture_key
+                                                .as_deref()
+                                                .or_else(|| s.file_name.strip_suffix(".png"))
+                                                .unwrap_or_else(|| s.file_name.as_str());
                                             seen.insert(key.to_string())
                                         });
                                         owned_skins.skins.retain(|o| account_skins_dir.join(&o.file_name).exists());
@@ -1238,6 +1275,7 @@ impl BackendState {
                                                     let key = s
                                                         .texture_key
                                                         .as_deref()
+                                                        .or_else(|| s.file_name.strip_suffix(".png"))
                                                         .unwrap_or_else(|| s.file_name.as_str());
                                                     seen.insert(key.to_string())
                                                 });
@@ -1273,7 +1311,7 @@ impl BackendState {
                                                         .or_else(|| owned.file_name.strip_suffix(".png"));
                                                     let already_in_list = all_skins.iter().any(|s| {
                                                         s.id.as_ref() == owned.skin_id.as_str()
-                                                            || owned_key.is_some_and(|k| texture_key_from_url(&*s.url) == Some(k.to_string()))
+                                                            || owned_key.is_some_and(|k| skin_dedup_key(&*s.url) == Some(k.to_string()))
                                                     });
                                                     if file_path.exists() && !already_in_list {
                                                         let local_path_str = Some(file_path.to_string_lossy().to_string().into());
@@ -1286,11 +1324,22 @@ impl BackendState {
                                                         });
                                                     }
                                                 }
+
+                                                // Final deduplication by texture key (profile skins first, so ACTIVE is preserved)
+                                                let mut seen_keys = FxHashSet::default();
+                                                all_skins.retain(|s| {
+                                                    let key = skin_dedup_key(&*s.url).unwrap_or_else(|| s.id.as_ref().to_string());
+                                                    seen_keys.insert(key)
+                                                });
                                                 
                                                 let capes: Vec<MinecraftCapeInfo> = profile.capes.iter().map(|c| {
                                                     MinecraftCapeInfo {
                                                         id: format!("{}", c.id).into(),
                                                         url: c.url.clone(),
+                                                        state: match c.state {
+                                                            auth::models::CapeState::Active => "ACTIVE".into(),
+                                                            auth::models::CapeState::Inactive => "INACTIVE".into(),
+                                                        },
                                                     }
                                                 }).collect();
                                                 
@@ -1342,6 +1391,141 @@ impl BackendState {
                         self.send.send_error(Arc::from(format!("Could not read skin file: {}", e)));
                         modal_action.set_finished();
                     }
+                }
+            },
+            MessageToBackend::SetCape { cape_id, modal_action } => {
+                let selected_uuid = {
+                    let mut account_info = self.account_info.write();
+                    let info = account_info.get();
+                    info.selected_account
+                };
+                if let Some(selected_uuid) = selected_uuid {
+                    let secret_storage = match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                        Ok(ss) => ss,
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Secret storage error: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+                    let credentials = match secret_storage.read_credentials(selected_uuid).await {
+                        Ok(Some(creds)) => creds,
+                        Ok(None) => {
+                            self.send.send_error(Arc::from("No credentials found. Please log in again."));
+                            modal_action.set_finished();
+                            return;
+                        }
+                        Err(e) => {
+                            self.send.send_error(Arc::from(format!("Error reading credentials: {}", e)));
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
+                    let minecraft_token = {
+                        let now = chrono::Utc::now();
+                        if let Some(access) = &credentials.access_token && now < access.expiry {
+                            Some(auth::models::MinecraftAccessToken(Arc::clone(&access.token)))
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(minecraft_token) = minecraft_token {
+                        let client = self.http_client.clone();
+                        let send = self.send.clone();
+                        let backend = self.clone();
+                        let directories = self.directories.clone();
+                        tokio::spawn(async move {
+                            let cape_result = match &cape_id {
+                                Some(id) => {
+                                    client
+                                        .put("https://api.minecraftservices.com/minecraft/profile/capes/active")
+                                        .bearer_auth(minecraft_token.secret())
+                                        .json(&serde_json::json!({ "capeId": id.as_hyphenated().to_string() }))
+                                        .send()
+                                        .await
+                                }
+                                None => {
+                                    client
+                                        .delete("https://api.minecraftservices.com/minecraft/profile/capes/active")
+                                        .bearer_auth(minecraft_token.secret())
+                                        .send()
+                                        .await
+                                }
+                            };
+                            match cape_result {
+                                Ok(resp) if resp.status().is_success() => {
+                                    send.send(MessageToFrontend::AddNotification {
+                                        notification_type: bridge::message::BridgeNotificationType::Success,
+                                        message: Arc::from(if cape_id.is_some() { "Cape equipped!" } else { "Cape removed!" }),
+                                    });
+                                    if let Ok(profile_resp) = client
+                                        .get("https://api.minecraftservices.com/minecraft/profile")
+                                        .bearer_auth(minecraft_token.secret())
+                                        .send()
+                                        .await
+                                    {
+                                        if profile_resp.status() == StatusCode::OK {
+                                            if let Ok(profile) = serde_json::from_slice::<MinecraftProfileResponse>(&profile_resp.bytes().await.unwrap_or_default()) {
+                                                backend.update_profile_head(&profile);
+                                                let capes: Vec<MinecraftCapeInfo> = profile.capes.iter().map(|c| {
+                                                    MinecraftCapeInfo {
+                                                        id: format!("{}", c.id).into(),
+                                                        url: c.url.clone(),
+                                                        state: match c.state {
+                                                            auth::models::CapeState::Active => "ACTIVE".into(),
+                                                            auth::models::CapeState::Inactive => "INACTIVE".into(),
+                                                        },
+                                                    }
+                                                }).collect();
+                                                let all_skins: Vec<MinecraftSkinInfo> = profile.skins.iter().map(|s| {
+                                                    MinecraftSkinInfo {
+                                                        id: s.id.map(|id| format!("{}", id)).unwrap_or_default().into(),
+                                                        url: s.url.clone(),
+                                                        variant: match s.variant {
+                                                            auth::models::SkinVariant::Classic => "CLASSIC".into(),
+                                                            auth::models::SkinVariant::Slim => "SLIM".into(),
+                                                            auth::models::SkinVariant::Other => "OTHER".into(),
+                                                        },
+                                                        state: match s.state {
+                                                            auth::models::SkinState::Active => "ACTIVE".into(),
+                                                            auth::models::SkinState::Inactive => "INACTIVE".into(),
+                                                        },
+                                                        local_path: None,
+                                                    }
+                                                }).collect();
+                                                let info = MinecraftProfileInfo {
+                                                    id: profile.id,
+                                                    name: profile.name,
+                                                    skins: all_skins,
+                                                    capes,
+                                                };
+                                                send.send(MessageToFrontend::MinecraftProfileResult { profile: info });
+                                                send.send(MessageToFrontend::Refresh);
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(resp) => {
+                                    let status = resp.status();
+                                    let err_text = resp.text().await.unwrap_or_default();
+                                    log::error!("Set cape failed with status {}: {}", status, err_text);
+                                    send.send_error(Arc::from(format!("Failed to set cape: {}", status)));
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to set cape: {}", e);
+                                    send.send_error(Arc::from("Failed to set cape"));
+                                }
+                            }
+                            send.send(MessageToFrontend::CloseModal);
+                            modal_action.set_finished();
+                        });
+                    } else {
+                        self.send.send_error(Arc::from("No Minecraft access token. Please log in again."));
+                        modal_action.set_finished();
+                    }
+                } else {
+                    self.send.send_error(Arc::from("No account selected"));
+                    modal_action.set_finished();
                 }
             },
             MessageToBackend::DeleteContent { id, content_ids: mod_ids } => {

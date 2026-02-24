@@ -16,7 +16,7 @@ use gpui_component::{
 };
 
 use crate::{
-    component::skin_renderer::SkinRenderer,
+    component::{cape_card, skin_renderer::SkinRenderer},
     entity::{account::{AccountEntries, AccountChanged}, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
     ui,
     modals::upload_skin_modal,
@@ -29,6 +29,8 @@ enum SkinPageState {
     Ready(MinecraftProfileInfo),
 }
 
+const INITIAL_SKINS_VISIBLE: usize = 8;
+
 pub struct SkinsPage {
     backend_handle: BackendHandle,
     minecraft_profile: Entity<MinecraftProfileEntries>,
@@ -37,6 +39,7 @@ pub struct SkinsPage {
     launcher_dir: Arc<Path>,
     state: SkinPageState,
     selected_skin_id: Option<Arc<str>>,
+    skins_expanded: bool,
     _subscription: Subscription,
     _account_subscription: Subscription,
     _get_profile_task: Task<()>,
@@ -47,6 +50,7 @@ pub struct SkinsPage {
     last_rendered_cape_url: Option<String>,
     
     _thumbnail_tasks: std::collections::HashMap<Arc<str>, Task<()>>,
+    _cape_thumbnail_tasks: std::collections::HashMap<Arc<str>, Task<()>>, // key: "skin_url\0cape_url"
 }
 
 impl SkinsPage {
@@ -78,6 +82,7 @@ impl SkinsPage {
             launcher_dir: data.launcher_dir.clone(),
             state,
             selected_skin_id: None,
+            skins_expanded: false,
             _subscription,
             _account_subscription,
             _get_profile_task: Task::ready(()),
@@ -87,6 +92,7 @@ impl SkinsPage {
             _download_active_cape_task: None,
             last_rendered_cape_url: None,
             _thumbnail_tasks: std::collections::HashMap::new(),
+            _cape_thumbnail_tasks: std::collections::HashMap::new(),
         };
         page.load_profile(cx);
         page.update_skin_renderer(cx);
@@ -170,6 +176,13 @@ impl SkinsPage {
         });
     }
 
+    fn set_cape(&mut self, cape_id: Option<uuid::Uuid>) {
+        self.backend_handle.send(MessageToBackend::SetCape {
+            cape_id,
+            modal_action: ModalAction::default(),
+        });
+    }
+
     fn update_skin_renderer(&mut self, cx: &mut Context<Self>) {
         if let SkinPageState::Ready(profile) = &self.state {
             // Update nameplate with profile name
@@ -202,7 +215,7 @@ impl SkinsPage {
                 self.skin_renderer.update(cx, |r, _| r.update_image(None, false));
             }
 
-            if let Some(active_cape) = profile.capes.first() {
+            if let Some(active_cape) = profile.capes.iter().find(|c| c.state.as_ref() == "ACTIVE") {
                 let url = active_cape.url.to_string();
                 if self.last_rendered_cape_url.as_deref() != Some(url.as_str()) {
                     self.last_rendered_cape_url = Some(url.clone());
@@ -275,11 +288,17 @@ impl SkinsPage {
                         let renderer = SkinRenderer::new(Some(data), is_slim);
                         let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
                         let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
-                        
+                        // Capeless back with same framing as cape thumbnails (for None card)
+                        let back_yaw = std::f32::consts::PI + 0.3;
+                        let none_card_back = renderer.render_to_buffer_with_params_ext(200, 200, back_yaw, 0.05, true, true);
+
                         if let (Some(f), Some(b)) = (front, back) {
                             let _ = this.update(cx, |this, cx| {
                                 this.skin_thumbnail_cache.update(cx, |cache, _| {
                                     cache.insert(cache_key_clone.clone(), f, b);
+                                    if let Some(nb) = none_card_back {
+                                        cache.insert_none_card(cache_key_clone.clone(), nb);
+                                    }
                                 });
                                 cx.notify();
                             });
@@ -287,6 +306,81 @@ impl SkinsPage {
                     }
                 });
                 self._thumbnail_tasks.insert(cache_key, task);
+            }
+
+            // Lazy load cape thumbnails (render 3D model with active skin + each cape)
+            if let Some(active_skin) = profile.skins.iter().find(|s| s.state.as_ref() == "ACTIVE") {
+                let skin_url: String = active_skin.url.to_string();
+                let skin_url_arc: Arc<str> = skin_url.clone().into();
+                let skin_load_url = if let Some(local) = &active_skin.local_path {
+                    format!("file://{}", local)
+                } else {
+                    skin_url.clone()
+                };
+                let is_slim = active_skin.variant.as_ref() == "SLIM";
+                let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
+                for cape in &profile.capes {
+                    let cape_url: String = cape.url.to_string();
+                    let cape_url_arc: Arc<str> = cape_url.clone().into();
+                    let cache_key: Arc<str> = format!("{}\0{}", skin_url, cape_url).into();
+                    if !thumbnail_cache.contains_cape(&skin_url, &cape_url)
+                        && !self._cape_thumbnail_tasks.contains_key(&cache_key)
+                    {
+                        let client = cx.http_client();
+                        let cache = self.skin_thumbnail_cache.clone();
+                        let skin_load_url = skin_load_url.clone();
+                        let cape_url_clone = cape_url.clone();
+                        let skin_url_for_insert = skin_url_arc.clone();
+                        let task = cx.spawn(async move |this, cx| {
+                            use futures::AsyncReadExt;
+                            let skin_bytes: Option<Arc<[u8]>> = if skin_load_url.starts_with("file://") {
+                                std::fs::read(&skin_load_url[7..]).ok().map(|b| Arc::from(b.into_boxed_slice()))
+                            } else if let Ok(mut r) = client.get(&skin_load_url, ().into(), true).await {
+                                let mut bytes = Vec::new();
+                                if r.body_mut().read_to_end(&mut bytes).await.is_ok() {
+                                    Some(Arc::from(bytes.into_boxed_slice()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            let cape_bytes: Option<Arc<[u8]>> = if let Ok(mut r) = client.get(&cape_url_clone, ().into(), true).await {
+                                let mut bytes = Vec::new();
+                                if r.body_mut().read_to_end(&mut bytes).await.is_ok() {
+                                    Some(Arc::from(bytes.into_boxed_slice()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            if let (Some(skin), Some(cape)) = (skin_bytes, cape_bytes) {
+                                let mut renderer = SkinRenderer::new(Some(skin), is_slim);
+                                renderer.update_cape(Some(cape));
+                                // Cape cards show back view only; use wider framing to fit whole player + full cape
+                                let back_yaw = std::f32::consts::PI + 0.3;
+                                let front = renderer.render_to_buffer_with_params_ext(200, 200, 0.3, 0.05, true, true);
+                                let back = renderer.render_to_buffer_with_params_ext(200, 200, back_yaw, 0.05, true, true);
+                                if let (Some(f), Some(b)) = (front, back) {
+                                    let _ = this.update(cx, |this, cx| {
+                                        this.skin_thumbnail_cache.update(cx, |c, _| {
+                                            c.insert_cape(
+                                                skin_url_for_insert.clone(),
+                                                cape_url_clone.clone().into(),
+                                                f,
+                                                b,
+                                            );
+                                        });
+                                        cx.notify();
+                                    });
+                                }
+                            }
+                        });
+                        self._cape_thumbnail_tasks.insert(cache_key, task);
+                    }
+                }
+                let _ = thumbnail_cache;
             }
         }
     }
@@ -434,6 +528,66 @@ impl Render for SkinsPage {
                     );
                 }
 
+                let has_active_cape = profile.capes.iter().any(|c| c.state.as_ref() == "ACTIVE");
+                let active_skin_url = profile
+                    .skins
+                    .iter()
+                    .find(|s| s.state.as_ref() == "ACTIVE")
+                    .map(|s| s.url.to_string())
+                    .unwrap_or_default();
+                let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
+                // None card: capeless skin backside with same framing as cape thumbnails
+                let none_card_back = thumbnail_cache.get_none_card(&active_skin_url);
+                let mut cape_cards: Vec<_> = Vec::new();
+                let this_entity = cx.entity().clone();
+                cape_cards.push(
+                    cape_card::render_cape_card(
+                        "none".into(),
+                        !has_active_cape,
+                        None,
+                        none_card_back,
+                        "None",
+                        move |_, cx| {
+                            let _ = this_entity.update(cx, |this, _| this.set_cape(None));
+                        },
+                    ).into_any_element(),
+                );
+                for cape in &profile.capes {
+                    let is_active = cape.state.as_ref() == "ACTIVE";
+                    let (front, back) = thumbnail_cache
+                        .get_cape(&active_skin_url, &*cape.url)
+                        .map(|(f, b)| (Some(f.clone()), Some(b.clone())))
+                        .unwrap_or((None, None));
+                    let cape_id = cape.id.to_string();
+                    let cape_uuid = uuid::Uuid::parse_str(&cape_id).ok();
+                    let this_entity = cx.entity().clone();
+                    cape_cards.push(
+                        cape_card::render_cape_card(
+                            cape.id.clone(),
+                            is_active,
+                            front,
+                            back,
+                            "Loading...",
+                            move |_, cx| {
+                                if !is_active {
+                                    if let Some(uuid) = cape_uuid {
+                                        let _ = this_entity.update(cx, |this, _| this.set_cape(Some(uuid)));
+                                    }
+                                }
+                            },
+                        ).into_any_element(),
+                    );
+                }
+                let _ = thumbnail_cache;
+
+                let total_skins = skin_cards.len();
+                let (skins_visible, has_more_skins) = if self.skins_expanded || total_skins <= INITIAL_SKINS_VISIBLE {
+                    (skin_cards, false)
+                } else {
+                    let visible: Vec<_> = skin_cards.into_iter().take(INITIAL_SKINS_VISIBLE).collect();
+                    (visible, total_skins > INITIAL_SKINS_VISIBLE)
+                };
+
                 let right_panel = v_flex()
                     .flex_1()
                     .h_full()
@@ -468,14 +622,39 @@ impl Render for SkinsPage {
                             .text_lg()
                             .font_weight(FontWeight::BOLD)
                             .mb_2()
+                            .child("Owned Capes"),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_4()
+                            .flex_wrap()
+                            .children(cape_cards)
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .mb_2()
+                            .mt_6()
                             .child("Owned Skins"),
                     )
                     .child(
                         h_flex()
                             .gap_4()
                             .flex_wrap()
-                            .children(skin_cards)
-                    );
+                            .children(skins_visible)
+                    )
+                    .when(has_more_skins, |this| {
+                        this.child(
+                            Button::new("show_more_skins")
+                                .mt_4()
+                                .label("Show more")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.skins_expanded = true;
+                                    cx.notify();
+                                })),
+                        )
+                    });
 
                 let skin_cards_flex = h_flex()
                     .w_full()

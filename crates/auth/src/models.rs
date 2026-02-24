@@ -131,6 +131,17 @@ pub struct MinecraftProfileSkin {
 pub struct MinecraftProfileCape {
     pub id: Uuid,
     pub url: Arc<str>,
+    #[serde(default)]
+    pub state: CapeState,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Deserialize, Default)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum CapeState {
+    Active,
+    #[serde(other)]
+    #[default]
+    Inactive,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Deserialize)]

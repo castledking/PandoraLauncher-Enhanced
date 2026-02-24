@@ -11,3 +11,4 @@ pub mod responsive_grid;
 pub mod search_helper;
 pub mod skin_renderer;
 pub mod skin_card;
+pub mod cape_card;

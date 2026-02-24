@@ -441,7 +441,7 @@ impl BackendState {
                     if let Some(minecraft_token) = minecraft_token {
                         let client = self.http_client.clone();
                         let send = self.send.clone();
-                        let owned_skins = self.owned_skins.clone();
+                        let directories = self.directories.clone();
                         tokio::spawn(async move {
                             let response = client
                                 .get("https://api.minecraftservices.com/minecraft/profile")
@@ -453,7 +453,94 @@ impl BackendState {
                                 Ok(resp) if resp.status() == StatusCode::OK => {
                                     match serde_json::from_slice::<MinecraftProfileResponse>(&resp.bytes().await.unwrap_or_default()) {
                                         Ok(profile) => {
-                                            // Merge with locally stored skins
+                                            let account_dir_name = profile.name.to_string();
+                                            let account_skins_dir = directories.owned_skins_dir.join(&account_dir_name);
+                                            let owned_skins_json = account_skins_dir.join("owned_skins.json");
+                                            
+                                            let _ = tokio::fs::create_dir_all(&account_skins_dir).await;
+                                            
+                                            let mut owned_skins: crate::backend::OwnedSkins = if owned_skins_json.exists() {
+                                                match tokio::fs::read_to_string(&owned_skins_json).await {
+                                                    Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                                                    Err(_) => crate::backend::OwnedSkins::default(),
+                                                }
+                                            } else {
+                                                crate::backend::OwnedSkins::default()
+                                            };
+                                            
+                                            for skin in &profile.skins {
+                                                let skin_id = skin.id.map(|id| id.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                                                let file_name = format!("{}.png", skin_id);
+                                                let file_path = account_skins_dir.join(&file_name);
+                                                
+                                                // Download skin if not exists or file is empty
+                                                let needs_download = !file_path.exists() || file_path.metadata().map(|m| m.len() == 0).unwrap_or(true);
+                                                if needs_download {
+                                                    let skin_url_str: String = (&*skin.url).to_string();
+                                                    log::info!("Downloading skin {}", skin_url_str);
+                                                    match client.get(&skin_url_str).send().await {
+                                                        Ok(resp) if resp.status() == StatusCode::OK => {
+                                                            match resp.bytes().await {
+                                                                Ok(bytes) if !bytes.is_empty() => {
+                                                                    if let Err(e) = tokio::fs::write(&file_path, &bytes).await {
+                                                                        log::error!("Failed to write skin file: {}", e);
+                                                                    } else {
+                                                                        log::info!("Successfully saved skin to: {:?}", file_path);
+                                                                    }
+                                                                },
+                                                                Ok(bytes) => log::warn!("Empty response for skin download"),
+                                                                Err(e) => log::error!("Failed to read skin bytes: {}", e),
+                                                            }
+                                                        },
+                                                        Ok(resp) => log::warn!("Skin download failed with status: {}", resp.status()),
+                                                        Err(e) => log::error!("Failed to download skin: {}", e),
+                                                    }
+                                                }
+                                                
+                                                let owned_skin = crate::backend::OwnedSkin {
+                                                    id: skin_id.clone(),
+                                                    file_name: file_name.clone(),
+                                                    variant: match skin.variant {
+                                                        auth::models::SkinVariant::Classic => "CLASSIC".to_string(),
+                                                        auth::models::SkinVariant::Slim => "SLIM".to_string(),
+                                                        auth::models::SkinVariant::Other => "OTHER".to_string(),
+                                                    },
+                                                    skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
+                                                };
+                                                
+                                                if !owned_skins.skins.iter().any(|s| s.id == owned_skin.id) {
+                                                    owned_skins.skins.push(owned_skin);
+                                                }
+                                            }
+                                            
+                                            if let Ok(mut entries) = tokio::fs::read_dir(&account_skins_dir).await {
+                                                while let Ok(Some(entry)) = entries.next_entry().await {
+                                                    let path = entry.path();
+                                                    if path.extension().map(|e| e == "png").unwrap_or(false) {
+                                                        let file_name = path.file_name()
+                                                            .and_then(|n| n.to_str())
+                                                            .map(|s| s.to_string())
+                                                            .unwrap_or_default();
+                                                        let file_stem = path.file_stem()
+                                                            .and_then(|s| s.to_str())
+                                                            .unwrap_or_default();
+                                                        
+                                                        if !owned_skins.skins.iter().any(|s| s.file_name == file_name) {
+                                                            owned_skins.skins.push(crate::backend::OwnedSkin {
+                                                                id: file_stem.to_string(),
+                                                                file_name: file_name,
+                                                                variant: "CLASSIC".to_string(),
+                                                                skin_id: file_stem.to_string(),
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if let Ok(json) = serde_json::to_string_pretty(&owned_skins) {
+                                                let _ = tokio::fs::write(&owned_skins_json, json).await;
+                                            }
+                                            
                                             let mut all_skins: Vec<MinecraftSkinInfo> = profile.skins.iter().map(|s| {
                                                 MinecraftSkinInfo {
                                                     id: s.id.map(|id| format!("{}", id)).unwrap_or_default().into(),
@@ -467,21 +554,25 @@ impl BackendState {
                                                         auth::models::SkinState::Active => "ACTIVE".into(),
                                                         auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                     },
+                                                    local_path: None,
                                                 }
                                             }).collect();
                                             
-                                            {
-                                                let mut local = owned_skins.write();
-                                                let data = local.get();
-                                                for owned in &data.skins {
-                                                    if !all_skins.iter().any(|s| s.url.as_ref() == owned.url.as_str()) {
-                                                        all_skins.push(MinecraftSkinInfo {
-                                                            id: owned.skin_id.clone().into(),
-                                                            url: owned.url.clone().into(),
-                                                            variant: owned.variant.clone().into(),
-                                                            state: "INACTIVE".into(),
-                                                        });
-                                                    }
+                                            for owned in &owned_skins.skins {
+                                                let file_path = account_skins_dir.join(&owned.file_name);
+                                                if !all_skins.iter().any(|s| s.id.as_ref() == owned.skin_id.as_str()) {
+                                                    let local_path_str = if file_path.exists() {
+                                                        Some(file_path.to_string_lossy().to_string().into())
+                                                    } else {
+                                                        None
+                                                    };
+                                                    all_skins.push(MinecraftSkinInfo {
+                                                        id: owned.skin_id.clone().into(),
+                                                        url: Arc::from(format!("file://{}", file_path.to_string_lossy())),
+                                                        variant: owned.variant.clone().into(),
+                                                        state: "INACTIVE".into(),
+                                                        local_path: local_path_str,
+                                                    });
                                                 }
                                             }
                                             
@@ -572,9 +663,7 @@ impl BackendState {
                         let send = self.send.clone();
                         let skin_url = skin_url.clone();
                         let skin_variant = skin_variant.clone();
-                        let owned_skins = self.owned_skins.clone();
-                        let head_cache = self.head_cache.clone();
-                        let account_info = self.account_info.clone();
+                        let directories = self.directories.clone();
                         tokio::spawn(async move {
                             #[derive(serde::Serialize)]
                             struct SkinRequest<'a> {
@@ -599,7 +688,7 @@ impl BackendState {
                                         message: Arc::from("Skin changed successfully!"),
                                     });
                                     
-                                    // Fetch updated profile
+                                    // Reload profile to get updated skin list
                                     let profile_response = client
                                         .get("https://api.minecraftservices.com/minecraft/profile")
                                         .bearer_auth(minecraft_token.secret())
@@ -609,31 +698,55 @@ impl BackendState {
                                     if let Ok(resp) = profile_response {
                                         if resp.status() == StatusCode::OK {
                                             if let Ok(profile) = serde_json::from_slice::<MinecraftProfileResponse>(&resp.bytes().await.unwrap_or_default()) {
-                                                // Save the skin to local storage if not already present
-                                                if let Some(active_skin) = profile.skins.iter().find(|s| s.state == auth::models::SkinState::Active) {
+                                                let account_dir_name = profile.name.to_string();
+                                                let account_skins_dir = directories.owned_skins_dir.join(&account_dir_name);
+                                                let owned_skins_json = account_skins_dir.join("owned_skins.json");
+                                                
+                                                let _ = tokio::fs::create_dir_all(&account_skins_dir).await;
+                                                
+                                                let mut owned_skins: crate::backend::OwnedSkins = if owned_skins_json.exists() {
+                                                    match tokio::fs::read_to_string(&owned_skins_json).await {
+                                                        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                                                        Err(_) => crate::backend::OwnedSkins::default(),
+                                                    }
+                                                } else {
+                                                    crate::backend::OwnedSkins::default()
+                                                };
+                                                
+                                                for skin in &profile.skins {
+                                                    let skin_id = skin.id.map(|id| id.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                                                    let file_name = format!("{}.png", skin_id);
+                                                    let file_path = account_skins_dir.join(&file_name);
+                                                    
+                                                    if !file_path.exists() {
+                                                        let skin_url_str: String = (&*skin.url).to_string();
+                                                        if let Ok(resp) = client.get(&skin_url_str).send().await {
+                                                            if let Ok(bytes) = resp.bytes().await {
+                                                                let _ = tokio::fs::write(&file_path, &bytes).await;
+                                                            }
+                                                        }
+                                                    }
+                                                    
                                                     let owned_skin = crate::backend::OwnedSkin {
-                                                        url: active_skin.url.to_string(),
-                                                        variant: match active_skin.variant {
+                                                        id: skin_id.clone(),
+                                                        file_name: file_name.clone(),
+                                                        variant: match skin.variant {
                                                             auth::models::SkinVariant::Classic => "CLASSIC".to_string(),
                                                             auth::models::SkinVariant::Slim => "SLIM".to_string(),
                                                             auth::models::SkinVariant::Other => "OTHER".to_string(),
                                                         },
-                                                        skin_id: active_skin.id.map(|id| id.to_string()).unwrap_or_default(),
-                                                        thumbnail_front: None,
-                                                        thumbnail_back: None,
+                                                        skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                                     };
                                                     
-                                                    {
-                                                        let mut local = owned_skins.write();
-                                                        local.modify(|data| {
-                                                            if !data.skins.iter().any(|s| s.url == owned_skin.url) {
-                                                                data.skins.push(owned_skin);
-                                                            }
-                                                        });
+                                                    if !owned_skins.skins.iter().any(|s| s.id == owned_skin.id) {
+                                                        owned_skins.skins.push(owned_skin);
                                                     }
                                                 }
                                                 
-                                                // Merge with locally stored skins
+                                                if let Ok(json) = serde_json::to_string_pretty(&owned_skins) {
+                                                    let _ = tokio::fs::write(&owned_skins_json, json).await;
+                                                }
+                                                
                                                 let mut all_skins: Vec<MinecraftSkinInfo> = profile.skins.iter().map(|s| {
                                                     MinecraftSkinInfo {
                                                         id: s.id.map(|id| format!("{}", id)).unwrap_or_default().into(),
@@ -647,61 +760,26 @@ impl BackendState {
                                                             auth::models::SkinState::Active => "ACTIVE".into(),
                                                             auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                         },
+                                                        local_path: None,
                                                     }
                                                 }).collect();
                                                 
-                                                {
-                                                    let mut local = owned_skins.write();
-                                                    let data = local.get();
-                                                    for owned in &data.skins {
-                                                        if !all_skins.iter().any(|s| s.url.as_ref() == owned.url.as_str()) {
-                                                            all_skins.push(MinecraftSkinInfo {
-                                                                id: owned.skin_id.clone().into(),
-                                                                url: owned.url.clone().into(),
-                                                                variant: owned.variant.clone().into(),
-                                                                state: "INACTIVE".into(),
-                                                            });
-                                                        }
+                                                for owned in &owned_skins.skins {
+                                                    let file_path = account_skins_dir.join(&owned.file_name);
+                                                    if !all_skins.iter().any(|s| s.id.as_ref() == owned.skin_id.as_str()) {
+                                                        let local_path_str = if file_path.exists() {
+                                                            Some(file_path.to_string_lossy().to_string().into())
+                                                        } else {
+                                                            None
+                                                        };
+                                                        all_skins.push(MinecraftSkinInfo {
+                                                            id: owned.skin_id.clone().into(),
+                                                            url: Arc::from(format!("file://{}", file_path.to_string_lossy())),
+                                                            variant: owned.variant.clone().into(),
+                                                            state: "INACTIVE".into(),
+                                                            local_path: local_path_str,
+                                                        });
                                                     }
-                                                }
-                                                
-                                                // Update account head
-                                                if let Some(active_skin) = profile.skins.iter().find(|s| s.state == auth::models::SkinState::Active) {
-                                                    let skin_url = active_skin.url.to_string();
-                                                    let profile_id = profile.id;
-                                                    
-                                                    let client_for_head = client.clone();
-                                                    let head_cache_for_head = head_cache.clone();
-                                                    let account_info_for_head = account_info.clone();
-                                                    
-                                                    tokio::spawn(async move {
-                                                        if let Ok(resp) = client_for_head.get(&skin_url).send().await {
-                                                            if let Ok(bytes) = resp.bytes().await {
-                                                                if let Ok(mut img) = image::load_from_memory(&bytes) {
-                                                                    let mut head = img.crop(8, 8, 8, 8);
-                                                                    let head_overlay = img.crop(40, 8, 8, 8);
-                                                                    image::imageops::overlay(&mut head, &head_overlay, 0, 0);
-                                                                    
-                                                                    let mut head_bytes = Vec::new();
-                                                                    let mut cursor = std::io::Cursor::new(&mut head_bytes);
-                                                                    if head.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
-                                                                        let head_png: Arc<[u8]> = Arc::from(head_bytes);
-                                                                        
-                                                                        let mut cache = head_cache_for_head.write();
-                                                                        cache.insert(skin_url.clone().into(), crate::backend::HeadCacheEntry::Success { head: head_png.clone() });
-                                                                        drop(cache);
-                                                                        
-                                                                        let mut acc_info = account_info_for_head.write();
-                                                                        acc_info.modify(move |info| {
-                                                                            if let Some(account) = info.accounts.get_mut(&profile_id) {
-                                                                                account.head = Some(head_png);
-                                                                            }
-                                                                        });
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    });
                                                 }
                                                 
                                                 let capes: Vec<MinecraftCapeInfo> = profile.capes.iter().map(|c| {
@@ -722,8 +800,6 @@ impl BackendState {
                                             }
                                         }
                                     }
-                                    
-                                    send.send(MessageToFrontend::CloseModal);
                                 },
                                 Ok(resp) => {
                                     let status = resp.status();
@@ -736,6 +812,7 @@ impl BackendState {
                                     send.send_error(Arc::from("Failed to set skin"));
                                 }
                             }
+                            send.send(MessageToFrontend::CloseModal);
                             modal_action.set_finished();
                         });
                     } else {
@@ -793,9 +870,7 @@ impl BackendState {
                         let send = self.send.clone();
                         let skin_data = skin_data.clone();
                         let skin_variant = skin_variant.clone();
-                        let owned_skins = self.owned_skins.clone();
-                        let head_cache = self.head_cache.clone();
-                        let account_info = self.account_info.clone();
+                        let directories = self.directories.clone();
                         tokio::spawn(async move {
                             let part = reqwest::multipart::Part::bytes(skin_data.to_vec())
                                 .file_name("skin.png")
@@ -819,7 +894,7 @@ impl BackendState {
                                         message: Arc::from("Skin uploaded successfully!"),
                                     });
                                     
-                                    // Fetch updated profile to get the new skin URL
+                                    // Reload profile to get updated skin list
                                     let profile_response = client
                                         .get("https://api.minecraftservices.com/minecraft/profile")
                                         .bearer_auth(minecraft_token.secret())
@@ -829,31 +904,55 @@ impl BackendState {
                                     if let Ok(resp) = profile_response {
                                         if resp.status() == StatusCode::OK {
                                             if let Ok(profile) = serde_json::from_slice::<MinecraftProfileResponse>(&resp.bytes().await.unwrap_or_default()) {
-                                                // Save the uploaded skin to local storage
-                                                if let Some(active_skin) = profile.skins.iter().find(|s| s.state == auth::models::SkinState::Active) {
+                                                let account_dir_name = profile.name.to_string();
+                                                let account_skins_dir = directories.owned_skins_dir.join(&account_dir_name);
+                                                let owned_skins_json = account_skins_dir.join("owned_skins.json");
+                                                
+                                                let _ = tokio::fs::create_dir_all(&account_skins_dir).await;
+                                                
+                                                let mut owned_skins: crate::backend::OwnedSkins = if owned_skins_json.exists() {
+                                                    match tokio::fs::read_to_string(&owned_skins_json).await {
+                                                        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                                                        Err(_) => crate::backend::OwnedSkins::default(),
+                                                    }
+                                                } else {
+                                                    crate::backend::OwnedSkins::default()
+                                                };
+                                                
+                                                for skin in &profile.skins {
+                                                    let skin_id = skin.id.map(|id| id.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                                                    let file_name = format!("{}.png", skin_id);
+                                                    let file_path = account_skins_dir.join(&file_name);
+                                                    
+                                                    if !file_path.exists() {
+                                                        let skin_url_str: String = (&*skin.url).to_string();
+                                                        if let Ok(resp) = client.get(&skin_url_str).send().await {
+                                                            if let Ok(bytes) = resp.bytes().await {
+                                                                let _ = tokio::fs::write(&file_path, &bytes).await;
+                                                            }
+                                                        }
+                                                    }
+                                                    
                                                     let owned_skin = crate::backend::OwnedSkin {
-                                                        url: active_skin.url.to_string(),
-                                                        variant: match active_skin.variant {
+                                                        id: skin_id.clone(),
+                                                        file_name: file_name.clone(),
+                                                        variant: match skin.variant {
                                                             auth::models::SkinVariant::Classic => "CLASSIC".to_string(),
                                                             auth::models::SkinVariant::Slim => "SLIM".to_string(),
                                                             auth::models::SkinVariant::Other => "OTHER".to_string(),
                                                         },
-                                                        skin_id: active_skin.id.map(|id| id.to_string()).unwrap_or_default(),
-                                                        thumbnail_front: None,
-                                                        thumbnail_back: None,
+                                                        skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                                     };
                                                     
-                                                    {
-                                                        let mut local = owned_skins.write();
-                                                        local.modify(|data| {
-                                                            if !data.skins.iter().any(|s| s.url == owned_skin.url) {
-                                                                data.skins.push(owned_skin);
-                                                            }
-                                                        });
+                                                    if !owned_skins.skins.iter().any(|s| s.id == owned_skin.id) {
+                                                        owned_skins.skins.push(owned_skin);
                                                     }
                                                 }
                                                 
-                                                // Merge with locally stored skins
+                                                if let Ok(json) = serde_json::to_string_pretty(&owned_skins) {
+                                                    let _ = tokio::fs::write(&owned_skins_json, json).await;
+                                                }
+                                                
                                                 let mut all_skins: Vec<MinecraftSkinInfo> = profile.skins.iter().map(|s| {
                                                     MinecraftSkinInfo {
                                                         id: s.id.map(|id| format!("{}", id)).unwrap_or_default().into(),
@@ -867,21 +966,25 @@ impl BackendState {
                                                             auth::models::SkinState::Active => "ACTIVE".into(),
                                                             auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                         },
+                                                        local_path: None,
                                                     }
                                                 }).collect();
                                                 
-                                                {
-                                                    let mut local = owned_skins.write();
-                                                    let data = local.get();
-                                                    for owned in &data.skins {
-                                                        if !all_skins.iter().any(|s| s.url.as_ref() == owned.url.as_str()) {
-                                                            all_skins.push(MinecraftSkinInfo {
-                                                                id: owned.skin_id.clone().into(),
-                                                                url: owned.url.clone().into(),
-                                                                variant: owned.variant.clone().into(),
-                                                                state: "INACTIVE".into(),
-                                                            });
-                                                        }
+                                                for owned in &owned_skins.skins {
+                                                    let file_path = account_skins_dir.join(&owned.file_name);
+                                                    if !all_skins.iter().any(|s| s.id.as_ref() == owned.skin_id.as_str()) {
+                                                        let local_path_str = if file_path.exists() {
+                                                            Some(file_path.to_string_lossy().to_string().into())
+                                                        } else {
+                                                            None
+                                                        };
+                                                        all_skins.push(MinecraftSkinInfo {
+                                                            id: owned.skin_id.clone().into(),
+                                                            url: Arc::from(format!("file://{}", file_path.to_string_lossy())),
+                                                            variant: owned.variant.clone().into(),
+                                                            state: "INACTIVE".into(),
+                                                            local_path: local_path_str,
+                                                        });
                                                     }
                                                 }
                                                 
@@ -892,45 +995,6 @@ impl BackendState {
                                                     }
                                                 }).collect();
                                                 
-                                                // Update account head
-                                                if let Some(active_skin) = profile.skins.iter().find(|s| s.state == auth::models::SkinState::Active) {
-                                                    let skin_url = active_skin.url.to_string();
-                                                    let profile_id = profile.id;
-                                                    
-                                                    let client_for_head = client.clone();
-                                                    let head_cache_for_head = head_cache.clone();
-                                                    let account_info_for_head = account_info.clone();
-                                                    
-                                                    tokio::spawn(async move {
-                                                        if let Ok(resp) = client_for_head.get(&skin_url).send().await {
-                                                            if let Ok(bytes) = resp.bytes().await {
-                                                                if let Ok(mut img) = image::load_from_memory(&bytes) {
-                                                                    let mut head = img.crop(8, 8, 8, 8);
-                                                                    let head_overlay = img.crop(40, 8, 8, 8);
-                                                                    image::imageops::overlay(&mut head, &head_overlay, 0, 0);
-                                                                    
-                                                                    let mut head_bytes = Vec::new();
-                                                                    let mut cursor = std::io::Cursor::new(&mut head_bytes);
-                                                                    if head.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
-                                                                        let head_png: Arc<[u8]> = Arc::from(head_bytes);
-                                                                        
-                                                                        let mut cache = head_cache_for_head.write();
-                                                                        cache.insert(skin_url.clone().into(), crate::backend::HeadCacheEntry::Success { head: head_png.clone() });
-                                                                        drop(cache);
-                                                                        
-                                                                        let mut acc_info = account_info_for_head.write();
-                                                                        acc_info.modify(move |info| {
-                                                                            if let Some(account) = info.accounts.get_mut(&profile_id) {
-                                                                                account.head = Some(head_png);
-                                                                            }
-                                                                        });
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                                
                                                 let info = MinecraftProfileInfo {
                                                     id: profile.id,
                                                     name: profile.name,
@@ -938,12 +1002,10 @@ impl BackendState {
                                                     capes,
                                                 };
                                                 send.send(MessageToFrontend::MinecraftProfileResult { profile: info });
+                                                send.send(MessageToFrontend::Refresh);
                                             }
                                         }
                                     }
-                                    
-                                    send.send(MessageToFrontend::Refresh);
-                                    send.send(MessageToFrontend::CloseModal);
                                 },
                                 Ok(resp) => {
                                     let status = resp.status();
@@ -956,6 +1018,7 @@ impl BackendState {
                                     send.send_error(Arc::from("Failed to upload skin"));
                                 }
                             }
+                            send.send(MessageToFrontend::CloseModal);
                             modal_action.set_finished();
                         });
                     } else {

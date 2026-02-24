@@ -17,7 +17,7 @@ use gpui_component::{
 
 use crate::{
     component::skin_renderer::SkinRenderer,
-    entity::{account::AccountEntries, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
+    entity::{account::{AccountEntries, AccountChanged}, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
     ui,
     modals::upload_skin_modal,
 };
@@ -37,6 +37,7 @@ pub struct SkinsPage {
     state: SkinPageState,
     selected_skin_id: Option<Arc<str>>,
     _subscription: Subscription,
+    _account_subscription: Subscription,
     _get_profile_task: Task<()>,
     pub skin_renderer: Entity<SkinRenderer>,
     _download_active_skin_task: Option<Task<()>>,
@@ -62,6 +63,12 @@ impl SkinsPage {
             cx.notify();
         });
 
+        let _account_subscription = cx.subscribe::<_, AccountChanged>(&data.accounts, |this, _, _, cx| {
+            this.load_profile(cx);
+            this.update_skin_renderer(cx);
+            cx.notify();
+        });
+
         let mut page = Self {
             backend_handle: data.backend_handle.clone(),
             minecraft_profile: data.minecraft_profile.clone(),
@@ -70,6 +77,7 @@ impl SkinsPage {
             state,
             selected_skin_id: None,
             _subscription,
+            _account_subscription,
             _get_profile_task: Task::ready(()),
             skin_renderer: cx.new(|_| SkinRenderer::new(None, false)),
             _download_active_skin_task: None,
@@ -210,43 +218,65 @@ impl SkinsPage {
             let mut urls_to_load: Vec<(String, Arc<str>, bool)> = Vec::new();
             let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
             for skin in &profile.skins {
-                let url = skin.url.to_string();
                 let is_slim = skin.variant.as_ref() == "SLIM";
                 
+                // Use local_path if available, otherwise use URL
+                let url_key = skin.url.to_string();
+                let load_url = if let Some(local) = &skin.local_path {
+                    format!("file://{}", local)
+                } else {
+                    url_key.clone()
+                };
+                
                 // Skip if already cached or loading
-                if !thumbnail_cache.contains(&skin.url) && !self._thumbnail_tasks.contains_key(&skin.url) {
-                    urls_to_load.push((url.clone(), skin.url.clone(), is_slim));
+                let url_key_arc: Arc<str> = url_key.clone().into();
+                if !thumbnail_cache.contains(url_key.as_str()) && !self._thumbnail_tasks.contains_key(&url_key_arc) {
+                    urls_to_load.push((load_url.clone(), url_key_arc.clone(), is_slim));
                 }
             }
             let _ = thumbnail_cache;
 
             // Load thumbnails
-            for (url_string, url_arc, is_slim) in urls_to_load {
+            for (load_url, cache_key, is_slim) in urls_to_load {
                 let client = cx.http_client();
-                let url_clone = url_arc.clone();
+                let cache_key_clone = cache_key.clone();
                 let cache = self.skin_thumbnail_cache.clone();
                 let task = cx.spawn(async move |this, cx| {
-                    if let Ok(mut response) = client.get(&url_string, ().into(), true).await {
-                        use futures::AsyncReadExt;
-                        let mut bytes = Vec::new();
-                        if response.body_mut().read_to_end(&mut bytes).await.is_ok() {
-                            let data: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
-                            let renderer = SkinRenderer::new(Some(data), is_slim);
-                            let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
-                            let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
-                            
-                            if let (Some(f), Some(b)) = (front, back) {
-                                let _ = this.update(cx, |this, cx| {
-                                    this.skin_thumbnail_cache.update(cx, |cache, _| {
-                                        cache.insert(url_clone.clone(), f, b);
-                                    });
-                                    cx.notify();
-                                });
+                    let bytes: Option<Arc<[u8]>> = if load_url.starts_with("file://") {
+                        // Load from local file
+                        let path = &load_url[7..]; // Remove "file://" prefix
+                        std::fs::read(path).ok().map(|b| Arc::from(b.into_boxed_slice()))
+                    } else {
+                        // Load from URL
+                        if let Ok(mut response) = client.get(&load_url, ().into(), true).await {
+                            use futures::AsyncReadExt;
+                            let mut bytes = Vec::new();
+                            if response.body_mut().read_to_end(&mut bytes).await.is_ok() {
+                                Some(Arc::from(bytes.into_boxed_slice()))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
+                        }
+                    };
+                    
+                    if let Some(data) = bytes {
+                        let renderer = SkinRenderer::new(Some(data), is_slim);
+                        let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
+                        let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
+                        
+                        if let (Some(f), Some(b)) = (front, back) {
+                            let _ = this.update(cx, |this, cx| {
+                                this.skin_thumbnail_cache.update(cx, |cache, _| {
+                                    cache.insert(cache_key_clone.clone(), f, b);
+                                });
+                                cx.notify();
+                            });
                         }
                     }
                 });
-                self._thumbnail_tasks.insert(url_arc, task);
+                self._thumbnail_tasks.insert(cache_key, task);
             }
         }
     }

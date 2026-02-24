@@ -302,6 +302,7 @@ pub struct MinecraftSkinInfo {
     pub url: Arc<str>,
     pub variant: Arc<str>,
     pub state: Arc<str>,
+    pub local_path: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone)]

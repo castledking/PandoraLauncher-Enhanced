@@ -1639,10 +1639,12 @@ impl Render for ModrinthSearchPage {
             )
             .into_any_element();
 
-        let parameters = h_flex().h_full().min_h_0().flex_1().overflow_y_scrollbar().child(
-            v_flex()
-                .h_full()
-                .gap_3()
+        let parameters = h_flex()
+            .h_full()
+            .min_h_0()
+            .flex_1()
+            .overflow_y_scrollbar()
+            .child(v_flex().h_full().min_w(px(170.0)).gap_3()
                 .child(type_button_group)
                 .when_some(loader_button_group, |this, group| this.child(group))
                 .child(category),

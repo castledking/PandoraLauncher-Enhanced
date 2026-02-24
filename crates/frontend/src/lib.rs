@@ -327,10 +327,10 @@ pub(crate) fn is_single_component_path(path: &str) -> bool {
 }
 
 #[inline]
-pub(crate) fn labelled(label: &'static str, element: impl IntoElement) -> Div {
+pub(crate) fn labelled(label: impl Into<SharedString>, element: impl IntoElement) -> Div {
     gpui_component::v_flex()
         .gap_0p5()
-        .child(div().text_sm().font_medium().child(label))
+        .child(div().text_sm().font_medium().child(label.into()))
         .child(element)
 }
 

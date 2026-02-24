@@ -1301,6 +1301,7 @@ impl BackendState {
                     linux_wrapper: config.linux_wrapper.clone(),
                     system_libraries: config.system_libraries.clone(),
                     instance_fallback_icon: config.instance_fallback_icon,
+                    disable_file_syncing: config.disable_file_syncing,
                 };
                 crate::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
             }

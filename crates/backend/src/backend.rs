@@ -1178,7 +1178,7 @@ impl BackendState {
                     self.send.send_error("Unable to apply icon: unknown format");
                 }
             },
-            None => todo!(),
+            None => {},
         }
 
         let info_path = instance_dir.join("info_v1.json");

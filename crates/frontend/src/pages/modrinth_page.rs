@@ -60,17 +60,17 @@ fn show_vanilla_change_to_fabric_modal(
         let on_yes_for_button = on_yes_for_button.clone();
         let backend_handle = backend_handle.clone();
         dialog
-            .title(ts!("modrinth.install.vanilla_change_to_fabric.title"))
+            .title(ts!("instance.content.install.vanilla_change_to_fabric.title"))
             .child(
                 v_flex()
                     .gap_2()
-                    .child(ts!("modrinth.install.vanilla_change_to_fabric.message"))
+                    .child(ts!("instance.content.install.vanilla_change_to_fabric.message"))
                     .child(
                         h_flex()
                             .gap_2()
                             .child(
                                 Button::new("yes")
-                                    .label(ts!("modrinth.install.vanilla_change_to_fabric.yes"))
+                                    .label(ts!("instance.content.install.vanilla_change_to_fabric.yes"))
                                     .success()
                                     .on_click(move |_, window, cx| {
                                         window.close_all_dialogs(cx);
@@ -85,7 +85,7 @@ fn show_vanilla_change_to_fabric_modal(
                             )
                             .child(
                                 Button::new("no")
-                                    .label(ts!("modrinth.install.vanilla_change_to_fabric.no"))
+                                    .label(ts!("instance.content.install.vanilla_change_to_fabric.no"))
                                     .on_click(|_, window, cx| {
                                         window.close_all_dialogs(cx);
                                     }),

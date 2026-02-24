@@ -86,6 +86,7 @@ pub fn open(
     data: &DataEntities,
     window: &mut Window,
     cx: &mut App,
+    loader_override: Option<Loader>,
 ) {
     let project_versions = FrontendMetadata::request(
         &data.metadata,
@@ -110,6 +111,7 @@ pub fn open(
         &project_versions,
         window,
         cx,
+        loader_override,
     ) {
         return;
     }
@@ -117,6 +119,7 @@ pub fn open(
     let _subscription = window.observe(&project_versions, cx, {
         let title = title.clone();
         let data = data.clone();
+        let loader_override = loader_override;
         move |project_versions, window, cx| {
             handle_project_versions(
                 &data,
@@ -128,6 +131,7 @@ pub fn open(
                 &project_versions,
                 window,
                 cx,
+                loader_override,
             );
         }
     });
@@ -159,6 +163,7 @@ fn handle_project_versions(
     project_versions: &Entity<FrontendMetadataState>,
     window: &mut Window,
     cx: &mut App,
+    loader_override: Option<Loader>,
 ) -> bool {
     let result: FrontendMetadataResult<ModrinthProjectVersionsResult> = project_versions.read(cx).result();
     match result {
@@ -170,7 +175,8 @@ fn handle_project_versions(
                 return true;
             };
             let configuration = instance.read(cx).configuration.clone();
-            let modrinth_loader = configuration.loader.as_modrinth_loader();
+            let effective_loader = loader_override.unwrap_or(configuration.loader);
+            let modrinth_loader = effective_loader.as_modrinth_loader();
             let is_mod = project_type == ModrinthProjectType::Mod || project_type == ModrinthProjectType::Modpack;
             let allow_all_versions =
                 project_type == ModrinthProjectType::Resourcepack || project_type == ModrinthProjectType::Shader;
@@ -195,7 +201,7 @@ fn handle_project_versions(
                     if !allow_all_versions && !game_versions.contains(&configuration.minecraft_version) {
                         return false;
                     }
-                    if is_mod && configuration.loader != Loader::Vanilla && !loaders.contains(&modrinth_loader) {
+                    if is_mod && effective_loader != Loader::Vanilla && !loaders.contains(&modrinth_loader) {
                         return false;
                     }
                     true
@@ -300,7 +306,7 @@ fn handle_project_versions(
 
             let content_install = ContentInstall {
                 target: InstallTarget::Instance(install_for),
-                loader_hint: configuration.loader,
+                loader_hint: effective_loader,
                 version_hint: Some(configuration.minecraft_version.into()),
                 files: files.into(),
             };

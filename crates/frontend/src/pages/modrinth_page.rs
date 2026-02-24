@@ -876,6 +876,7 @@ impl ModrinthSearchPage {
                                                             window,
                                                             cx,
                                                             None,
+                                                            Some(Loader::Fabric),
                                                         );
                                                     },
                                                     window,
@@ -890,6 +891,7 @@ impl ModrinthSearchPage {
                                                     &data,
                                                     window,
                                                     cx,
+                                                    None,
                                                     None,
                                                 );
                                             }
@@ -927,6 +929,7 @@ impl ModrinthSearchPage {
                                                             &data,
                                                             window,
                                                             cx,
+                                                            Some(Loader::Fabric),
                                                         );
                                                     },
                                                     window,
@@ -941,6 +944,7 @@ impl ModrinthSearchPage {
                                                     &data,
                                                     window,
                                                     cx,
+                                                    None,
                                                 );
                                             }
                                         }
@@ -998,6 +1002,7 @@ impl ModrinthSearchPage {
                                                                                 &data,
                                                                                 window,
                                                                                 cx,
+                                                                                Some(Loader::Fabric),
                                                                             );
                                                                         } else {
                                                                             crate::modals::modrinth_install::open_with_version(
@@ -1009,6 +1014,7 @@ impl ModrinthSearchPage {
                                                                                 window,
                                                                                 cx,
                                                                                 None,
+                                                                                Some(Loader::Fabric),
                                                                             );
                                                                         }
                                                                     },
@@ -1026,6 +1032,7 @@ impl ModrinthSearchPage {
                                                                         &data,
                                                                         window,
                                                                         cx,
+                                                                        Some(Loader::Fabric),
                                                                     );
                                                                 } else {
                                                                     crate::modals::modrinth_install::open_with_version(
@@ -1036,6 +1043,7 @@ impl ModrinthSearchPage {
                                                                         &data,
                                                                         window,
                                                                         cx,
+                                                                        None,
                                                                         None,
                                                                     );
                                                                 }

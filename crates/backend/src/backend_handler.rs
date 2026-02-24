@@ -510,11 +510,13 @@ impl BackendState {
                 }
             },
             MessageToBackend::SetInstanceLoader { id, loader } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                let mut instance_state = self.instance_state.write();
+                if let Some(instance) = instance_state.instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
+                    self.send.send(instance.create_modify_message());
                 }
             },
             MessageToBackend::SetInstancePreferredLoaderVersion { id, loader_version } => {

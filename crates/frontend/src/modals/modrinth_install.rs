@@ -76,6 +76,9 @@ struct InstallDialog {
 
     /// When set, the modal will pre-select this version (by id) in the version dropdown.
     selected_version_id: Option<Arc<str>>,
+
+    /// Override loader for content install (e.g. when user just switched vanilla->fabric).
+    loader_override: Option<Loader>,
 }
 
 pub fn open(
@@ -87,7 +90,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut App,
 ) {
-    open_with_version(name, project_id, project_type, install_for, data, window, cx, None);
+    open_with_version(name, project_id, project_type, install_for, data, window, cx, None, None);
 }
 
 pub fn open_with_version(
@@ -99,6 +102,7 @@ pub fn open_with_version(
     window: &mut Window,
     cx: &mut App,
     selected_version_id: Option<Arc<str>>,
+    loader_override: Option<Loader>,
 ) {
     let project_versions = FrontendMetadata::request(
         &data.metadata,
@@ -120,6 +124,7 @@ pub fn open_with_version(
         window,
         cx,
         selected_version_id,
+        loader_override,
     );
 }
 
@@ -133,12 +138,14 @@ fn open_from_entity(
     window: &mut Window,
     cx: &mut App,
     selected_version_id: Option<Arc<str>>,
+    loader_override: Option<Loader>,
 ) {
     let title = SharedString::new(format!("Install {}", name));
 
     let result: FrontendMetadataResult<ModrinthProjectVersionsResult> = project_versions.read(cx).result();
     match result {
         FrontendMetadataResult::Loading => {
+            let loader_override = loader_override;
             let _subscription = window.observe(&project_versions, cx, move |project_versions, window, cx| {
                 window.close_all_dialogs(cx);
                 open_from_entity(
@@ -151,6 +158,7 @@ fn open_from_entity(
                     window,
                     cx,
                     selected_version_id.clone(),
+                    loader_override,
                 );
             });
             window.open_dialog(cx, move |dialog, _, _| {
@@ -249,7 +257,9 @@ fn open_from_entity(
 
                 let title = title.clone();
                 let instance_id = instance.id;
-                let fixed_loader = if (project_type == ModrinthProjectType::Mod
+                let fixed_loader = if let Some(override_loader) = loader_override {
+                    Some(override_loader.as_modrinth_loader())
+                } else if (project_type == ModrinthProjectType::Mod
                     || project_type == ModrinthProjectType::Modpack)
                     && instance_loader != Loader::Vanilla
                 {
@@ -278,6 +288,7 @@ fn open_from_entity(
                     mod_version_select_state: None,
                     last_selected_loader: None,
                     selected_version_id: selected_version_id.clone(),
+                    loader_override,
                 };
                 install_dialog.show(window, cx);
             } else {
@@ -340,6 +351,7 @@ fn open_from_entity(
                     mod_version_select_state: None,
                     last_selected_loader: None,
                     selected_version_id: selected_version_id.clone(),
+                    loader_override: None,
                 };
                 install_dialog.show(window, cx);
             }
@@ -742,7 +754,9 @@ impl InstallDialog {
                             let mut target = this.target.clone().unwrap();
 
                             let mut loader_hint = Loader::Unknown;
-                            if let Some(selected_loader) = &selected_loader {
+                            if let Some(override_loader) = this.loader_override {
+                                loader_hint = override_loader;
+                            } else if let Some(selected_loader) = &selected_loader {
                                 let modrinth_loader = ModrinthLoader::from_name(selected_loader);
                                 match modrinth_loader {
                                     ModrinthLoader::Fabric => loader_hint = Loader::Fabric,

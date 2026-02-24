@@ -10,6 +10,7 @@ use schema::{
     instance::{
         InstanceConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
         InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration, InstanceSystemLibrariesConfiguration,
+        InstanceWrapperCommandConfiguration,
     },
     loader::Loader,
     pandora_update::{UpdateManifest, UpdateManifestExe, UpdatePrompt},
@@ -69,6 +70,10 @@ pub enum MessageToBackend {
     SetInstanceMemory {
         id: InstanceID,
         memory: InstanceMemoryConfiguration,
+    },
+    SetInstanceWrapperCommand {
+        id: InstanceID,
+        wrapper_command: InstanceWrapperCommandConfiguration,
     },
     SetInstanceJvmFlags {
         id: InstanceID,

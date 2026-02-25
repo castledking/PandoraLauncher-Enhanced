@@ -16,6 +16,8 @@ use gpui_component::{
 };
 use image::ImageEncoder;
 
+use crate::component::skin_renderer::SkinRenderer;
+
 fn detect_skin_variant(bytes: &[u8]) -> &'static str {
     use image::GenericImageView;
     
@@ -26,15 +28,12 @@ fn detect_skin_variant(bytes: &[u8]) -> &'static str {
             return "CLASSIC";
         }
         
-        // Check arm region at x=54, y=20 (2x12 pixels)
-        // Classic arms: area at x=54 has pixels (4px wide arm extends there)
-        // Slim arms: area at x=54 is transparent (arm is at x=50, only 3px wide)
         let mut has_pixels = false;
         for y in 20..32 {
             for x in 54..56 {
                 if x < w as usize && y < h as usize {
                     let pixel = rgba.get_pixel(x as u32, y as u32);
-                    if pixel[3] != 0 { // alpha != 0
+                    if pixel[3] != 0 {
                         has_pixels = true;
                         break;
                     }
@@ -45,7 +44,6 @@ fn detect_skin_variant(bytes: &[u8]) -> &'static str {
             }
         }
         
-        // If pixels found in this region → Classic, otherwise → Slim
         if has_pixels { "CLASSIC" } else { "SLIM" }
     } else {
         "CLASSIC"
@@ -55,11 +53,15 @@ fn detect_skin_variant(bytes: &[u8]) -> &'static str {
 pub struct UploadSkinModal {
     backend_handle: BackendHandle,
     custom_skin_url: Entity<InputState>,
-    variant: Arc<str>,
+    variant_mode: Arc<str>,
+    detected_variant: Arc<str>,
     selected_file_data: Option<Arc<[u8]>>,
     selected_file_name: Option<SharedString>,
     upload_error: Option<SharedString>,
+    preview_front: Option<Arc<RenderImage>>,
+    preview_back: Option<Arc<RenderImage>>,
     _select_file_task: Task<()>,
+    _preview_task: Task<()>,
 }
 
 impl UploadSkinModal {
@@ -74,12 +76,41 @@ impl UploadSkinModal {
         Self {
             backend_handle,
             custom_skin_url,
-            variant: "CLASSIC".into(),
+            variant_mode: "AUTO".into(),
+            detected_variant: "CLASSIC".into(),
             selected_file_data: None,
             selected_file_name: None,
             upload_error: None,
+            preview_front: None,
+            preview_back: None,
             _select_file_task: Task::ready(()),
+            _preview_task: Task::ready(()),
         }
+    }
+
+    fn effective_variant(&self) -> Arc<str> {
+        match self.variant_mode.as_ref() {
+            "AUTO" => self.detected_variant.clone(),
+            other => other.into(),
+        }
+    }
+
+    fn generate_preview(&mut self, skin_data: Arc<[u8]>, cx: &mut Context<Self>) {
+        let is_slim = self.effective_variant().as_ref() == "SLIM";
+        let this_entity = cx.entity();
+        self._preview_task = cx.spawn(async move |_, cx| {
+            let renderer = SkinRenderer::new(Some(skin_data), is_slim);
+            let front = renderer.render_to_buffer_with_params(200, 200, 0.3, 0.05, true);
+            let back = renderer.render_to_buffer_with_params(200, 200, std::f32::consts::PI + 0.3, 0.05, true);
+
+            if let (Some(f), Some(b)) = (front, back) {
+                let _ = this_entity.update(cx, |this, cx| {
+                    this.preview_front = Some(f);
+                    this.preview_back = Some(b);
+                    cx.notify();
+                });
+            }
+        });
     }
 
     fn select_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -110,17 +141,28 @@ impl UploadSkinModal {
             if (w == 64 && h == 64) || (w == 64 && h == 32) {
                 let mut png_data = Vec::new();
                 let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
-                encoder.write_image(&img.to_rgba8(), w, h, image::ExtendedColorType::Rgba8).unwrap();
+                if let Err(err) = encoder.write_image(&img.to_rgba8(), w, h, image::ExtendedColorType::Rgba8) {
+                    let _ = cx.update_window_entity(&this_entity, move |this, _, cx| {
+                        this.upload_error = Some(format!("Failed to process image: {err}").into());
+                        cx.notify();
+                    });
+                    return;
+                }
                 let data: Arc<[u8]> = Arc::from(png_data);
                 
-                // Auto-detect skin variant
                 let detected_variant = detect_skin_variant(&bytes);
                 
                 let _ = cx.update_window_entity(&this_entity, move |this, _window, cx| {
-                    this.selected_file_data = Some(data);
+                    this.selected_file_data = Some(data.clone());
                     this.selected_file_name = Some(file_name.into());
-                    this.variant = detected_variant.into();
+                    this.detected_variant = detected_variant.into();
+                    if this.variant_mode.as_ref() == "AUTO" {
+                        this.variant_mode = this.detected_variant.clone();
+                    }
                     this.upload_error = None;
+                    this.preview_front = None;
+                    this.preview_back = None;
+                    this.generate_preview(data, cx);
                     cx.notify();
                 });
             } else {
@@ -133,22 +175,43 @@ impl UploadSkinModal {
     }
 
     pub fn render(&mut self, modal: Dialog, _window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+        let has_preview = self.preview_front.is_some();
+
         let variant_buttons = h_flex()
             .gap_2()
+            .when(!has_preview, |this| {
+                this.child(
+                    Button::new("variant-auto")
+                        .label("Auto")
+                        .when(self.variant_mode.as_ref() == "AUTO", |b| b.info())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.variant_mode = "AUTO".into();
+                            if let Some(data) = this.selected_file_data.clone() {
+                                this.generate_preview(data, cx);
+                            }
+                        })),
+                )
+            })
             .child(
                 Button::new("variant-classic")
-                    .label("Classic Model")
-                    .when(self.variant.as_ref() == "CLASSIC", |b| b.info())
-                    .on_click(cx.listener(|this, _, _, _| {
-                        this.variant = "CLASSIC".into();
+                    .label("Classic")
+                    .when(self.variant_mode.as_ref() == "CLASSIC", |b| b.info())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.variant_mode = "CLASSIC".into();
+                        if let Some(data) = this.selected_file_data.clone() {
+                            this.generate_preview(data, cx);
+                        }
                     })),
             )
             .child(
                 Button::new("variant-slim")
-                    .label("Slim Model")
-                    .when(self.variant.as_ref() == "SLIM", |b| b.info())
-                    .on_click(cx.listener(|this, _, _, _| {
-                        this.variant = "SLIM".into();
+                    .label("Slim")
+                    .when(self.variant_mode.as_ref() == "SLIM", |b| b.info())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.variant_mode = "SLIM".into();
+                        if let Some(data) = this.selected_file_data.clone() {
+                            this.generate_preview(data, cx);
+                        }
                     })),
             );
 
@@ -162,13 +225,68 @@ impl UploadSkinModal {
                         if !url.is_empty() {
                             this.backend_handle.send(MessageToBackend::SetSkin {
                                 skin_url: url.into(),
-                                skin_variant: this.variant.clone(),
+                                skin_variant: this.effective_variant(),
                                 modal_action: ModalAction::default(),
                             });
                         }
                     })),
                 ),
             );
+
+        let preview_widget = if let Some(front) = &self.preview_front {
+            let front_img = front.clone();
+            let back_img = self.preview_back.clone();
+            Some(
+                div()
+                    .id("skin-preview")
+                    .w(px(120.0))
+                    .h(px(120.0))
+                    .rounded_lg()
+                    .bg(gpui::rgba(0x2d2d35ff))
+                    .overflow_hidden()
+                    .flex_shrink_0()
+                    .group("preview-card")
+                    .child(
+                        div()
+                            .size_full()
+                            .group_hover("preview-card", |style| style.invisible())
+                            .child(
+                                canvas(
+                                    move |_, _, _| (),
+                                    {
+                                        let img = front_img.clone();
+                                        move |bounds, _, window, _| {
+                                            let _ = window.paint_image(bounds, gpui::Corners::default(), img.clone(), 0, false);
+                                        }
+                                    },
+                                )
+                                .size_full(),
+                            ),
+                    )
+                    .when_some(back_img, |this, back| {
+                        this.child(
+                            div()
+                                .size_full()
+                                .absolute()
+                                .inset_0()
+                                .invisible()
+                                .group_hover("preview-card", |style| style.visible())
+                                .child(
+                                    canvas(
+                                        move |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            let _ = window.paint_image(bounds, gpui::Corners::default(), back.clone(), 0, false);
+                                        },
+                                    )
+                                    .size_full(),
+                                ),
+                        )
+                    })
+                    .relative()
+            )
+        } else {
+            None
+        };
 
         let file_section = v_flex()
             .gap_2()
@@ -206,7 +324,7 @@ impl UploadSkinModal {
                                 if let Some(data) = &this.selected_file_data {
                                     this.backend_handle.send(MessageToBackend::UploadSkin {
                                         skin_data: data.clone(),
-                                        skin_variant: this.variant.clone(),
+                                        skin_variant: this.effective_variant(),
                                         modal_action: ModalAction::default(),
                                     });
                                 }
@@ -220,7 +338,16 @@ impl UploadSkinModal {
                 v_flex()
                     .gap_6()
                     .child(
-                        v_flex().gap_2().child(div().text_sm().child("Model Type")).child(variant_buttons)
+                        h_flex()
+                            .gap_4()
+                            .child(
+                                v_flex().gap_2().flex_1()
+                                    .child(div().text_sm().child("Model Type"))
+                                    .child(variant_buttons)
+                            )
+                            .when_some(preview_widget, |this, preview| {
+                                this.child(preview)
+                            })
                     )
                     .child(url_section)
                     .child(file_section)

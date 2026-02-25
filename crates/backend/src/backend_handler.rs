@@ -177,6 +177,7 @@ impl BackendState {
                                         skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                         url: Some(skin_url_str.clone()),
                                         texture_key: texture_key.clone(),
+                                        model_type: None,
                                     };
                                     let already_have = owned_skins.skins.iter().any(|s| {
                                         s.file_name == owned_skin.file_name
@@ -204,10 +205,19 @@ impl BackendState {
                         }
                     }
 
-                    let part = reqwest::multipart::Part::bytes(skin_data.to_vec())
+                    let part = match reqwest::multipart::Part::bytes(skin_data.to_vec())
                         .file_name("skin.png")
                         .mime_str("image/png")
-                        .unwrap();
+                    {
+                        Ok(part) => part,
+                        Err(err) => {
+                            log::error!("Failed to build multipart skin upload payload: {}", err);
+                            send.send_error(Arc::from("Failed to prepare skin upload"));
+                            send.send(MessageToFrontend::CloseModal);
+                            modal_action.set_finished();
+                            return;
+                        }
+                    };
                     let variant_api = skin_variant.to_lowercase();
                     let form = reqwest::multipart::Form::new()
                         .text("variant", variant_api)
@@ -281,6 +291,7 @@ impl BackendState {
                                                 skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                                 url: Some(skin_url_str.clone()),
                                                 texture_key: texture_key.clone(),
+                                                model_type: None,
                                             };
 
                                             let already_have = owned_skins.skins.iter().any(|s| {
@@ -324,6 +335,7 @@ impl BackendState {
                                                     auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                 },
                                                 local_path: None,
+                                                model_type: None,
                                             }
                                         }).collect();
 
@@ -343,6 +355,7 @@ impl BackendState {
                                                     variant: owned.variant.clone().into(),
                                                     state: "INACTIVE".into(),
                                                     local_path: local_path_str,
+                                                    model_type: owned.model_type.clone().map(Arc::from),
                                                 });
                                             }
                                         }
@@ -611,7 +624,14 @@ impl BackendState {
                     }
                 };
 
-                if modal_action.error.read().unwrap().is_some() {
+                let has_modal_error = match modal_action.error.read() {
+                    Ok(error) => error.is_some(),
+                    Err(_) => {
+                        log::error!("Modal error lock poisoned while launching instance");
+                        true
+                    },
+                };
+                if has_modal_error {
                     modal_action.set_finished();
                     self.send.send(MessageToFrontend::Refresh);
                     return;
@@ -927,6 +947,7 @@ impl BackendState {
                                                     skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                                     url: Some(skin_url_str.clone()),
                                                     texture_key: texture_key.clone(),
+                                                    model_type: None,
                                                 };
                                                 
                                                 let already_have = owned_skins.skins.iter().any(|s| {
@@ -977,6 +998,7 @@ impl BackendState {
                                                                 skin_id: file_stem.to_string(),
                                                                 url: None,
                                                                 texture_key: None,
+                                                                model_type: Some(variant.to_string()),
                                                             });
                                                         }
                                                     }
@@ -1005,6 +1027,7 @@ impl BackendState {
                                                         auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                     },
                                                     local_path: None,
+                                                    model_type: None,
                                                 }
                                             }).collect();
                                             
@@ -1024,6 +1047,7 @@ impl BackendState {
                                                     variant: owned.variant.clone().into(),
                                                     state: "INACTIVE".into(),
                                                     local_path: local_path_str,
+                                                    model_type: owned.model_type.clone().map(Arc::from),
                                                 });
                                             }
                                         }
@@ -1177,6 +1201,7 @@ impl BackendState {
                                                 skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                                 url: Some(skin_url_str.clone()),
                                                 texture_key: texture_key.clone(),
+                                                model_type: None,
                                             };
                                             let already_have = owned_skins.skins.iter().any(|s| {
                                                 s.file_name == owned_skin.file_name
@@ -1283,6 +1308,7 @@ impl BackendState {
                                                         skin_id: skin.id.map(|id| id.to_string()).unwrap_or_default(),
                                                         url: Some(skin_url_str.clone()),
                                                         texture_key: texture_key.clone(),
+                                                        model_type: None,
                                                     };
                                                     
                                                     let already_have = owned_skins.skins.iter().any(|s| {
@@ -1328,6 +1354,7 @@ impl BackendState {
                                                             auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                         },
                                                         local_path: None,
+                                                        model_type: None,
                                                     }
                                                 }).collect();
                                                 
@@ -1347,6 +1374,7 @@ impl BackendState {
                                                             variant: owned.variant.clone().into(),
                                                             state: "INACTIVE".into(),
                                                             local_path: local_path_str,
+                                                            model_type: owned.model_type.clone().map(Arc::from),
                                                         });
                                                     }
                                                 }
@@ -1517,6 +1545,7 @@ impl BackendState {
                                                             auth::models::SkinState::Inactive => "INACTIVE".into(),
                                                         },
                                                         local_path: None,
+                                                        model_type: None,
                                                     }
                                                 }).collect();
                                                 let info = MinecraftProfileInfo {

@@ -196,6 +196,9 @@ pub struct OwnedSkin {
     /// Stable texture hash from URL (last path segment). skin.id changes every equip - use this for dedup.
     #[serde(default)]
     pub texture_key: Option<String>,
+    /// Auto-detected or user-selected model type for 3D rendering (SLIM or CLASSIC)
+    #[serde(default)]
+    pub model_type: Option<String>,
 }
 
 pub enum HeadCacheEntry {

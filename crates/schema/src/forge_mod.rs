@@ -21,12 +21,17 @@ pub struct ModsTomlMod {
 
 #[derive(Deserialize, Debug)]
 pub struct JarJarMetadata {
-    pub jars: Vec<JarJarMetadataJar>
+    pub jars: Vec<JarJarMetadataJar>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct JarJarMetadataJar {
     pub path: Arc<str>,
+    /// Newer jarjar format includes these; we only need path for loading
+    #[serde(default)]
+    pub identifier: Option<serde_json::Value>,
+    #[serde(default)]
+    pub version: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug)]

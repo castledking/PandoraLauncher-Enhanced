@@ -328,6 +328,10 @@ impl BackendState {
                         if let Some(replace) = install.replace {
                             self.replace_aux_path(&replace, &install.mod_summary, &target_path);
                             let _ = std::fs::remove_file(replace);
+                        } else if let Some(mod_summary) = &install.mod_summary {
+                            if let Some(aux_path) = crate::pandora_aux_path(&mod_summary.id, &mod_summary.name, &target_path) {
+                                let _ = std::fs::remove_file(&aux_path);
+                            }
                         }
                         let _ = std::fs::hard_link(install.from, target_path);
                     }

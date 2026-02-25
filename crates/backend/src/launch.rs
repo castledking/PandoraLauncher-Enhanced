@@ -2181,25 +2181,6 @@ impl LaunchContext {
             }
         }
 
-        if !self.add_mods.is_empty() {
-            match self.configuration.loader {
-                Loader::Vanilla => {},
-                Loader::Fabric => {
-                    let mods = std::env::join_paths(self.add_mods).unwrap();
-
-                    stdin_arguments.push_str("property\n");
-                    stdin_arguments.push_str("fabric.addMods\n");
-                    stdin_arguments.push_str(&mods.to_string_lossy());
-                    stdin_arguments.push('\n');
-                },
-                _ => {
-                    if cfg!(debug_assertions) {
-                        panic!("addMods was used for unsupported loader: {:?}", self.configuration.loader);
-                    }
-                }
-            }
-        }
-
         if let Some(system_libraries) = self.configuration.system_libraries {
             if system_libraries.override_glfw {
                 if let Some(path) = system_libraries.glfw.get_or_auto(&*AUTO_LIBRARY_PATH_GLFW) {

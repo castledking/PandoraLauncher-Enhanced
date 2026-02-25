@@ -723,7 +723,7 @@ impl BackendState {
                         let file_to_delete = instance.dot_minecraft_path.join(&*child_filename);
                         let mut paths_to_try = vec![file_to_delete.clone()];
                         if let (Some(parent), Some(filename)) = (file_to_delete.parent(), file_to_delete.file_name()) {
-                            paths_to_try.push(parent.join(format!(".pandora.{}", filename.to_string_lossy())));
+                            paths_to_try.push(parent.join(format!("pandora.{}", filename.to_string_lossy())));
                         }
                         for path_to_try in paths_to_try {
                             if path_to_try.exists() {
@@ -735,7 +735,12 @@ impl BackendState {
                         }
                     }
 
-                    let Some(aux_path) = crate::pandora_aux_path_for_content(instance_mod) else {
+                    let current_content_path = instance.content_state[folder].path.join(&*instance_mod.filename);
+                    let Some(aux_path) = crate::pandora_aux_path(
+                        &instance_mod.content_summary.id,
+                        &instance_mod.content_summary.name,
+                        &current_content_path,
+                    ) else {
                         return;
                     };
 

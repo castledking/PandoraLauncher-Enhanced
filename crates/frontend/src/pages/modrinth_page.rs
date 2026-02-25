@@ -1032,7 +1032,7 @@ impl ModrinthSearchPage {
                                                                         &data,
                                                                         window,
                                                                         cx,
-                                                                        Some(Loader::Fabric),
+                                                                        None,
                                                                     );
                                                                 } else {
                                                                     crate::modals::modrinth_install::open_with_version(

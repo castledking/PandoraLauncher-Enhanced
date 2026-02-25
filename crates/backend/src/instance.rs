@@ -186,6 +186,7 @@ impl Instance {
 
         for content_folder in ContentFolder::iter() {
             self.content_state[content_folder].path = content_folder.path().to_path(&dot_minecraft_path).into();
+            self.content_state[content_folder].mark_dirty(None);
         }
 
         self.server_dat_path = dot_minecraft_path.join("servers.dat").into();
@@ -765,7 +766,7 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
     let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
         return None;
     };
-    if filename.starts_with(".pandora.") {
+    if filename.starts_with("pandora.") {
         return None;
     }
     let enabled = if filename.ends_with(".jar.disabled") || filename.ends_with(".mrpack.disabled") || filename.ends_with(".zip.disabled") {

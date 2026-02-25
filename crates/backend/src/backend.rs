@@ -791,14 +791,14 @@ impl BackendState {
 
         let loader_supports_add_mods = loader == Loader::Fabric;
 
-        // Remove .pandora.filename mods
+        // Remove pandora.filename mods
         if let Ok(read_dir) = std::fs::read_dir(&mod_dir) {
             for entry in read_dir {
                 let Ok(entry) = entry else {
                     continue;
                 };
                 let file_name = entry.file_name();
-                if file_name.to_string_lossy().starts_with(".pandora.") {
+                if file_name.to_string_lossy().starts_with("pandora.") {
                     log::trace!("Removing temporary mod file {:?}", &file_name);
                     _ = std::fs::remove_file(entry.path());
                 }
@@ -832,6 +832,7 @@ impl BackendState {
                     }
 
                     !summary.disabled_children.disabled_filenames.contains(&dl.path)
+                        && !summary.disabled_children.deleted_filenames.contains(&dl.path)
                 });
 
         let content_install = ContentInstall {
@@ -928,7 +929,7 @@ impl BackendState {
 
                 if file.path.starts_with("mods/") && file.path.ends_with(".jar") {
                     if let Some(filename) = dest_path.file_name() {
-                        let filename = format!(".pandora.{filename}");
+                        let filename = format!("pandora.{filename}");
                         let hidden_dest_path = mod_dir.join(&filename);
                         let _ = std::fs::hard_link(&path, &hidden_dest_path);
                         if loader_supports_add_mods {
@@ -971,7 +972,7 @@ impl BackendState {
 
                     if rel_path.starts_with("mods") && let Some(extension) = rel_path.extension() && extension == "jar" {
                         if let Some(filename) = rel_path.file_name() {
-                            let filename = format!(".pandora.{filename}");
+                            let filename = format!("pandora.{filename}");
                             let hidden_dest_path = mod_dir.join(&filename);
                             let _ = std::fs::hard_link(&path, &hidden_dest_path);
                             if loader_supports_add_mods {
@@ -1121,11 +1122,16 @@ impl BackendState {
     pub async fn create_instance_sanitized(&self, name: &str, version: &str, loader: Loader, icon: Option<EmbeddedOrRaw>) -> Option<PathBuf> {
         let mut name = sanitize_filename::sanitize_with_options(name, sanitize_filename::Options { windows: true, ..Default::default() });
 
-        if self.instance_state.read().instances.iter().any(|i| i.name == name) {
+        let is_name_taken = |n: &str| {
+            self.instance_state.read().instances.iter().any(|i| i.name == n)
+                || self.directories.instances_dir.join(n).exists()
+        };
+
+        if is_name_taken(&name) {
             let original_name = name.clone();
             for i in 1..32 {
                 let new_name = format!("{original_name} ({i})");
-                if !self.instance_state.read().instances.iter().any(|i| i.name == new_name) {
+                if !is_name_taken(&new_name) {
                     name = new_name;
                     break;
                 }
@@ -1253,6 +1259,9 @@ impl BackendState {
                 instance.name = name.into();
                 instance.content_state[ContentFolder::Mods].path = ContentFolder::Mods.path().to_path(&new_dot_minecraft).into();
                 instance.content_state[ContentFolder::ResourcePacks].path = ContentFolder::ResourcePacks.path().to_path(&new_dot_minecraft).into();
+                instance.content_state[ContentFolder::Mods].mark_dirty(None);
+                instance.content_state[ContentFolder::ResourcePacks].mark_dirty(None);
+                self.send.send(instance.create_modify_message());
             }
             instance_state.instance_by_path.insert(new_instance_dir_for_map, id);
         }
@@ -1381,8 +1390,21 @@ impl BackendState {
 
 impl BackendStateFileWatching {
     pub fn watch_filesystem(&mut self, path: Arc<Path>, target: WatchTarget) {
+        if !path.exists() {
+            // Paths with file extensions (e.g. servers.dat) are files - create parent only.
+            // Directory paths (.minecraft, mods, saves, etc.) - create the path itself.
+            if path.extension().is_some() {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            } else {
+                let _ = std::fs::create_dir_all(&path);
+            }
+        }
         let Ok(canonical) = path.canonicalize() else {
-            log::error!("Unable to watch {:?} because it could not be canonicalized", path);
+            // Non-existent files (e.g. servers.dat before first launch) - parent dir is already
+            // watched, so we'll pick up the watch when the file is created
+            log::debug!("Skipping watch for non-existent path {:?} (will watch when created)", path);
             return;
         };
         let canonical: Arc<Path> = if canonical == &*path {
@@ -1406,6 +1428,9 @@ impl BackendStateFileWatching {
     }
 
     pub fn watch_filesystem_recursive(&mut self, path: Arc<Path>, target: WatchTarget) {
+        if !path.exists() {
+            let _ = std::fs::create_dir_all(&path);
+        }
         let Ok(canonical) = path.canonicalize() else {
             log::error!("Unable to watch {:?} because it could not be canonicalized", path);
             return;

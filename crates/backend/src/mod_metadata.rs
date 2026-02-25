@@ -509,7 +509,7 @@ impl ModMetadataManager {
         let bytes = file.bytes().ok()?;
 
         let pack_mcmeta: PackMcmeta = serde_json::from_slice(&bytes).inspect_err(|e| {
-            log::error!("Error parsing jarjar/metadata.json: {e}");
+            log::error!("Error parsing pack.mcmeta: {e}");
         }).ok()?;
 
         drop(file);

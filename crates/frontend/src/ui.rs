@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     component::{menu::{MenuGroup, MenuGroupItem}, page_path::PagePath}, entity::{
         DataEntities, instance::{InstanceAddedEvent, InstanceEntries, InstanceModifiedEvent, InstanceMovedToTopEvent, InstanceRemovedEvent}
-    }, icon::PandoraIcon, interface_config::InterfaceConfig, modals, pages::{import::ImportPage, instance::instance_page::{InstancePage, InstanceSubpageType}, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, syncing_page::SyncingPage}, png_render_cache, root, ts
+    }, icon::PandoraIcon, interface_config::InterfaceConfig, modals, pages::{import::ImportPage, instance::instance_page::{InstancePage, InstanceSubpageType}, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, skins_page::SkinsPage, syncing_page::SyncingPage}, png_render_cache, root, ts
 };
 
 pub struct LauncherUI {
@@ -37,6 +37,7 @@ pub enum PageType {
     },
     Import,
     Syncing,
+    Skins,
     InstancePage(InstanceID, InstanceSubpageType),
 }
 
@@ -54,6 +55,7 @@ impl PageType {
             },
             PageType::Import => SerializedPageType::Import,
             PageType::Syncing => SerializedPageType::Syncing,
+            PageType::Skins => SerializedPageType::Skins,
             PageType::InstancePage(id, _) => {
                 if let Some(name) = InstanceEntries::find_name_by_id(&data.instances, *id, cx) {
                     SerializedPageType::InstancePage(name)
@@ -77,6 +79,7 @@ impl PageType {
             },
             SerializedPageType::Import => PageType::Import,
             SerializedPageType::Syncing => PageType::Syncing,
+            SerializedPageType::Skins => PageType::Skins,
             SerializedPageType::InstancePage(name) => {
                 if let Some(id) = InstanceEntries::find_id_by_name(&data.instances, name, cx) {
                     PageType::InstancePage(id, InstanceSubpageType::Quickplay)
@@ -98,6 +101,7 @@ pub enum SerializedPageType {
     },
     Import,
     Syncing,
+    Skins,
     InstancePage(SharedString),
 }
 
@@ -110,6 +114,7 @@ pub enum LauncherPage {
     },
     Import(Entity<ImportPage>),
     Syncing(Entity<SyncingPage>),
+    Skins(Entity<SkinsPage>),
     InstancePage(InstanceID, InstanceSubpageType, Entity<InstancePage>),
 }
 
@@ -120,6 +125,7 @@ impl LauncherPage {
             LauncherPage::Modrinth { page, .. } => page.into_any_element(),
             LauncherPage::Import(entity) => entity.into_any_element(),
             LauncherPage::Syncing(entity) => entity.into_any_element(),
+            LauncherPage::Skins(entity) => entity.into_any_element(),
             LauncherPage::InstancePage(_, _, entity) => entity.into_any_element(),
         }
     }
@@ -130,6 +136,7 @@ impl LauncherPage {
             LauncherPage::Modrinth { installing_for, .. } => PageType::Modrinth { installing_for: *installing_for, project_type: None },
             LauncherPage::Import(_) => PageType::Import,
             LauncherPage::Syncing(_) => PageType::Syncing,
+            LauncherPage::Skins(_) => PageType::Skins,
             LauncherPage::InstancePage(id, subpage, _) => PageType::InstancePage(*id, *subpage),
         }
     }
@@ -238,6 +245,9 @@ impl LauncherUI {
             PageType::Syncing => {
                 LauncherPage::Syncing(cx.new(|cx| SyncingPage::new(data, window, cx)))
             },
+            PageType::Skins => {
+                LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx)))
+            },
             PageType::InstancePage(id, subpage) => {
                 LauncherPage::InstancePage(id, subpage, cx.new(|cx| {
                     InstancePage::new(id, subpage, path, data, window, cx)
@@ -290,6 +300,11 @@ impl Render for LauncherUI {
                 .active(page_type == PageType::Syncing)
                 .on_click(cx.listener(|launcher, _, window, cx| {
                     launcher.switch_page(PageType::Syncing, &[], window, cx);
+                })))
+            .child(MenuGroupItem::new("Skins")
+                .active(page_type == PageType::Skins)
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Skins, &[], window, cx);
                 })));
 
         let mut groups: heapless::Vec<MenuGroup, 4> = heapless::Vec::new();

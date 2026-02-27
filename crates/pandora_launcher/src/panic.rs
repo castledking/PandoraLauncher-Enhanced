@@ -1,4 +1,9 @@
-use std::sync::Arc;
+use std::{
+    io::Write,
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use bridge::handle::FrontendHandle;
 use parking_lot::RwLock;
@@ -32,6 +37,7 @@ pub fn install_logging_hook() {
             },
             None => format!("Thread {} panicked\n{}\n{:?}", thread_name, payload, PrettyBacktrace(backtrace)),
         };
+        persist_panic_report(&message);
         log::error!("{}", message);
     }));
 }
@@ -65,6 +71,7 @@ pub fn install_hook(panic_message: Arc<RwLock<Option<String>>>, frontend_handle:
                 None => format!("Backend panicked\n{}\n{:?}", payload, PrettyBacktrace(backtrace)),
             };
 
+            persist_panic_report(&message);
             log::error!("{}", message);
             *panic_message.write() = Some(message);
             frontend_handle.send(bridge::message::MessageToFrontend::Refresh);
@@ -72,6 +79,22 @@ pub fn install_hook(panic_message: Arc<RwLock<Option<String>>>, frontend_handle:
             (old_hook)(info);
         }
     }));
+}
+
+fn persist_panic_report(message: &str) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let pid = std::process::id();
+    let report_dir: PathBuf = PathBuf::from("panic-reports");
+    let _ = std::fs::create_dir_all(&report_dir);
+    let file_name = format!("panic-{}-{}-{}.log", now.as_secs(), now.subsec_millis(), pid);
+    let path = report_dir.join(file_name);
+
+    if let Ok(mut file) = std::fs::OpenOptions::new().create_new(true).write(true).open(path) {
+        let _ = writeln!(file, "{}", message);
+        let _ = file.flush();
+    }
 }
 
 struct PrettyBacktrace(backtrace::Backtrace);

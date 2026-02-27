@@ -331,8 +331,6 @@ pub struct MinecraftSkinInfo {
     pub variant: Arc<str>,
     pub state: Arc<str>,
     pub local_path: Option<Arc<str>>,
-    /// Auto-detected or user-selected model type for 3D rendering (SLIM or CLASSIC)
-    pub model_type: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone)]

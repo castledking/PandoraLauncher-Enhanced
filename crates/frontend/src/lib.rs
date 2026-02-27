@@ -162,12 +162,17 @@ pub fn start(
         });
         let metadata = cx.new(|_| FrontendMetadata::new(backend_handle.clone()));
         let accounts = cx.new(|_| AccountEntries::default());
+        let minecraft_profile = cx.new(|_| crate::entity::minecraft_profile::MinecraftProfileEntries::default());
+        let skin_thumbnail_cache = cx.new(|_| crate::entity::skin_thumbnail_cache::SkinThumbnailCache::default());
         let data = DataEntities {
             instances,
             metadata,
             backend_handle,
             accounts,
+            minecraft_profile,
+            skin_thumbnail_cache,
             theme_folder: theme_folder.into(),
+            launcher_dir: launcher_dir.into(),
             panic_messages: Arc::new(PanicMessages {
                 panic_message,
                 deadlock_message,

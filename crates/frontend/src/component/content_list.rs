@@ -375,6 +375,7 @@ impl ContentListDelegate {
                                 child_name: child_name.clone(),
                                 child_filename: path.clone(),
                                 enabled: *checked,
+                                delete: false,
                             });
                         }
                     })

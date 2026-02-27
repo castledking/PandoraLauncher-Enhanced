@@ -16,9 +16,8 @@ use gpui_component::{
 };
 
 use crate::{
-    component::{cape_card, skin_renderer::SkinRenderer},
+    component::{cape_card, page::Page, skin_renderer::SkinRenderer},
     entity::{account::{AccountEntries, AccountChanged}, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
-    ui,
     modals::upload_skin_modal,
 };
 
@@ -193,7 +192,7 @@ impl SkinsPage {
 
             if let Some(active) = profile.skins.iter().find(|s| s.state.as_ref() == "ACTIVE") {
                 let url = active.url.to_string();
-                let is_slim = active.model_type.as_deref().unwrap_or(active.variant.as_ref()) == "SLIM";
+                let is_slim = active.variant.as_ref() == "SLIM";
                 if self.last_rendered_skin_url.as_deref() != Some(url.as_str()) {
                     self.last_rendered_skin_url = Some(url.clone());
                     let skin_renderer = self.skin_renderer.clone();
@@ -241,7 +240,7 @@ impl SkinsPage {
             let mut urls_to_load: Vec<(String, Arc<str>, bool)> = Vec::new();
             let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
             for skin in &profile.skins {
-                let is_slim = skin.model_type.as_deref().unwrap_or(skin.variant.as_ref()) == "SLIM";
+                let is_slim = skin.variant.as_ref() == "SLIM";
                 
                 // Use local_path if available, otherwise use URL
                 let url_key = skin.url.to_string();
@@ -317,7 +316,7 @@ impl SkinsPage {
                 } else {
                     skin_url.clone()
                 };
-                let is_slim = active_skin.model_type.as_deref().unwrap_or(active_skin.variant.as_ref()) == "SLIM";
+                let is_slim = active_skin.variant.as_ref() == "SLIM";
                 let thumbnail_cache = self.skin_thumbnail_cache.read(cx);
                 for cape in &profile.capes {
                     let cape_url: String = cape.url.to_string();
@@ -687,6 +686,6 @@ impl Render for SkinsPage {
             },
         });
 
-        ui::page(cx, h_flex().gap_8().child("Skins")).child(content.h_full())
+        Page::new(h_flex().gap_8().child("Skins")).child(content.h_full())
     }
 }

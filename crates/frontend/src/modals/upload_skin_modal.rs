@@ -352,7 +352,6 @@ impl UploadSkinModal {
                     .child(url_section)
                     .child(file_section)
             )
-            .confirm()
     }
 }
 

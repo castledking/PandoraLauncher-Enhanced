@@ -468,7 +468,8 @@ impl ModrinthSearchPage {
                                                     install_for.unwrap(),
                                                     &data,
                                                     window,
-                                                    cx
+                                                    cx,
+                                                    None,
                                                 );
                                             },
                                             PrimaryAction::CheckForUpdates => {

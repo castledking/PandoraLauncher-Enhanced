@@ -122,7 +122,7 @@ impl InstanceList {
                 let backend_handle = backend_handle.clone();
                 crate::modals::select_icon::open_select_icon(
                     Box::new(move |icon, cx| {
-                        backend_handle.send(bridge::message::MessageToBackend::SetInstanceIcon { id, icon });
+                        backend_handle.send(bridge::message::MessageToBackend::SetInstanceIcon { id, icon: Some(icon) });
                     }),
                     window,
                     cx,

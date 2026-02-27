@@ -11,7 +11,7 @@ use auth::{
 };
 use base64::Engine;
 use bridge::{
-    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{ContentType, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceWorldSummary}, message::{EmbeddedOrRaw, MessageToFrontend}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
+    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{ContentType, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceWorldSummary}, message::{EmbeddedOrRaw, MessageToBackend, MessageToFrontend}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 use image::ImageFormat;
 use indexmap::IndexSet;
@@ -132,6 +132,8 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
     // Load accounts
     let account_info = Persistent::load(directories.accounts_json.clone());
 
+    let (profile_reload_tx, profile_reload_rx) = tokio::sync::mpsc::channel(1);
+
     let mut state = BackendState {
         self_handle,
         send: send.clone(),
@@ -147,6 +149,7 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
         config: Arc::new(RwLock::new(config)),
         secret_storage: Arc::new(OnceCell::new()),
         head_cache: Default::default(),
+        profile_reload_tx,
     };
 
     log::debug!("Doing initial backend load");
@@ -156,7 +159,7 @@ pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHa
         state.load_all_instances().await;
     });
 
-    runtime.spawn(state.start(recv, watcher_rx));
+    runtime.spawn(state.start(recv, watcher_rx, profile_reload_rx));
 
     std::mem::forget(runtime);
 }
@@ -172,6 +175,7 @@ pub enum WatchTarget {
     InstanceSavesDir { id: InstanceID },
     ServersDat { id: InstanceID },
     InstanceContentDir { id: InstanceID, folder: ContentFolder },
+    OwnedSkinsDir,
 }
 
 pub struct BackendStateInstances {
@@ -203,7 +207,27 @@ pub struct BackendState {
     pub account_info: Arc<RwLock<Persistent<BackendAccountInfo>>>,
     pub config: Arc<RwLock<Persistent<BackendConfig>>>,
     pub secret_storage: Arc<OnceCell<Result<PlatformSecretStorage, SecretStorageError>>>,
-    pub head_cache: Arc<RwLock<FxHashMap<Arc<str>, HeadCacheEntry>>>
+    pub head_cache: Arc<RwLock<FxHashMap<Arc<str>, HeadCacheEntry>>>,
+    pub profile_reload_tx: tokio::sync::mpsc::Sender<()>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct OwnedSkins {
+    pub skins: Vec<OwnedSkin>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OwnedSkin {
+    pub id: String,
+    pub file_name: String,
+    pub variant: String,
+    pub skin_id: String,
+    /// URL for deduplication - same URL = same skin
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Stable texture hash from URL (last path segment). skin.id changes every equip - use this for dedup.
+    #[serde(default)]
+    pub texture_key: Option<String>,
 }
 
 pub enum HeadCacheEntry {
@@ -217,7 +241,12 @@ pub enum HeadCacheEntry {
 }
 
 impl BackendState {
-    async fn start(self, recv: BackendReceiver, watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
+    async fn start(
+        self,
+        recv: BackendReceiver,
+        watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>,
+        mut profile_reload_rx: tokio::sync::mpsc::Receiver<()>,
+    ) {
         log::info!("Starting backend");
 
         tokio::task::spawn(crate::update::check_for_updates(self.redirecting_http_client.clone(), self.send.clone()));
@@ -225,7 +254,7 @@ impl BackendState {
         // Pre-fetch version manifest
         self.meta.load(&MinecraftVersionManifestMetadataItem).await;
 
-        self.handle(recv, watcher_rx).await;
+        self.handle(recv, watcher_rx, profile_reload_rx).await;
     }
 
     pub async fn load_all_instances(&mut self) {
@@ -363,7 +392,12 @@ impl BackendState {
         true
     }
 
-    async fn handle(mut self, mut backend_recv: BackendReceiver, mut watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
+    async fn handle(
+        mut self,
+        mut backend_recv: BackendReceiver,
+        mut watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>,
+        mut profile_reload_rx: tokio::sync::mpsc::Receiver<()>,
+    ) {
         let mut interval = tokio::time::interval(Duration::from_millis(1000));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         tokio::pin!(interval);
@@ -385,6 +419,12 @@ impl BackendState {
                         log::info!("Backend filesystem has shut down");
                         break;
                     }
+                },
+                _ = profile_reload_rx.recv() => {
+                    // Owned skins dir changed - request profile reload so skins page updates
+                    self.handle_message(MessageToBackend::GetMinecraftProfile {
+                        modal_action: ModalAction::default(),
+                    }).await;
                 },
                 _ = interval.tick() => {
                     self.handle_tick().await;
@@ -1213,6 +1253,17 @@ impl BackendStateFileWatching {
 
     pub fn get_target(&self, path: &Path) -> Option<&WatchTarget> {
         self.watching.get(path)
+    }
+
+    /// Find the watch target for a path by walking up to find a watched ancestor.
+    pub fn get_target_for_path(&self, path: &Path) -> Option<WatchTarget> {
+        let mut current: &Path = path;
+        loop {
+            if let Some(target) = self.watching.get(current) {
+                return Some(*target);
+            }
+            current = current.parent()?;
+        }
     }
 
     pub fn remove(&mut self, path: &Path) -> Option<WatchTarget> {

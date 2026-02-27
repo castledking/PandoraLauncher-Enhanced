@@ -750,10 +750,6 @@ impl BackendState {
             return Vec::new();
         };
 
-        if loader == Loader::Vanilla {
-            return Vec::new();
-        }
-
         let Some(mods) = self.clone().load_instance_content(id, ContentFolder::Mods).await else {
             return Vec::new();
         };
@@ -769,16 +765,14 @@ impl BackendState {
             overrides: Arc<[(SafePath, Arc<[u8]>)]>,
         }
 
-        let loader_supports_add_mods = loader == Loader::Fabric;
-
-        // Remove .pandora.filename mods
+        // Remove pandora.filename mods (modpack mods linked at launch)
         if let Ok(read_dir) = std::fs::read_dir(&mod_dir) {
             for entry in read_dir {
                 let Ok(entry) = entry else {
                     continue;
                 };
                 let file_name = entry.file_name();
-                if file_name.to_string_lossy().starts_with(".pandora.") {
+                if file_name.to_string_lossy().starts_with("pandora.") {
                     log::trace!("Removing temporary mod file {:?}", &file_name);
                     _ = std::fs::remove_file(entry.path());
                 }
@@ -812,6 +806,7 @@ impl BackendState {
                     }
 
                     !summary.disabled_children.disabled_filenames.contains(&dl.path)
+                        && !summary.disabled_children.deleted_filenames.contains(&dl.path)
                 });
 
                 let content_install = ContentInstall {
@@ -853,8 +848,6 @@ impl BackendState {
         } else {
             return Vec::new();
         };
-
-        let mut add_mods = Vec::new();
 
         for modpack_install in modpack_installs {
             let overrides = modpack_install.overrides;
@@ -907,10 +900,8 @@ impl BackendState {
                 let path = crate::create_content_library_path(content_library_dir, expected_hash, dest_path.extension());
 
                 if file.path.starts_with("mods/") && file.path.ends_with(".jar") {
-                    if loader_supports_add_mods {
-                        add_mods.push(path);
-                    } else if let Some(filename) = dest_path.file_name() {
-                        let filename = format!(".pandora.{filename}");
+                    if let Some(filename) = dest_path.file_name() {
+                        let filename = format!("pandora.{filename}");
                         let hidden_dest_path = mod_dir.join(filename);
                         let _ = std::fs::hard_link(path, hidden_dest_path);
                     }
@@ -949,10 +940,8 @@ impl BackendState {
                     }
 
                     if rel_path.starts_with("mods") && let Some(extension) = rel_path.extension() && extension == "jar" {
-                        if loader_supports_add_mods {
-                            add_mods.push(path);
-                        } else if let Some(filename) = rel_path.file_name() {
-                            let filename = format!(".pandora.{filename}");
+                        if let Some(filename) = rel_path.file_name() {
+                            let filename = format!("pandora.{filename}");
                             let hidden_dest_path = mod_dir.join(filename);
                             let _ = std::fs::hard_link(path, hidden_dest_path);
                         }
@@ -984,9 +973,7 @@ impl BackendState {
             }
         }
 
-        add_mods.sort();
-        add_mods.dedup();
-        add_mods
+        Vec::new()
     }
 
     pub async fn load_instance_servers(self, id: InstanceID) -> Option<Arc<[InstanceServerSummary]>> {
@@ -1229,6 +1216,19 @@ impl BackendState {
 
 impl BackendStateFileWatching {
     pub fn watch_filesystem(&mut self, path: Arc<Path>, target: WatchTarget) {
+        // Ensure path exists so canonicalize can succeed (e.g. .minecraft/mods may not exist yet)
+        if !path.exists() {
+            let is_file = matches!(target, WatchTarget::ServersDat { .. });
+            if is_file {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::File::create(&path);
+            } else {
+                let _ = std::fs::create_dir_all(&path);
+            }
+        }
+
         let Ok(canonical) = path.canonicalize() else {
             log::error!("Unable to watch {:?} because it could not be canonicalized", path);
             return;

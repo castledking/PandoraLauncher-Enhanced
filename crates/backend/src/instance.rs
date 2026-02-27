@@ -889,6 +889,10 @@ fn load_world_summary(path: &Path) -> anyhow::Result<InstanceWorldSummary> {
 fn load_servers_summary(server_dat_path: &Path) -> anyhow::Result<Vec<InstanceServerSummary>> {
     let raw = std::fs::read(server_dat_path)?;
 
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut nbt_data = raw.as_slice();
     let result = nbt::decode::read_named(&mut nbt_data)?;
 

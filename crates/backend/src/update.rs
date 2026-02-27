@@ -227,28 +227,16 @@ async fn install_update_inner(http_client: reqwest::Client, dirs: &LauncherDirec
 
     match update.install_type {
         UpdateInstallType::AppImage(appimage) => {
-            let Some(filename) = appimage.file_name() else {
-                return Err("Appimage path has no filename".into());
-            };
-
-            let new_filename = replace_os_str(filename, &update.old_version, &update.new_version);
-            let new_appimage = appimage.with_file_name(new_filename);
-
-            write_new_exe(appimage, new_appimage, &bytes, dirs)?;
+            // Replace in-place so desktop shortcuts, favorites, and app menu entries keep working
+            write_new_exe(appimage.clone(), appimage, &bytes, dirs)?;
         },
         UpdateInstallType::Executable => {
             let Ok(current_exe) = std::env::current_exe() else {
                 return Err("Unable to determine current exe path".into());
             };
 
-            let Some(filename) = current_exe.file_name() else {
-                return Err("Current exe path has no filename".into());
-            };
-
-            let new_filename = replace_os_str(filename, &update.old_version, &update.new_version);
-            let new_exe = current_exe.with_file_name(new_filename);
-
-            write_new_exe(current_exe, new_exe, &bytes, dirs)?;
+            // Replace in-place so desktop shortcuts and app menu entries keep working
+            write_new_exe(current_exe.clone(), current_exe, &bytes, dirs)?;
         },
         UpdateInstallType::App(current_app_folder) => {
             let mut temp_extract = dirs.temp_dir.join(format!("app_unpack_{}", rand::thread_rng().next_u64()));
@@ -466,28 +454,6 @@ fn install_app_update(current_app_folder: PathBuf, bytes: &[u8], temp_extract: &
     }
 
     Ok(())
-}
-
-fn replace_os_str(input: &OsStr, from: &str, to: &str) -> OsString {
-    let encoded = input.as_encoded_bytes();
-
-    let from_bytes = from.as_bytes();
-    let to_bytes = to.as_bytes();
-
-    let mut new_encoded = Vec::new();
-    let mut index = 0;
-    while index < encoded.len() {
-        if encoded[index..].starts_with(from_bytes) {
-            new_encoded.extend_from_slice(to_bytes);
-            index += from_bytes.len();
-        } else {
-            new_encoded.push(encoded[index]);
-            index += 1;
-        }
-    }
-
-    // SAFETY: We construct new_encoded from a mixture of encoded and valid utf-8
-    unsafe { OsString::from_encoded_bytes_unchecked(new_encoded) }
 }
 
 fn find_child_with_extension(folder: &Path, extension: &OsStr) -> std::io::Result<Option<PathBuf>> {

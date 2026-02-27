@@ -80,7 +80,8 @@ mod inner {
         let keyring = storage.keyring.as_ref()?;
         keyring.unlock().await?;
 
-        let items = keyring.search_items(attributes).await?;
+        let attrs: Vec<(&str, &str)> = attributes.to_vec();
+        let items = keyring.search_items(&attrs).await?;
 
         if items.is_empty() {
             Ok(None)
@@ -95,14 +96,16 @@ mod inner {
         let keyring = storage.keyring.as_ref()?;
         keyring.unlock().await?;
 
-        keyring.create_item(label, &attributes, value, true).await?;
+        let attrs: Vec<(&str, &str)> = attributes.to_vec();
+        keyring.create_item(label, &attrs, value, true).await?;
         Ok(())
     }
 
     async fn delete(storage: &PlatformSecretStorage, attributes: &[(&str, &str)]) -> Result<(), SecretStorageError> {
         let keyring = storage.keyring.as_ref()?;
         keyring.unlock().await?;
-        keyring.delete(&attributes).await?;
+        let attrs: Vec<(&str, &str)> = attributes.to_vec();
+        keyring.delete(&attrs).await?;
         Ok(())
     }
 

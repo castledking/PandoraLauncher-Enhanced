@@ -9,6 +9,18 @@ use parking_lot::RwLock;
 
 use crate::{icon::PandoraIcon, ts};
 
+const MINECRAFT_ICON_PATHS: &[&str] = &[
+    "images/grass-block-icon.png",
+    "images/diamond-sword-icon.png",
+    "images/diamond-pickaxe-icon.png",
+    "images/creeper-face-icon.png",
+    "images/ender-pearl-icon.png",
+    "images/nether-star-icon.png",
+    "images/tnt-icon.png",
+    "images/obsidian-block-icon.png",
+    "images/enchanted-golden-apple-icon.png",
+];
+
 pub fn open_select_icon(
     selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>,
     window: &mut Window,
@@ -17,6 +29,33 @@ pub fn open_select_icon(
     let select_file_task = Arc::new(RwLock::new(Task::ready(())));
     let selected = Arc::new(RwLock::new(Some(selected)));
     window.open_dialog(cx, move |dialog, _, _| {
+        let minecraft_icons = MINECRAFT_ICON_PATHS.iter().enumerate().filter_map(|(index, icon_path)| {
+            let data = crate::Assets::get(*icon_path)?.data;
+            Some((index, *icon_path, data))
+        }).map(|(index, icon_path, icon_data)| {
+            let icon_data: Arc<[u8]> = Arc::from(icon_data);
+            Button::new(("minecraft", index)).success().with_size(px(64.0))
+                .child(gpui::img(ImageSource::Resource(Resource::Embedded(icon_path.into()))).w_16().h_16())
+                .on_click({
+                    let selected = selected.clone();
+                    let icon_data = icon_data.clone();
+                    move |_, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(selected) = selected.write().take() {
+                            (selected)(EmbeddedOrRaw::Raw(icon_data.clone()), cx);
+                        }
+                        window.close_dialog(cx);
+                    }
+                })
+        });
+
+        let minecraft_grid = div()
+            .grid()
+            .grid_cols(6)
+            .w_full()
+            .gap_2()
+            .children(minecraft_icons);
+
         let icons = ICONS.iter().enumerate().map(|(index, icon)| {
             let icon = *icon;
             Button::new(index).success().icon(Icon::default().path(icon)).with_size(px(64.0)).on_click({
@@ -72,6 +111,7 @@ pub fn open_select_icon(
                     });
                 }
             }))
+            .child(minecraft_grid)
             .child(grid);
 
         dialog

@@ -524,6 +524,8 @@ instance:
           en: Loading project versions from Modrinth...
         error:
           en: "Error loading project versions from Modrinth: %{err}"
+    installed:
+      en: Installed
     install:
       label:
         en: Install

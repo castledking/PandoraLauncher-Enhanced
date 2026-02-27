@@ -1,9 +1,9 @@
-use std::{ops::Range, sync::{atomic::AtomicBool, Arc}, time::Duration};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::{atomic::AtomicBool, Arc}, time::Duration};
 
-use bridge::{instance::{AtomicContentUpdateStatus, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID}, message::{AtomicBridgeDataLoadState, MessageToBackend}, meta::MetadataRequest, modal_action::ModalAction, serial::AtomicOptionSerial};
+use bridge::{instance::{AtomicContentUpdateStatus, ContentType, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID}, message::{AtomicBridgeDataLoadState, MessageToBackend}, meta::MetadataRequest, modal_action::ModalAction, serial::AtomicOptionSerial};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Selectable, StyledExt, WindowExt, breadcrumb::Breadcrumb, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, label::Label, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, tooltip::Tooltip, v_flex
+    ActiveTheme, Icon, IconName, Selectable, Sizable, StyledExt, WindowExt, breadcrumb::Breadcrumb, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, label::Label, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, tooltip::Tooltip, v_flex
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{content::ContentSource, loader::Loader, modrinth::{
@@ -16,6 +16,54 @@ use crate::{
         DataEntities, instance::InstanceEntries, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
     }, icon::PandoraIcon, interface_config::InterfaceConfig, ts, ts_short, ui
 };
+
+fn show_vanilla_change_to_fabric_modal(
+    install_for_id: InstanceID,
+    backend_handle: bridge::handle::BackendHandle,
+    on_yes: impl FnOnce(&mut Window, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let on_yes = Rc::new(RefCell::new(Some(on_yes)));
+    let on_yes_for_button = on_yes.clone();
+    window.open_dialog(cx, move |dialog, _window, _cx| {
+        let on_yes_for_button = on_yes_for_button.clone();
+        let backend_handle = backend_handle.clone();
+        dialog
+            .title(ts!("instance.content.install.vanilla_change_to_fabric.title"))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(ts!("instance.content.install.vanilla_change_to_fabric.message"))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("yes")
+                                    .label(ts!("instance.content.install.vanilla_change_to_fabric.yes"))
+                                    .success()
+                                    .on_click(move |_, window, cx| {
+                                        window.close_all_dialogs(cx);
+                                        backend_handle.send(MessageToBackend::SetInstanceLoader {
+                                            id: install_for_id,
+                                            loader: Loader::Fabric,
+                                        });
+                                        if let Some(f) = on_yes_for_button.borrow_mut().take() {
+                                            f(window, cx);
+                                        }
+                                    }),
+                            )
+                            .child(
+                                Button::new("no")
+                                    .label(ts!("instance.content.install.vanilla_change_to_fabric.no"))
+                                    .on_click(|_, window, cx| {
+                                        window.close_all_dialogs(cx);
+                                    }),
+                            ),
+                    ),
+            )
+    });
+}
 
 pub struct ModrinthSearchPage {
     data: DataEntities,
@@ -34,17 +82,39 @@ pub struct ModrinthSearchPage {
     filter_categories: FxHashSet<&'static str>,
     show_categories: Arc<AtomicBool>,
     can_install_latest: bool,
-    installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledMod>>,
+    installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_mods_by_hash: FxHashMap<[u8; 20], InstalledContent>,
+    installed_mods_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
+    installed_mods_by_mod_id: FxHashMap<Arc<str>, InstalledContent>,
+    installed_modpacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>>,
+    installed_shaders_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_shaders_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
     last_search: Arc<str>,
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
     image_cache: Entity<RetainAllImageCache>,
-    mods_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>
+    mods_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>,
+    _instance_mods_subscription: Option<Subscription>,
+    _instance_resourcepacks_subscription: Option<Subscription>,
+    _shader_refresh_task: Option<Task<()>>,
 }
 
-struct InstalledMod {
-    mod_id: InstanceContentID,
+struct InstalledContent {
+    content_id: InstanceContentID,
     status: Arc<AtomicContentUpdateStatus>,
+    mod_id: Option<Arc<str>>,
+}
+
+impl Clone for InstalledContent {
+    fn clone(&self) -> Self {
+        Self {
+            content_id: self.content_id,
+            status: Arc::clone(&self.status),
+            mod_id: self.mod_id.clone(),
+        }
+    }
 }
 
 impl ModrinthSearchPage {
@@ -52,47 +122,52 @@ impl ModrinthSearchPage {
         let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(ts!("instance.content.search.mod")).clean_on_escape());
 
         let mut can_install_latest = false;
-        let mut installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledMod>> = FxHashMap::default();
+        let mut installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_mods_by_hash: FxHashMap<[u8; 20], InstalledContent> = FxHashMap::default();
+        let mut installed_mods_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
+        let mut installed_mods_by_mod_id: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
+        let mut installed_modpacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_resourcepacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>> = FxHashMap::default();
+        let mut installed_shaders_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_shaders_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
         let mut filter_version = None;
 
         let mut mods_load_state = None;
+        let mut _instance_mods_subscription = None;
+        let mut _instance_resourcepacks_subscription = None;
+        let mut _shader_refresh_task = None;
+
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
                 let instance = entry.read(cx);
-                can_install_latest = instance.configuration.loader != Loader::Vanilla;
+                can_install_latest = true;
                 filter_version = Some(instance.configuration.minecraft_version);
-
-                let mods = instance.mods.read(cx);
-                for summary in mods.iter() {
-                    let ContentSource::ModrinthProject { project } = &summary.content_source else {
-                        continue;
-                    };
-
-                    let installed = installed_mods_by_project.entry(project.clone()).or_default();
-                    installed.push(InstalledMod {
-                        mod_id: summary.id,
-                        status: summary.content_summary.update_status.clone(),
-                    })
-                }
 
                 mods_load_state = Some((instance.mods_state.clone(), AtomicOptionSerial::default()));
 
-                let mods = instance.mods.clone();
-                cx.observe(&mods, |page, entity, cx| {
-                    page.installed_mods_by_project.clear();
-                    let mods = entity.read(cx);
-                    for summary in mods.iter() {
-                        let ContentSource::ModrinthProject { project } = &summary.content_source else {
-                            continue;
-                        };
+                let mods_entity = instance.mods.clone();
+                let resource_packs_entity = instance.resource_packs.clone();
 
-                        let installed = page.installed_mods_by_project.entry(project.clone()).or_default();
-                        installed.push(InstalledMod {
-                            mod_id: summary.id,
-                            status: summary.content_summary.update_status.clone(),
-                        })
+                _instance_mods_subscription = Some(cx.observe(&mods_entity, |page, _mods, cx| {
+                    page.refill_installed_content_from_instance(cx);
+                    cx.notify();
+                }));
+
+                _instance_resourcepacks_subscription = Some(cx.observe(&resource_packs_entity, |page, _resource_packs, cx| {
+                    page.refill_installed_content_from_instance(cx);
+                    cx.notify();
+                }));
+
+                _shader_refresh_task = Some(cx.spawn(async move |page, cx| {
+                    loop {
+                        cx.background_executor().timer(Duration::from_secs(2)).await;
+                        let _ = page.update(cx, |page, cx| {
+                            page.refill_installed_content_from_instance(cx);
+                            cx.notify();
+                        });
                     }
-                }).detach();
+                }));
             }
         }
 
@@ -126,12 +201,24 @@ impl ModrinthSearchPage {
             show_categories: Arc::new(AtomicBool::new(false)),
             can_install_latest,
             installed_mods_by_project,
+            installed_mods_by_hash,
+            installed_mods_by_filename_prefix,
+            installed_mods_by_mod_id,
+            installed_modpacks_by_project,
+            installed_resourcepacks_by_project,
+            installed_resourcepacks_by_hash,
+            installed_shaders_by_project,
+            installed_shaders_by_filename_prefix,
             last_search: Arc::from(""),
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
             image_cache: RetainAllImageCache::new(cx),
             mods_load_state,
+            _instance_mods_subscription,
+            _instance_resourcepacks_subscription,
+            _shader_refresh_task,
         };
+        page.refill_installed_content_from_instance(cx);
         page.load_more(cx);
         page
     }
@@ -157,6 +244,162 @@ impl ModrinthSearchPage {
         let search: Arc<str> = Arc::from(search);
         self.last_search = search.clone();
         self.reload(cx);
+    }
+
+    fn refill_installed_content_from_instance(&mut self, cx: &App) {
+        self.installed_mods_by_project.clear();
+        self.installed_mods_by_hash.clear();
+        self.installed_mods_by_filename_prefix.clear();
+        self.installed_mods_by_mod_id.clear();
+        self.installed_modpacks_by_project.clear();
+        self.installed_resourcepacks_by_project.clear();
+        self.installed_resourcepacks_by_hash.clear();
+        self.installed_shaders_by_project.clear();
+        self.installed_shaders_by_filename_prefix.clear();
+
+        if let Some(install_for) = self.install_for {
+            if let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) {
+                let instance = entry.read(cx);
+
+                let mods = instance.mods.read(cx);
+                for summary in mods.iter() {
+                    let content = InstalledContent {
+                        content_id: summary.id,
+                        status: summary.content_summary.update_status.clone(),
+                        mod_id: summary.content_summary.id.clone(),
+                    };
+
+                    if let ContentSource::ModrinthProject { project } = &summary.content_source {
+                        let project_key: Arc<str> = project.to_lowercase().into();
+                        let installed = self.installed_mods_by_project.entry(project_key).or_default();
+                        installed.push(content.clone());
+                    }
+
+                    self.installed_mods_by_hash.insert(summary.content_summary.hash, content.clone());
+
+                    if let Some(filename_prefix) = extract_modrinth_project_id_from_filename(&summary.filename) {
+                        self.installed_mods_by_filename_prefix
+                            .entry(filename_prefix.clone())
+                            .or_insert(content.clone());
+                    }
+
+                    if let Some(ref mod_id) = summary.content_summary.id {
+                        let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
+                        self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(content.clone());
+                    }
+
+                    if let ContentType::ModrinthModpack { downloads, summaries, .. } = &summary.content_summary.extra {
+                        let modpack_project = match &summary.content_source {
+                            ContentSource::ModrinthProject { project } => Some(project.clone()),
+                            _ => None,
+                        };
+                        let deleted_filenames = &summary.disabled_children.deleted_filenames;
+
+                        for (index, bundled_summary) in summaries.iter().enumerate() {
+                            if let Some(bundled) = bundled_summary {
+                                if let Some(download) = downloads.get(index) {
+                                    if deleted_filenames.contains(&*download.path) {
+                                        continue;
+                                    }
+                                }
+
+                                let bundled_content = InstalledContent {
+                                    content_id: summary.id,
+                                    status: bundled.update_status.clone(),
+                                    mod_id: bundled.id.clone(),
+                                };
+                                self.installed_mods_by_hash.insert(bundled.hash, bundled_content.clone());
+
+                                if let Some(ref mod_id) = bundled.id {
+                                    let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
+                                    self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content.clone());
+                                    self.installed_mods_by_filename_prefix.entry(mod_id_key).or_insert(bundled_content.clone());
+                                }
+
+                                if let Some(ref name) = bundled.name {
+                                    let name_key: Arc<str> = name.to_lowercase().into();
+                                    self.installed_mods_by_filename_prefix.entry(name_key).or_insert(bundled_content.clone());
+                                }
+
+                                if let Some(download) = downloads.get(index) {
+                                    if let Some(filename) = download.path.rsplit('/').next() {
+                                        if let Some(project_id) = extract_modrinth_project_id_from_filename(filename) {
+                                            self.installed_mods_by_filename_prefix.entry(project_id).or_insert(bundled_content.clone());
+                                        }
+                                    }
+                                    for download_url in download.downloads.iter() {
+                                        if let Some(project_id) = extract_modrinth_project_id_from_url(download_url) {
+                                            self.installed_mods_by_filename_prefix.entry(project_id).or_insert(bundled_content.clone());
+                                        }
+                                    }
+                                }
+
+                                if let Some(ref project) = modpack_project {
+                                    let project_key: Arc<str> = project.to_lowercase().into();
+                                    self.installed_resourcepacks_by_hash.insert(bundled.hash, project_key);
+                                }
+                            }
+                        }
+
+                        if let Some(project) = modpack_project {
+                            let project_key: Arc<str> = project.to_lowercase().into();
+                            let installed = self.installed_modpacks_by_project.entry(project_key).or_default();
+                            installed.push(content);
+                        }
+                    }
+                }
+
+                let resource_packs = instance.resource_packs.read(cx);
+                for summary in resource_packs.iter() {
+                    match &summary.content_source {
+                        ContentSource::ModrinthProject { project } => {
+                            let project_key: Arc<str> = project.to_lowercase().into();
+                            let installed = self.installed_resourcepacks_by_project.entry(project_key).or_default();
+                            installed.push(InstalledContent {
+                                content_id: summary.id,
+                                status: summary.content_summary.update_status.clone(),
+                                mod_id: summary.content_summary.id.clone(),
+                            });
+                        }
+                        ContentSource::ModrinthUnknown => {
+                            if let Some(project) = self.installed_resourcepacks_by_hash.get(&summary.content_summary.hash) {
+                                let project_key: Arc<str> = project.to_lowercase().into();
+                                let installed = self.installed_resourcepacks_by_project.entry(project_key).or_default();
+                                installed.push(InstalledContent {
+                                    content_id: summary.id,
+                                    status: summary.content_summary.update_status.clone(),
+                                    mod_id: summary.content_summary.id.clone(),
+                                });
+                            }
+                        }
+                        ContentSource::Manual => {}
+                    }
+                }
+
+                let shaderpacks_path = instance.dot_minecraft_folder.join("shaderpacks");
+                if shaderpacks_path.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&shaderpacks_path) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                    let shader_name = filename.trim_end_matches(".zip").trim_end_matches(".disabled");
+                                    if !shader_name.is_empty() {
+                                        let filename_prefix: Arc<str> = shader_name.to_lowercase().into();
+                                        let content = InstalledContent {
+                                            content_id: InstanceContentID::dangling(),
+                                            status: Arc::new(AtomicContentUpdateStatus::new(ContentUpdateStatus::ManualInstall)),
+                                            mod_id: None,
+                                        };
+                                        self.installed_shaders_by_filename_prefix.entry(filename_prefix).or_insert(content);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn set_project_type(&mut self, project_type: ModrinthProjectType, window: &mut Window, cx: &mut Context<Self>) {
@@ -238,9 +481,10 @@ impl ModrinthSearchPage {
         let mut facets = format!("[[\"project_type={}\"]", project_type);
 
         let is_mod = self.filter_project_type == ModrinthProjectType::Mod || self.filter_project_type == ModrinthProjectType::Modpack;
-        if is_mod && let Some(filter_version) = self.filter_version && InterfaceConfig::get(cx).modrinth_filter_version {
+        let filter_by_instance = self.install_for.is_some() && InterfaceConfig::get(cx).modrinth_filter_version;
+        if filter_by_instance && let Some(filter_version) = &self.filter_version {
             facets.push_str(",[\"versions=");
-            facets.push_str(&filter_version);
+            facets.push_str(filter_version);
             facets.push_str("\"]");
         }
 
@@ -362,11 +606,15 @@ impl ModrinthSearchPage {
                     && !icon_url.is_empty()
                 {
                     gpui::img(SharedUri::from(icon_url))
-                        .with_fallback(|| Skeleton::new().rounded_lg().size_16().into_any_element())
+                        .with_fallback(|| {
+                            gpui::img(ImageSource::Resource(Resource::Embedded(
+                                "images/default_mod.png".into(),
+                            ))).rounded_lg().size_16().min_w_16().min_h_16().into_any_element()
+                        })
                 } else {
                     gpui::img(ImageSource::Resource(Resource::Embedded(
                         "images/default_mod.png".into(),
-                    )))
+                    ))).rounded_lg().size_16().min_w_16().min_h_16()
                 };
 
                 let name = hit
@@ -430,26 +678,58 @@ impl ModrinthSearchPage {
                     .child(PandoraIcon::Download)
                     .child(format_downloads(hit.downloads));
 
-                let primary_action = self.get_primary_action(&hit.project_id, cx);
+                let (main_action, nub_action) = self.get_primary_action(hit, cx);
 
-                let buttons = ButtonGroup::new(("buttons", index))
-                    .layout(Axis::Vertical)
-                    .child(
-                        Button::new(("install", index))
-                            .label(primary_action.text())
-                            .icon(primary_action.icon())
-                            .with_variant(primary_action.button_variant())
-                            .on_click({
-                                let data = self.data.clone();
-                                let name = name.clone();
-                                let project_id = hit.project_id.clone();
-                                let install_for = self.install_for.clone();
-                                let project_type = hit.project_type;
+                let primary_button_label = match &main_action {
+                    PrimaryAction::InstallLatest => ts!("instance.content.install.label"),
+                    _ => main_action.text(),
+                };
 
-                                move |_, window, cx| {
-                                    if project_type != ModrinthProjectType::Other {
-                                        match primary_action {
-                                            PrimaryAction::Install | PrimaryAction::Reinstall => {
+                let primary_button = Button::new(("install", index))
+                    .label(primary_button_label)
+                    .icon(main_action.icon())
+                    .with_variant(main_action.button_variant())
+                    .on_click({
+                        let data = self.data.clone();
+                        let name = name.clone();
+                        let project_id = hit.project_id.clone();
+                        let install_for = self.install_for.clone();
+                        let project_type = hit.project_type;
+                        let main_action = main_action.clone();
+
+                        move |_, window, cx| {
+                            if project_type != ModrinthProjectType::Other {
+                                match main_action {
+                                    PrimaryAction::Install | PrimaryAction::Reinstall => {
+                                        if let Some(install_for_id) = install_for {
+                                            let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
+                                                .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
+                                                .unwrap_or(false);
+                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                            if is_vanilla && is_mod_or_modpack {
+                                                let name = name.clone();
+                                                let project_id = project_id.clone();
+                                                let data = data.clone();
+                                                show_vanilla_change_to_fabric_modal(
+                                                    install_for_id,
+                                                    data.backend_handle.clone(),
+                                                    move |window, cx| {
+                                                        crate::modals::modrinth_install::open_with_version(
+                                                            name.as_str(),
+                                                            project_id.clone(),
+                                                            project_type,
+                                                            Some(install_for_id),
+                                                            &data,
+                                                            window,
+                                                            cx,
+                                                            None,
+                                                            Some(Loader::Fabric),
+                                                        );
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            } else {
                                                 crate::modals::modrinth_install::open(
                                                     name.as_str(),
                                                     project_id.clone(),
@@ -459,72 +739,163 @@ impl ModrinthSearchPage {
                                                     window,
                                                     cx
                                                 );
-                                            },
-                                            PrimaryAction::InstallLatest => {
+                                            }
+                                        } else {
+                                            crate::modals::modrinth_install::open(
+                                                name.as_str(),
+                                                project_id.clone(),
+                                                project_type,
+                                                install_for,
+                                                &data,
+                                                window,
+                                                cx
+                                            );
+                                        }
+                                    },
+                                    PrimaryAction::InstallLatest => {
+                                        if let Some(install_for_id) = install_for {
+                                            let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
+                                                .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
+                                                .unwrap_or(false);
+                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                            if is_vanilla && is_mod_or_modpack {
+                                                let name = name.clone();
+                                                let project_id = project_id.clone();
+                                                let data = data.clone();
+                                                show_vanilla_change_to_fabric_modal(
+                                                    install_for_id,
+                                                    data.backend_handle.clone(),
+                                                    move |window, cx| {
+                                                        crate::modals::modrinth_install_auto::open(
+                                                            name.as_str(),
+                                                            project_id.clone(),
+                                                            project_type,
+                                                            install_for_id,
+                                                            &data,
+                                                            window,
+                                                            cx,
+                                                            Some(Loader::Fabric),
+                                                        );
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            } else {
                                                 crate::modals::modrinth_install_auto::open(
                                                     name.as_str(),
                                                     project_id.clone(),
                                                     project_type,
-                                                    install_for.unwrap(),
+                                                    install_for_id,
                                                     &data,
                                                     window,
                                                     cx,
                                                     None,
                                                 );
-                                            },
-                                            PrimaryAction::CheckForUpdates => {
-                                                let modal_action = ModalAction::default();
-                                                data.backend_handle.send(MessageToBackend::UpdateCheck {
-                                                    instance: install_for.unwrap(),
-                                                    modal_action: modal_action.clone()
-                                                });
-                                                crate::modals::generic::show_notification(window, cx,
-                                                    ts!("instance.content.update.check.error"), modal_action);
-                                            },
-                                            PrimaryAction::ErrorCheckingForUpdates => {},
-                                            PrimaryAction::UpToDate => {},
-                                            PrimaryAction::Update(ref ids) => {
-                                                for id in ids {
-                                                    let modal_action = ModalAction::default();
-                                                    data.backend_handle.send(MessageToBackend::UpdateContent {
-                                                        instance: install_for.unwrap(),
-                                                        content_id: *id,
-                                                        modal_action: modal_action.clone()
-                                                    });
-                                                    crate::modals::generic::show_notification(window, cx,
-                                                        ts!("instance.content.update.error"), modal_action);
-                                                }
-
-                                            },
+                                            }
                                         }
-                                    } else {
-                                        window.push_notification(
-                                            (
-                                                NotificationType::Error,
-                                                ts!("instance.content.install.unknown_type"),
-                                            ),
-                                            cx,
-                                        );
+                                    },
+                                    PrimaryAction::Installed => {},
+                                    PrimaryAction::Update(ref ids) => {
+                                        for id in ids {
+                                            let modal_action = ModalAction::default();
+                                            data.backend_handle.send(MessageToBackend::UpdateContent {
+                                                instance: install_for.unwrap(),
+                                                content_id: *id,
+                                                modal_action: modal_action.clone()
+                                            });
+                                            crate::modals::generic::show_notification(window, cx,
+                                                ts!("instance.content.update.error"), modal_action);
+                                        }
+                                    },
+                                }
+                            } else {
+                                window.push_notification(
+                                    (
+                                        NotificationType::Error,
+                                        ts!("instance.content.install.unknown_type"),
+                                    ),
+                                    cx,
+                                );
+                            }
+                        }
+                    });
+
+                let nub_button = nub_action.as_ref().map(|nub| {
+                    let data = self.data.clone();
+                    let install_for = self.install_for;
+                    let nub = nub.clone();
+                    Button::new(("nub", index))
+                        .icon(nub.icon())
+                        .with_variant(nub.button_variant())
+                        .compact()
+                        .small()
+                        .on_click(move |_, window, cx| {
+                            match &nub {
+                                NubAction::CheckForUpdates => {
+                                    let modal_action = ModalAction::default();
+                                    data.backend_handle.send(MessageToBackend::UpdateCheck {
+                                        instance: install_for.unwrap(),
+                                        modal_action: modal_action.clone()
+                                    });
+                                    crate::modals::generic::show_notification(window, cx,
+                                        ts!("instance.content.update.check.error"), modal_action);
+                                },
+                                NubAction::ErrorCheckingForUpdates => {},
+                                NubAction::UpToDate => {},
+                                NubAction::Update(ids) => {
+                                    for id in ids {
+                                        let modal_action = ModalAction::default();
+                                        data.backend_handle.send(MessageToBackend::UpdateContent {
+                                            instance: install_for.unwrap(),
+                                            content_id: *id,
+                                            modal_action: modal_action.clone()
+                                        });
+                                        crate::modals::generic::show_notification(window, cx,
+                                            ts!("instance.content.update.error"), modal_action);
                                     }
                                 }
-                            }),
+                            }
+                        })
+                });
+
+                let open_page_button = Button::new(("open", index))
+                    .label(ts!("instance.content.open_page"))
+                    .icon(PandoraIcon::Globe)
+                    .info()
+                    .on_click({
+                        let project_type = hit.project_type.as_str();
+                        let project_id = hit.project_id.clone();
+                        move |_, _, cx| {
+                            cx.open_url(&format!(
+                                "https://modrinth.com/{}/{}",
+                                project_type, project_id
+                            ));
+                        }
+                    });
+
+                let left_slot_w = px(40.0);
+                let button_w = px(118.0);
+                let first_row = h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(div().min_w(left_slot_w).w(left_slot_w).flex_shrink())
+                    .child(div().w(button_w).min_w(button_w).flex_shrink().child(primary_button));
+                let second_row_left = if let Some(nub) = nub_button {
+                    div().min_w(left_slot_w).w(left_slot_w).flex_shrink().child(
+                        h_flex().items_center().justify_center().size_full().child(nub),
                     )
-                    .child(
-                        Button::new(("open", index))
-                            .label(ts!("instance.content.open_page"))
-                            .icon(PandoraIcon::Globe)
-                            .info()
-                            .on_click({
-                                let project_type = hit.project_type.as_str();
-                                let project_id = hit.project_id.clone();
-                                move |_, _, cx| {
-                                    cx.open_url(&format!(
-                                        "https://modrinth.com/{}/{}",
-                                        project_type, project_id
-                                    ));
-                                }
-                            }),
-                    );
+                } else {
+                    div().min_w(left_slot_w).w(left_slot_w).flex_shrink()
+                };
+                let second_row = h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(second_row_left)
+                    .child(div().w(button_w).min_w(button_w).flex_shrink().child(open_page_button));
+                let buttons = v_flex()
+                    .gap_2()
+                    .child(first_row)
+                    .child(second_row);
 
                 let item = h_flex()
                     .rounded_lg()
@@ -565,7 +936,7 @@ impl ModrinthSearchPage {
                                     .children(std::iter::once(environment).chain(categories)),
                             ),
                     )
-                    .child(v_flex().gap_2().child(downloads).child(buttons));
+                    .child(v_flex().items_end().gap_2().child(downloads).child(buttons));
 
                 div().pl_3().pt_3().child(item)
             })
@@ -578,59 +949,154 @@ impl ModrinthSearchPage {
         items
     }
 
-    fn get_primary_action(&self, project_id: &str, cx: &App) -> PrimaryAction {
+    fn get_primary_action(&self, hit: &ModrinthHit, cx: &App) -> (PrimaryAction, Option<NubAction>) {
+        let project_id = &hit.project_id;
+        let title = hit.title.as_deref().unwrap_or("");
         let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
 
-        let installed = self.installed_mods_by_project.get(project_id);
+        let project_type = self.filter_project_type;
+        let is_resourcepack = project_type == ModrinthProjectType::Resourcepack;
+        let is_modpack = project_type == ModrinthProjectType::Modpack;
+        let is_shader = project_type == ModrinthProjectType::Shader;
+
+        let project_id_key: Arc<str> = project_id.to_lowercase().into();
+
+        let installed = if is_resourcepack {
+            self.installed_resourcepacks_by_project.get(&project_id_key)
+        } else if is_modpack {
+            self.installed_modpacks_by_project.get(&project_id_key)
+        } else if is_shader {
+            self.installed_shaders_by_project.get(&project_id_key)
+        } else {
+            self.installed_mods_by_project.get(&project_id_key)
+        };
 
         if let Some(installed) = installed && !installed.is_empty() {
             if !install_latest {
-                return PrimaryAction::Reinstall;
+                return (PrimaryAction::Reinstall, None);
             }
 
-            let mut action = PrimaryAction::CheckForUpdates;
-            for installed_mod in installed {
-                match installed_mod.status.load(std::sync::atomic::Ordering::Relaxed) {
-                    ContentUpdateStatus::Unknown => {},
+            let mut nub_action = NubAction::CheckForUpdates;
+            for installed_content in installed {
+                match installed_content.status.load(std::sync::atomic::Ordering::Relaxed) {
+                    ContentUpdateStatus::Unknown => {}
                     ContentUpdateStatus::AlreadyUpToDate => {
-                        if !matches!(action, PrimaryAction::Update(..)) {
-                            action = PrimaryAction::UpToDate;
+                        if !matches!(nub_action, NubAction::Update(..)) {
+                            nub_action = NubAction::UpToDate;
                         }
-                    },
+                    }
                     ContentUpdateStatus::Modrinth => {
-                        if let PrimaryAction::Update(vec) = &mut action {
-                            vec.push(installed_mod.mod_id);
+                        if let NubAction::Update(ref mut vec) = nub_action {
+                            vec.push(installed_content.content_id);
                         } else {
-                            action = PrimaryAction::Update(vec![installed_mod.mod_id]);
+                            nub_action = NubAction::Update(vec![installed_content.content_id]);
                         }
-                    },
+                    }
                     _ => {
-                        if action == PrimaryAction::CheckForUpdates {
-                            action = PrimaryAction::ErrorCheckingForUpdates;
+                        if nub_action == NubAction::CheckForUpdates {
+                            nub_action = NubAction::ErrorCheckingForUpdates;
                         }
                     }
                 };
             }
-            return action;
+            let main_action = match &nub_action {
+                NubAction::Update(ids) => PrimaryAction::Update(ids.clone()),
+                _ => PrimaryAction::Installed,
+            };
+            return (main_action, Some(nub_action));
+        }
+
+        if !is_resourcepack && !is_modpack {
+            if let Some(slug) = &hit.slug {
+                let slug_key: Arc<str> = slug.to_lowercase().into();
+                if self.installed_mods_by_mod_id.contains_key(&slug_key) {
+                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                }
+            }
+
+            if self.installed_mods_by_filename_prefix.contains_key(&project_id_key) {
+                return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+            }
+        }
+
+        if is_shader {
+            if self.installed_shaders_by_filename_prefix.contains_key(&project_id_key) {
+                return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+            }
+
+            if !title.is_empty() {
+                let title_words: Vec<String> = title
+                    .to_lowercase()
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+
+                for (filename_prefix, _) in &self.installed_shaders_by_filename_prefix {
+                    let fp_words: Vec<String> = filename_prefix
+                        .to_string()
+                        .split(|c: char| !c.is_alphanumeric())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    for title_word in &title_words {
+                        for fp_word in &fp_words {
+                            if title_word.len() > 2 && fp_word.len() > 2 {
+                                if title_word == fp_word || fp_word.contains(title_word) || title_word.contains(fp_word) {
+                                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if install_latest {
-            PrimaryAction::InstallLatest
+            (PrimaryAction::InstallLatest, None)
         } else {
-            PrimaryAction::Install
+            (PrimaryAction::Install, None)
         }
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum PrimaryAction {
     Install,
     Reinstall,
     InstallLatest,
+    Installed,
+    Update(Vec<InstanceContentID>),
+}
+
+/// Small update-check nub shown to the left of Open Page when content is installed.
+#[derive(Clone, PartialEq, Eq)]
+enum NubAction {
     CheckForUpdates,
     ErrorCheckingForUpdates,
     UpToDate,
     Update(Vec<InstanceContentID>),
+}
+
+impl NubAction {
+    fn icon(&self) -> PandoraIcon {
+        match self {
+            NubAction::CheckForUpdates => PandoraIcon::RefreshCcw,
+            NubAction::ErrorCheckingForUpdates => PandoraIcon::TriangleAlert,
+            NubAction::UpToDate => PandoraIcon::Check,
+            NubAction::Update(..) => PandoraIcon::Download,
+        }
+    }
+
+    fn button_variant(&self) -> ButtonVariant {
+        match self {
+            NubAction::CheckForUpdates => ButtonVariant::Warning,
+            NubAction::ErrorCheckingForUpdates => ButtonVariant::Danger,
+            NubAction::UpToDate => ButtonVariant::Secondary,
+            NubAction::Update(..) => ButtonVariant::Success,
+        }
+    }
 }
 
 impl PrimaryAction {
@@ -639,9 +1105,7 @@ impl PrimaryAction {
             PrimaryAction::Install => ts!("instance.content.install.label"),
             PrimaryAction::Reinstall => ts!("instance.content.install.reinstall"),
             PrimaryAction::InstallLatest => ts!("instance.content.install.latest"),
-            PrimaryAction::CheckForUpdates => ts!("instance.content.update.check.label.short"),
-            PrimaryAction::ErrorCheckingForUpdates => ts!("common.error"),
-            PrimaryAction::UpToDate => ts!("instance.content.update.check.up_to_date"),
+            PrimaryAction::Installed => ts!("instance.content.installed"),
             PrimaryAction::Update(..) => ts!("instance.content.update.label"),
         }
     }
@@ -651,9 +1115,7 @@ impl PrimaryAction {
             PrimaryAction::Install => PandoraIcon::Download,
             PrimaryAction::Reinstall => PandoraIcon::Download,
             PrimaryAction::InstallLatest => PandoraIcon::Download,
-            PrimaryAction::CheckForUpdates => PandoraIcon::RefreshCcw,
-            PrimaryAction::ErrorCheckingForUpdates => PandoraIcon::TriangleAlert,
-            PrimaryAction::UpToDate => PandoraIcon::Check,
+            PrimaryAction::Installed => PandoraIcon::Check,
             PrimaryAction::Update(..) => PandoraIcon::Download,
         }
     }
@@ -663,9 +1125,7 @@ impl PrimaryAction {
             PrimaryAction::Install => ButtonVariant::Success,
             PrimaryAction::Reinstall => ButtonVariant::Success,
             PrimaryAction::InstallLatest => ButtonVariant::Success,
-            PrimaryAction::CheckForUpdates => ButtonVariant::Warning,
-            PrimaryAction::ErrorCheckingForUpdates => ButtonVariant::Danger,
-            PrimaryAction::UpToDate => ButtonVariant::Secondary,
+            PrimaryAction::Installed => ButtonVariant::Secondary,
             PrimaryAction::Update(..) => ButtonVariant::Success,
         }
     }
@@ -860,6 +1320,48 @@ impl Render for ModrinthSearchPage {
         Page::new(self.page_path.create_breadcrumb(&self.data, cx))
             .child(h_flex().flex_1().min_h_0().size_full().child(parameters).child(content))
     }
+}
+
+fn extract_modrinth_project_id_from_filename(filename: &str) -> Option<Arc<str>> {
+    let filename = filename.strip_suffix(".disabled").unwrap_or(filename);
+    let filename = filename.strip_suffix(".jar").unwrap_or(filename);
+    let filename = filename.strip_suffix(".zip").unwrap_or(filename);
+
+    if let Some(last_dash_pos) = filename.rfind('-') {
+        let after_last_dash = &filename[last_dash_pos + 1..];
+        if after_last_dash.is_empty() {
+            return None;
+        }
+
+        let first_char = after_last_dash.chars().next().unwrap();
+        if first_char.is_ascii_digit() {
+            let result = filename[..last_dash_pos].to_lowercase();
+            return Some(result.into());
+        }
+
+        if let Some(second_dash_pos) = filename[..last_dash_pos].rfind('-') {
+            let potential_version = &filename[second_dash_pos + 1..last_dash_pos];
+            if !potential_version.is_empty() && potential_version.chars().next()?.is_ascii_digit() {
+                let result = filename[..second_dash_pos].to_lowercase();
+                return Some(result.into());
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_modrinth_project_id_from_url(url: &str) -> Option<Arc<str>> {
+    if let Some(data_pos) = url.find("/data/") {
+        let after_data = &url[data_pos + 6..];
+        if let Some(slash_pos) = after_data.find('/') {
+            let project_id = &after_data[..slash_pos];
+            if !project_id.is_empty() {
+                return Some(project_id.to_lowercase().into());
+            }
+        }
+    }
+    None
 }
 
 fn format_downloads(downloads: usize) -> SharedString {

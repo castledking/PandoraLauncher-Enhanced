@@ -710,11 +710,27 @@ impl BackendState {
 
                 instance_state.reload_immediately.extend(reload);
             },
-            MessageToBackend::SetContentChildEnabled { id, content_id: mod_id, child_id, child_name, child_filename, enabled, delete: _ } => {
+            MessageToBackend::SetContentChildEnabled { id, content_id: mod_id, child_id, child_name, child_filename, enabled, delete } => {
                 let mut instance_state = self.instance_state.write();
                 if let Some(instance) = instance_state.instances.get_mut(id)
                     && let Some((instance_mod, folder)) = instance.try_get_content(mod_id)
                 {
+                    if delete {
+                        let file_to_delete = instance.dot_minecraft_path.join(&*child_filename);
+                        let mut paths_to_try = vec![file_to_delete.clone()];
+                        if let (Some(parent), Some(filename)) = (file_to_delete.parent(), file_to_delete.file_name()) {
+                            paths_to_try.push(parent.join(format!("pandora.{}", filename.to_string_lossy())));
+                        }
+                        for path_to_try in paths_to_try {
+                            if path_to_try.exists() {
+                                if let Err(e) = std::fs::remove_file(&path_to_try) {
+                                    log::error!("Failed to delete child file {:?}: {}", path_to_try, e);
+                                }
+                                break;
+                            }
+                        }
+                    }
+
                     let Some(aux_path) = crate::pandora_aux_path_for_content(instance_mod) else {
                         return;
                     };
@@ -723,7 +739,17 @@ impl BackendState {
 
                     let mut changed = false;
 
-                    if enabled {
+                    if delete {
+                        let child_filename_for_del = child_filename.clone();
+                        changed |= aux.disabled_children.deleted_filenames.insert(child_filename_for_del.clone());
+                        if let Some(ref cid) = child_id {
+                            changed |= aux.disabled_children.disabled_ids.remove(cid);
+                        }
+                        if let Some(ref cname) = child_name {
+                            changed |= aux.disabled_children.disabled_names.remove(cname);
+                        }
+                        changed |= aux.disabled_children.disabled_filenames.remove(&child_filename_for_del);
+                    } else if enabled {
                         if let Some(child_id) = child_id {
                             changed |= aux.disabled_children.disabled_ids.remove(&child_id);
                         }
@@ -731,6 +757,7 @@ impl BackendState {
                             changed |= aux.disabled_children.disabled_names.remove(&child_name);
                         }
                         changed |= aux.disabled_children.disabled_filenames.remove(&child_filename);
+                        changed |= aux.disabled_children.deleted_filenames.remove(&child_filename);
                     } else {
                         if let Some(child_id) = child_id {
                             changed |= aux.disabled_children.disabled_ids.insert(child_id);

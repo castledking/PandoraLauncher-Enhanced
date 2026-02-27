@@ -33,8 +33,8 @@ fn build_http_clients(user_agent: &str, proxy_config: &ProxyConfig, proxy_passwo
     let proxy_url = proxy_config.to_url(proxy_password);
 
     let mut http_builder = reqwest::ClientBuilder::new()
-        .connect_timeout(Duration::from_secs(15))
-        .read_timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(30))
         .redirect(Policy::none())
         .use_rustls_tls()
         .user_agent(user_agent);
@@ -1156,7 +1156,9 @@ impl BackendState {
                     self.send.send_error("Unable to apply icon: unknown format");
                 }
             },
-            None => todo!(),
+            None => {
+                instance_info.instance_fallback_icon = Some(Ustr::from("icons/box.svg"));
+            },
         }
 
         let info_path = instance_dir.join("info_v1.json");

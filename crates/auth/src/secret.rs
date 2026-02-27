@@ -346,14 +346,14 @@ mod inner {
             uuid: Uuid,
             credentials: &AccountCredentials,
         ) -> Result<(), SecretStorageError> {
-            let uuid = uuid.as_hyphenated();
+            let uuid_hyphenated = uuid.as_hyphenated();
             let cm_result = (|| -> Result<(), SecretStorageError> {
-                write_serialize(&format!("PandoraLauncher_MsaRefresh_{}", uuid), credentials.msa_refresh.as_ref())?;
-                write_serialize(&format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid), credentials.msa_refresh_force_client_id.as_ref())?;
-                write_serialize(&format!("PandoraLauncher_MsaAccess_{}", uuid), credentials.msa_access.as_ref())?;
-                write_serialize(&format!("PandoraLauncher_Xbl_{}", uuid), credentials.xbl.as_ref())?;
-                write_serialize(&format!("PandoraLauncher_Xsts_{}", uuid), credentials.xsts.as_ref())?;
-                write_serialize(&format!("PandoraLauncher_AccessToken_{}", uuid), credentials.access_token.as_ref())?;
+                write_serialize(&format!("PandoraLauncher_MsaRefresh_{}", uuid_hyphenated), credentials.msa_refresh.as_ref())?;
+                write_serialize(&format!("PandoraLauncher_MsaRefreshForceClientId_{}", uuid_hyphenated), credentials.msa_refresh_force_client_id.as_ref())?;
+                write_serialize(&format!("PandoraLauncher_MsaAccess_{}", uuid_hyphenated), credentials.msa_access.as_ref())?;
+                write_serialize(&format!("PandoraLauncher_Xbl_{}", uuid_hyphenated), credentials.xbl.as_ref())?;
+                write_serialize(&format!("PandoraLauncher_Xsts_{}", uuid_hyphenated), credentials.xsts.as_ref())?;
+                write_serialize(&format!("PandoraLauncher_AccessToken_{}", uuid_hyphenated), credentials.access_token.as_ref())?;
                 Ok(())
             })();
 

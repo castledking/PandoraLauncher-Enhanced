@@ -32,9 +32,6 @@ modrinth:
       en: Ornithe
     rift:
       en: Rift
-    # resourcepacks
-    minecraft:
-      en: Resource Pack
     # datapacks
     datapack:
       en: Data Pack
@@ -250,6 +247,10 @@ common:
     en: <unset>
   custom:
     en: Custom
+  cancel:
+    en: Cancel
+  ok:
+    en: OK
   nav:
     top:
       en: Go to Top
@@ -682,6 +683,8 @@ settings:
     en: Settings
   interface:
     en: Interface
+  network:
+    en: Network
   theme:
     title:
       en: Theme
@@ -703,3 +706,24 @@ settings:
       en: Hide main window on launch
     open_game_output:
       en: Open game output on launch
+  proxy:
+    title:
+      en: Proxy Settings
+    enabled:
+      en: Enable Proxy
+    protocol:
+      en: Protocol
+    host:
+      en: Host
+    port:
+      en: Port
+    auth:
+      en: Authentication
+    use_auth:
+      en: Use Authentication
+    username:
+      en: Username
+    password:
+      en: Password
+    launcher_only_note:
+      en: Note - Proxy settings only apply to the launcher, not the game itself

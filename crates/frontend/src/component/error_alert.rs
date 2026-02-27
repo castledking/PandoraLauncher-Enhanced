@@ -1,6 +1,8 @@
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme as _, IconName, StyledExt, h_flex, v_flex};
 
+use crate::icon::PandoraIcon;
+
 #[derive(IntoElement)]
 pub struct ErrorAlert {
     id: ElementId,
@@ -50,7 +52,7 @@ impl RenderOnce for ErrorAlert {
                     .flex_1()
                     .overflow_hidden()
                     .gap(gap)
-                    .child(div().mt(px(6.0)).child(IconName::CircleX))
+                    .child(div().mt(px(6.0)).child(PandoraIcon::CircleX))
                     .child(
                         v_flex()
                             .overflow_hidden()

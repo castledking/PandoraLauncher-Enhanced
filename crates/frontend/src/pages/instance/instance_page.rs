@@ -5,22 +5,12 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Icon, IconName,
-    button::{Button, ButtonVariants},
-    h_flex,
-    tab::{Tab, TabBar},
+    button::{Button, ButtonVariants}, h_flex, tab::{Tab, TabBar}, Icon, IconName
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    component::page_path::PagePath,
-    entity::{DataEntities, instance::InstanceEntry},
-    pages::instance::{
-        logs_subpage::InstanceLogsSubpage, mods_subpage::InstanceModsSubpage,
-        quickplay_subpage::InstanceQuickplaySubpage, resource_packs_subpage::InstanceResourcePacksSubpage,
-        settings_subpage::InstanceSettingsSubpage,
-    },
-    root, ui,
+    component::{page::Page, page_path::PagePath}, entity::{DataEntities, instance::InstanceEntry}, icon::PandoraIcon, pages::instance::{logs_subpage::InstanceLogsSubpage, mods_subpage::InstanceModsSubpage, quickplay_subpage::InstanceQuickplaySubpage, resource_packs_subpage::InstanceResourcePacksSubpage, settings_subpage::InstanceSettingsSubpage}, root, ts, ui
 };
 
 pub struct InstancePage {
@@ -32,14 +22,7 @@ pub struct InstancePage {
 }
 
 impl InstancePage {
-    pub fn new(
-        instance_id: InstanceID,
-        subpage: InstanceSubpageType,
-        page_path: PagePath,
-        data: &DataEntities,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(instance_id: InstanceID, subpage: InstanceSubpageType, page_path: PagePath, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let instance = data.instances.read(cx).entries.get(&instance_id).unwrap().clone();
 
         let subpage = subpage.create(&instance, data, data.backend_handle.clone(), window, cx);
@@ -71,8 +54,6 @@ impl Render for InstancePage {
             InstanceSubpage::Settings(_) => 4,
         };
 
-        let play_icon = Icon::empty().path("icons/play.svg");
-
         let instance = self.instance.read(cx);
         let id = instance.id;
         let name = instance.name.clone();
@@ -80,17 +61,19 @@ impl Render for InstancePage {
 
         let button = match instance.status {
             InstanceStatus::NotRunning => {
-                Button::new("start_instance").success().icon(play_icon).label("Start Instance").on_click(
+                Button::new("start_instance").success().icon(PandoraIcon::Play).label(ts!("instance.start.label")).on_click(
                     move |_, window, cx| {
                         root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
                     },
                 )
             },
-            InstanceStatus::Launching => Button::new("launching").warning().icon(IconName::Loader).label("Starting..."),
+            InstanceStatus::Launching => {
+                Button::new("launching").warning().icon(PandoraIcon::Loader).label(ts!("instance.start.starting"))
+            },
             InstanceStatus::Running => Button::new("kill_instance")
                 .danger()
-                .icon(IconName::Close)
-                .label("Kill Instance")
+                .icon(PandoraIcon::Close)
+                .label(ts!("instance.kill"))
                 .on_click(move |_, _, _| {
                     backend_handle.send(MessageToBackend::KillInstance { id });
                 }),
@@ -98,48 +81,43 @@ impl Render for InstancePage {
 
         let open_dot_minecraft_button = Button::new("open_dot_minecraft")
             .info()
-            .icon(IconName::FolderOpen)
-            .label("Open .minecraft folder")
+            .icon(PandoraIcon::FolderOpen)
+            .label(ts!("instance.open_folder"))
             .on_click({
-                let dot_minecraft = instance.dot_minecraft_folder.clone();
-                move |_, window, cx| {
-                    crate::open_folder(&dot_minecraft, window, cx);
-                }
-            });
+            let dot_minecraft = instance.dot_minecraft_folder.clone();
+            move |_, window, cx| {
+                crate::open_folder(&dot_minecraft, window, cx);
+            }
+        });
 
         let breadcrumb = self.page_path.create_breadcrumb(&self.data, cx);
-        ui::page(
-            cx,
-            h_flex()
-                .gap_8()
-                .child(breadcrumb)
-                .child(h_flex().gap_3().child(button).child(open_dot_minecraft_button)),
-        )
-        .child(
-            TabBar::new("bar")
-                .prefix(div().w_4())
-                .selected_index(selected_index)
-                .underline()
-                .child(Tab::new().label("Quickplay"))
-                .child(Tab::new().label("Logs"))
-                .child(Tab::new().label("Mods"))
-                .child(Tab::new().label("Resource Packs"))
-                .child(Tab::new().label("Settings"))
-                .on_click(cx.listener(|page, index, window, cx| {
-                    let page_type = match *index {
-                        0 => InstanceSubpageType::Quickplay,
-                        1 => InstanceSubpageType::Logs,
-                        2 => InstanceSubpageType::Mods,
-                        3 => InstanceSubpageType::ResourcePacks,
-                        4 => InstanceSubpageType::Settings,
-                        _ => {
-                            return;
-                        },
-                    };
-                    page.set_subpage(page_type, window, cx);
-                })),
-        )
-        .child(self.subpage.clone().into_any_element())
+
+        Page::new(h_flex().gap_8().child(breadcrumb).child(h_flex().gap_3().child(button).child(open_dot_minecraft_button)))
+            .child(
+                TabBar::new("bar")
+                    .prefix(div().w_4())
+                    .selected_index(selected_index)
+                    .underline()
+                    .child(Tab::new().label(ts!("instance.quickplay")))
+                    .child(Tab::new().label(ts!("instance.logs.title")))
+                    .child(Tab::new().label(ts!("instance.content.mods")))
+                    .child(Tab::new().label(ts!("instance.content.resourcepacks")))
+                    .child(Tab::new().label(ts!("settings.title")))
+                    .on_click(cx.listener(|page, index, window, cx| {
+                        let page_type = match *index {
+                            0 => InstanceSubpageType::Quickplay,
+                            1 => InstanceSubpageType::Logs,
+                            2 => InstanceSubpageType::Mods,
+                            3 => InstanceSubpageType::ResourcePacks,
+                            4 => InstanceSubpageType::Settings,
+                            _ => {
+                                return;
+                            },
+                        };
+                        page.set_subpage(page_type, window, cx);
+                    })),
+            )
+            .child(self.subpage.clone().into_any_element())
     }
 }
 
@@ -160,24 +138,24 @@ impl InstanceSubpageType {
         data: &DataEntities,
         backend_handle: BackendHandle,
         window: &mut gpui::Window,
-        cx: &mut App,
+        cx: &mut App
     ) -> InstanceSubpage {
         match self {
-            InstanceSubpageType::Quickplay => InstanceSubpage::Quickplay(
-                cx.new(|cx| InstanceQuickplaySubpage::new(instance, backend_handle, window, cx)),
-            ),
-            InstanceSubpageType::Logs => {
-                InstanceSubpage::Logs(cx.new(|cx| InstanceLogsSubpage::new(instance, backend_handle, window, cx)))
-            },
-            InstanceSubpageType::Mods => {
-                InstanceSubpage::Mods(cx.new(|cx| InstanceModsSubpage::new(instance, backend_handle, window, cx)))
-            },
-            InstanceSubpageType::ResourcePacks => InstanceSubpage::ResourcePacks(
-                cx.new(|cx| InstanceResourcePacksSubpage::new(instance, backend_handle, window, cx)),
-            ),
-            InstanceSubpageType::Settings => InstanceSubpage::Settings(
-                cx.new(|cx| InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)),
-            ),
+            InstanceSubpageType::Quickplay => InstanceSubpage::Quickplay(cx.new(|cx| {
+                InstanceQuickplaySubpage::new(instance, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::Logs => InstanceSubpage::Logs(cx.new(|cx| {
+                InstanceLogsSubpage::new(instance, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::Mods => InstanceSubpage::Mods(cx.new(|cx| {
+                InstanceModsSubpage::new(instance, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::ResourcePacks => InstanceSubpage::ResourcePacks(cx.new(|cx| {
+                InstanceResourcePacksSubpage::new(instance, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::Settings => InstanceSubpage::Settings(cx.new(|cx| {
+                InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)
+            })),
         }
     }
 }

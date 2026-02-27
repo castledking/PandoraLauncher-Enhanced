@@ -13,7 +13,7 @@ use gpui_component::{
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 
-use crate::ts;
+use crate::{icon::PandoraIcon, ts};
 
 struct CachedShapedLines {
     item_lines: LruCache<usize, WrappedLines, FxBuildHasher>,
@@ -902,7 +902,7 @@ impl ReadonlyTextFieldWithControls {
 
 impl Render for ReadonlyTextFieldWithControls {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let search = Input::new(&self.search_state).prefix(Icon::new(IconName::Search).small());
+        let search = Input::new(&self.search_state).prefix(Icon::new(PandoraIcon::Search).small());
 
         let bar = h_flex()
             .w_full()

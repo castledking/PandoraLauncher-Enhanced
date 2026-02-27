@@ -9,3 +9,4 @@ rustup-init.exe
 config.toml
 build_windows.ps1
 minisign.pub
+.idea/

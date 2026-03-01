@@ -180,7 +180,7 @@ impl Render for SyncingPage {
                 .w_full()
                 .gap_2()
                 .child(Input::new(&self.custom_input_state).max_w_128())
-                .child(Button::new("custom_file").label(ts!("instance.sync.sync_file")).on_click(cx.listener(|page, _, _, cx| {
+                .child(Button::new("custom_file").label(ts!("instance.sync.sync_file")).on_click(cx.listener(|page, _, window, cx| {
                     let input = page.custom_input_state.read(cx).value();
                     let input = input.as_str().trim_ascii();
                     if SafePath::new(input).is_some() {
@@ -196,9 +196,11 @@ impl Render for SyncingPage {
                             page.pending.insert(name.clone());
                             page.update_sync_state(cx);
                         }
+
+                        page.custom_input_state.update(cx, |state, cx| state.set_value("", window, cx));
                     }
                 })))
-                .child(Button::new("custom_folder").label(ts!("instance.sync.sync_folder")).on_click(cx.listener(|page, _, _, cx| {
+                .child(Button::new("custom_folder").label(ts!("instance.sync.sync_folder")).on_click(cx.listener(|page, _, window, cx| {
                     let input = page.custom_input_state.read(cx).value();
                     let input = input.as_str().trim_ascii();
                     if SafePath::new(input).is_some() {
@@ -214,6 +216,8 @@ impl Render for SyncingPage {
                             page.pending.insert(name.clone());
                             page.update_sync_state(cx);
                         }
+
+                        page.custom_input_state.update(cx, |state, cx| state.set_value("", window, cx));
                     }
                 }))));
 

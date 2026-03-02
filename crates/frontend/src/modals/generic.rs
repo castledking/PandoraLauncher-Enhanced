@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bridge::modal_action::{ModalAction, ProgressTrackerFinishType};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    IconName, WindowExt, button::{Button, ButtonVariant, ButtonVariants}, dialog::DialogButtonProps, notification::Notification, v_flex
+    WindowExt, button::{Button, ButtonVariant, ButtonVariants}, notification::Notification, v_flex
 };
 
 use crate::{component::{
@@ -25,7 +25,7 @@ pub fn show_notification_with_note(
     cx: &mut App,
     error_title: SharedString,
     modal_action: ModalAction,
-    mut notification: Notification
+    notification: Notification
 ) {
     let notification = notification
         .autohide(false)

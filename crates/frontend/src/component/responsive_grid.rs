@@ -1,7 +1,4 @@
-use gpui::{
-    AnyElement, AvailableSpace, DefiniteLength, Element, InteractiveElement, Interactivity, IntoElement, ParentElement,
-    Pixels, Point, Size, StyleRefinement, Styled, UniformList, px, size,
-};
+use gpui::{size, AnyElement, AvailableSpace, Element, InteractiveElement, Interactivity, IntoElement, ParentElement, Pixels, Point, Size, StyleRefinement, Styled};
 
 pub struct ResponsiveGrid {
     interactivity: Interactivity,
@@ -171,7 +168,7 @@ impl Element for ResponsiveGrid {
                 let horizontal_count =
                     (bounds_width_plus_padding / min_element_width_plus_padding).floor().max(1.0) as usize;
 
-                let (mut width, horizontal_count) = if horizontal_count >= children_count {
+                let (width, horizontal_count) = if horizontal_count >= children_count {
                     (element_size.width, children_count)
                 } else {
                     let padding_width = gap_width * (horizontal_count - 1);

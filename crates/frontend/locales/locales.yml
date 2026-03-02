@@ -353,10 +353,14 @@ instance:
     en: Kill Instance
   delete:
     en: Delete this instance
+  delete_instance:
+    en: Delete this instance
   create_shortcut:
     en: Create shortcut
   open_folder:
     en: Open .minecraft folder
+  instance_folder:
+    en: Instance Folder
   create:
     en: Create Instance
 

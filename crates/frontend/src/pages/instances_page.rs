@@ -1,7 +1,7 @@
 use bridge::handle::BackendHandle;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    IconName, IndexPath, button::{Button, ButtonVariants}, h_flex, scroll::ScrollableElement, select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState}, table::{DataTable, TableDelegate, TableState}
+    IndexPath, button::{Button, ButtonVariants}, h_flex, select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState}, table::{DataTable, TableDelegate, TableState}
 };
 use strum::IntoEnumIterator;
 

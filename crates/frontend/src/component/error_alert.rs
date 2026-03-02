@@ -1,5 +1,5 @@
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme as _, IconName, StyledExt, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, StyledExt, h_flex, v_flex};
 
 use crate::icon::PandoraIcon;
 

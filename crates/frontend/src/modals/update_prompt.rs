@@ -1,10 +1,7 @@
 use crate::ts;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU8, Ordering},
-};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU8, Ordering}};
 
-use bridge::{handle::BackendHandle, instance::InstanceID, modal_action::ModalAction};
+use bridge::{handle::BackendHandle, modal_action::ModalAction};
 use gpui::{prelude::*, *};
 use gpui_component::{
     Disableable, WindowExt,

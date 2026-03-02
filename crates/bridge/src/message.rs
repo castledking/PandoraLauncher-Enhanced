@@ -1,9 +1,7 @@
 use std::{
-    collections::{BTreeMap, HashMap}, ffi::OsString, path::{Path, PathBuf}, sync::Arc
+    collections::BTreeMap, ffi::OsString, path::{Path, PathBuf}, sync::Arc
 };
 
-use enumset::EnumSet;
-use rustc_hash::FxHashMap;
 use schema::{
     backend_config::{BackendConfig, ProxyConfig, SyncTargets},
     instance::{
@@ -203,6 +201,10 @@ pub enum MessageToBackend {
         id: InstanceID,
         path: PathBuf,
     },
+    RelocateInstance {
+        id: InstanceID,
+        path: PathBuf
+    },
     InstallUpdate {
         update: UpdatePrompt,
         modal_action: ModalAction,
@@ -246,6 +248,7 @@ pub enum MessageToFrontend {
         id: InstanceID,
         name: Ustr,
         icon: Option<Arc<[u8]>>,
+        root_path: Arc<Path>,
         dot_minecraft_folder: Arc<Path>,
         configuration: InstanceConfiguration,
         worlds_state: Arc<AtomicBridgeDataLoadState>,
@@ -260,6 +263,7 @@ pub enum MessageToFrontend {
         id: InstanceID,
         name: Ustr,
         icon: Option<Arc<[u8]>>,
+        root_path: Arc<Path>,
         dot_minecraft_folder: Arc<Path>,
         configuration: InstanceConfiguration,
         status: InstanceStatus,
@@ -388,6 +392,10 @@ impl BridgeDataLoadState {
             BridgeDataLoadState::Loading => false,
             BridgeDataLoadState::Loaded => false,
         }
+    }
+
+    pub fn is_not_unloaded(self) -> bool {
+        self != Self::Unloaded
     }
 }
 

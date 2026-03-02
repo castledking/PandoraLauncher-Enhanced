@@ -17,3 +17,4 @@ strum.workspace = true
 relative-path.workspace = true
 sanitize-filename.workspace = true
 rustc-hash.workspace = true
+indexmap.workspace = true

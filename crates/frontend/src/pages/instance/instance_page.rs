@@ -5,12 +5,12 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::{Button, ButtonVariants}, h_flex, tab::{Tab, TabBar}, Icon, IconName
+    button::{Button, ButtonVariants}, h_flex, tab::{Tab, TabBar}
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    component::{page::Page, page_path::PagePath}, entity::{DataEntities, instance::InstanceEntry}, icon::PandoraIcon, pages::instance::{logs_subpage::InstanceLogsSubpage, mods_subpage::InstanceModsSubpage, quickplay_subpage::InstanceQuickplaySubpage, resource_packs_subpage::InstanceResourcePacksSubpage, settings_subpage::InstanceSettingsSubpage}, root, ts, ui
+    component::{page::Page, page_path::PagePath}, entity::{DataEntities, instance::InstanceEntry}, icon::PandoraIcon, pages::instance::{logs_subpage::InstanceLogsSubpage, mods_subpage::InstanceModsSubpage, quickplay_subpage::InstanceQuickplaySubpage, resource_packs_subpage::InstanceResourcePacksSubpage, settings_subpage::InstanceSettingsSubpage}, root, ts
 };
 
 pub struct InstancePage {

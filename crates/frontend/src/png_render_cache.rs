@@ -133,7 +133,7 @@ impl PngRenderCache {
                         } else {
                             FilterType::Nearest
                         };
-                        image = image.resize_exact(width, height, filter);
+                        image = image.resize(width, height, filter);
                     }
                 },
             }

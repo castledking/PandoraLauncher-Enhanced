@@ -1,17 +1,16 @@
-use std::{borrow::Cow, cmp::Ordering, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend, meta::MetadataRequest};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Selectable, Sizable, WindowExt,
-    button::{Button, ButtonGroup, ButtonVariants},
+    ActiveTheme as _, Disableable, Sizable, WindowExt,
+    button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent},
     notification::{Notification, NotificationType},
     select::{SearchableVec, Select, SelectEvent, SelectState},
     skeleton::Skeleton,
-    spinner::Spinner,
     v_flex,
 };
 use schema::{
@@ -28,7 +27,7 @@ use schema::{
 use strum::IntoEnumIterator;
 
 use crate::{
-    ts,
+    component::{horizontal_sections::HorizontalSections, path_label::PathLabel},
     entity::{
         DataEntities,
         instance::InstanceEntry,
@@ -37,8 +36,10 @@ use crate::{
             TypelessFrontendMetadataResult,
         },
     },
+    icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::instances_page::VersionList,
+    ts,
 };
 
 #[derive(PartialEq, Eq)]
@@ -69,12 +70,14 @@ pub struct InstanceSettingsSubpage {
     jvm_flags_enabled: bool,
     jvm_flags_input_state: Entity<InputState>,
     jvm_binary_enabled: bool,
-    jvm_binary_path: Option<Arc<Path>>,
+    jvm_binary_path: Option<PathLabel>,
+
+    instance_root_label: PathLabel,
 
     override_glfw_enabled: bool,
-    override_glfw_path: Option<Arc<Path>>,
+    override_glfw_path: Option<PathLabel>,
     override_openal_enabled: bool,
-    override_openal_path: Option<Arc<Path>>,
+    override_openal_path: Option<PathLabel>,
 
     #[cfg(target_os = "linux")]
     use_mangohud: bool,
@@ -116,6 +119,8 @@ impl InstanceSettingsSubpage {
         let linux_wrapper = entry.configuration.linux_wrapper.unwrap_or_default();
         let system_libraries = entry.configuration.system_libraries.clone().unwrap_or_default();
 
+        let instance_root_label = PathLabel::new(entry.root_path.clone(), true);
+
         let glfw_path = system_libraries.glfw.get_or_auto(&*AUTO_LIBRARY_PATH_GLFW);
         let openal_path = system_libraries.openal.get_or_auto(&*AUTO_LIBRARY_PATH_OPENAL);
 
@@ -142,13 +147,10 @@ impl InstanceSettingsSubpage {
         cx.subscribe_in(&loader_select_state, window, Self::on_loader_selected).detach();
 
         cx.observe_in(instance, window, |page, instance, window, cx| {
+            let entry = instance.read(cx);
+            page.instance_root_label = PathLabel::new(entry.root_path.clone(), true);
             if page.loader_version_select_state.read(cx).selected_index(cx).is_none() {
-                let version = instance
-                    .read(cx)
-                    .configuration
-                    .preferred_loader_version
-                    .map(|s| s.as_str())
-                    .unwrap_or("Latest");
+                let version = entry.configuration.preferred_loader_version.map(|s| s.as_str()).unwrap_or("Latest");
                 page.loader_version_select_state.update(cx, |select_state, cx| {
                     select_state.set_selected_value(&version, window, cx);
                 });
@@ -198,11 +200,12 @@ impl InstanceSettingsSubpage {
             jvm_flags_enabled: jvm_flags.enabled,
             jvm_flags_input_state,
             jvm_binary_enabled: jvm_binary.enabled,
-            jvm_binary_path: jvm_binary.path.clone(),
+            jvm_binary_path: jvm_binary.path.clone().map(|path| PathLabel::new(path, false)),
             override_glfw_enabled: system_libraries.override_glfw,
-            override_glfw_path: glfw_path,
+            override_glfw_path: glfw_path.map(|path| PathLabel::new(path, false)),
             override_openal_enabled: system_libraries.override_openal,
-            override_openal_path: openal_path,
+            override_openal_path: openal_path.map(|path| PathLabel::new(path, false)),
+            instance_root_label,
             #[cfg(target_os = "linux")]
             use_mangohud: linux_wrapper.use_mangohud,
             #[cfg(target_os = "linux")]
@@ -543,16 +546,16 @@ impl InstanceSettingsSubpage {
     fn get_jvm_binary_configuration(&self) -> InstanceJvmBinaryConfiguration {
         InstanceJvmBinaryConfiguration {
             enabled: self.jvm_binary_enabled,
-            path: self.jvm_binary_path.clone(),
+            path: self.jvm_binary_path.as_ref().map(PathLabel::path),
         }
     }
 
     fn get_system_libraries_configuration(&self) -> InstanceSystemLibrariesConfiguration {
         InstanceSystemLibrariesConfiguration {
             override_glfw: self.override_glfw_enabled,
-            glfw: Self::create_lwjgl_library_path(&self.override_glfw_path, &*AUTO_LIBRARY_PATH_GLFW),
+            glfw: Self::create_lwjgl_library_path(&self.override_glfw_path.as_ref().map(PathLabel::path), &*AUTO_LIBRARY_PATH_GLFW),
             override_openal: self.override_openal_enabled,
-            openal: Self::create_lwjgl_library_path(&self.override_openal_path, &*AUTO_LIBRARY_PATH_OPENAL),
+            openal: Self::create_lwjgl_library_path(&self.override_openal_path.as_ref().map(PathLabel::path), &*AUTO_LIBRARY_PATH_OPENAL),
         }
     }
 
@@ -637,35 +640,35 @@ impl Render for InstanceSettingsSubpage {
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
 
-        let jvm_binary_label = opt_path_to_string(&self.jvm_binary_path);
-        let glfw_path_label = opt_path_to_string(&self.override_glfw_path);
-        let openal_path_label = opt_path_to_string(&self.override_openal_path);
-
-        let mut basic_content = v_flex().gap_4().size_full().child(crate::labelled(
-            "Instance Name",
-            h_flex().gap_2().child(Input::new(&self.new_name_input_state)).when(
-                self.new_name_change_state != NewNameChangeState::NoChange,
-                |this| {
-                    if self.new_name_change_state == NewNameChangeState::InvalidName {
-                        this.child("Invalid name")
-                    } else {
-                        this.child(Button::new("setname").label("Update").on_click({
-                            let instance = self.instance.clone();
-                            let backend_handle = self.backend_handle.clone();
-                            let new_name = self.new_name_input_state.read(cx).value();
-                            move |_, _, cx| {
-                                let instance = instance.read(cx);
-                                let id = instance.id;
-                                backend_handle.send(MessageToBackend::RenameInstance {
-                                    id,
-                                    name: new_name.as_str().into(),
-                                });
-                            }
-                        }))
-                    }
-                },
-            ),
-        ));
+        let mut basic_content = v_flex()
+            .gap_4()
+            .size_full()
+            .child(crate::labelled(
+                ts!("instance.instance_name"),
+                h_flex()
+                    .gap_2()
+                    .child(Input::new(&self.new_name_input_state))
+                    .when(self.new_name_change_state != NewNameChangeState::NoChange, |this| {
+                        if self.new_name_change_state == NewNameChangeState::InvalidName {
+                            this.child(ts!("instance.invalid_name"))
+                        } else {
+                            this.child(Button::new("setname").label(ts!("common.update")).on_click({
+                                let instance = self.instance.clone();
+                                let backend_handle = self.backend_handle.clone();
+                                let new_name = self.new_name_input_state.read(cx).value();
+                                move |_, _, cx| {
+                                    let instance = instance.read(cx);
+                                    let id = instance.id;
+                                    backend_handle.send(MessageToBackend::RenameInstance {
+                                        id,
+                                        name: new_name.as_str().into(),
+                                    });
+                                }
+                            }))
+                        }
+                    })
+                )
+            );
 
         let mut version_content = v_flex().gap_2();
 
@@ -784,142 +787,84 @@ impl Render for InstanceSettingsSubpage {
                     ))
                     .child(Input::new(&self.jvm_flags_input_state).disabled(!jvm_flags_enabled)),
             )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new("jvm_binary")
-                            .label("Override JVM Binary")
-                            .checked(jvm_binary_enabled)
-                            .on_click(cx.listener(|page, value, _, cx| {
-                                if page.jvm_binary_enabled != *value {
-                                    page.jvm_binary_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
-                                        id: page.instance_id,
-                                        jvm_binary: page.get_jvm_binary_configuration(),
-                                    });
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("select_jvm_binary")
-                            .success()
-                            .label(jvm_binary_label)
-                            .disabled(!jvm_binary_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.select_file(
-                                    "Select Jvm Binary",
-                                    |this, path| {
-                                        this.jvm_binary_path = path;
-                                        this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
-                                            id: this.instance_id,
-                                            jvm_binary: this.get_jvm_binary_configuration(),
-                                        });
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
+            .child(v_flex()
+                .gap_1()
+                .child(Checkbox::new("jvm_binary").label(ts!("instance.jvm_binary")).checked(jvm_binary_enabled).on_click(cx.listener(|page, value, _, cx| {
+                    if page.jvm_binary_enabled != *value {
+                        page.jvm_binary_enabled = *value;
+                        page.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                            id: page.instance_id,
+                            jvm_binary: page.get_jvm_binary_configuration()
+                        });
+                        cx.notify();
+                    }
+                })))
+                .child(PathLabel::button_opt(&self.jvm_binary_path, "select_jvm_binary").disabled(!jvm_binary_enabled).on_click(cx.listener(|this, _, window, cx| {
+                    this.select_file(ts!("instance.select_jvm_binary"), |this, path| {
+                        this.jvm_binary_path = path.map(|path| PathLabel::new(path, false));
+                        this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                            id: this.instance_id,
+                            jvm_binary: this.get_jvm_binary_configuration()
+                        });
+                    }, window, cx);
+                })))
             )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new("wrapper_command")
-                            .label(ts!("instance.wrapper_command"))
-                            .checked(wrapper_command_enabled)
-                            .on_click(cx.listener(|page, value, _, cx| {
-                                if page.wrapper_command_enabled != *value {
-                                    page.wrapper_command_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceWrapperCommand {
-                                        id: page.instance_id,
-                                        wrapper_command: page.get_wrapper_command_configuration(cx),
-                                    });
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(Input::new(&self.wrapper_command_input_state).disabled(!wrapper_command_enabled)),
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new("system_glfw")
-                            .label(ts!("instance.glfw_lib"))
-                            .checked(self.override_glfw_enabled)
-                            .on_click(cx.listener(|page, value, _, cx| {
-                                if page.override_glfw_enabled != *value {
-                                    page.override_glfw_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                        id: page.instance_id,
-                                        system_libraries: page.get_system_libraries_configuration(),
-                                    });
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("select_glfw")
-                            .success()
-                            .label(glfw_path_label)
-                            .disabled(!self.override_glfw_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.select_file(
-                                    ts!("instance.select_glfw_lib"),
-                                    |this, path| {
-                                        this.override_glfw_path = path;
-                                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                            id: this.instance_id,
-                                            system_libraries: this.get_system_libraries_configuration(),
-                                        });
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new("system_openal")
-                            .label(ts!("instance.openal_lib"))
-                            .checked(self.override_openal_enabled)
-                            .on_click(cx.listener(|page, value, _, cx| {
-                                if page.override_openal_enabled != *value {
-                                    page.override_openal_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                        id: page.instance_id,
-                                        system_libraries: page.get_system_libraries_configuration(),
-                                    });
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("select_openal")
-                            .success()
-                            .label(openal_path_label)
-                            .disabled(!self.override_openal_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.select_file(
-                                    ts!("instance.select_openal_lib"),
-                                    |this, path| {
-                                        this.override_openal_path = path;
-                                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                            id: this.instance_id,
-                                            system_libraries: this.get_system_libraries_configuration(),
-                                        });
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
+            .child(v_flex()
+                .gap_1()
+                .child(Checkbox::new("system_glfw").label(ts!("instance.glfw_lib")).checked(self.override_glfw_enabled).on_click(cx.listener(|page, value, _, cx| {
+                    if page.override_glfw_enabled != *value {
+                        page.override_glfw_enabled = *value;
+                        page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                            id: page.instance_id,
+                            system_libraries: page.get_system_libraries_configuration()
+                        });
+                        cx.notify();
+                    }
+                })))
+                .child(PathLabel::button_opt(&self.override_glfw_path, "select_glfw").disabled(!self.override_glfw_enabled).on_click(cx.listener(|this, _, window, cx| {
+                    this.select_file(ts!("instance.select_glfw_lib"), |this, path| {
+                        this.override_glfw_path = path.map(|path| PathLabel::new(path, false));
+                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                            id: this.instance_id,
+                            system_libraries: this.get_system_libraries_configuration()
+                        });
+                    }, window, cx);
+                })))
+            ).child(v_flex()
+                .gap_1()
+                .child(Checkbox::new("system_openal").label(ts!("instance.openal_lib")).checked(self.override_openal_enabled).on_click(cx.listener(|page, value, _, cx| {
+                    if page.override_openal_enabled != *value {
+                        page.override_openal_enabled = *value;
+                        page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                            id: page.instance_id,
+                            system_libraries: page.get_system_libraries_configuration()
+                        });
+                        cx.notify();
+
+                    }
+                })))
+                .child(PathLabel::button_opt(&self.override_openal_path, "select_openal").disabled(!self.override_openal_enabled).on_click(cx.listener(|this, _, window, cx| {
+                    this.select_file(ts!("instance.select_openal_lib"), |this, path| {
+                        this.override_openal_path = path.map(|path| PathLabel::new(path, false));
+                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                            id: this.instance_id,
+                            system_libraries: this.get_system_libraries_configuration()
+                        });
+                    }, window, cx);
+                })))
+            ).child(v_flex()
+                .gap_1()
+                .child(Checkbox::new("wrapper_command").label(ts!("instance.wrapper_command")).checked(wrapper_command_enabled).on_click(cx.listener(|page, value, _, cx| {
+                    if page.wrapper_command_enabled != *value {
+                        page.wrapper_command_enabled = *value;
+                        page.backend_handle.send(MessageToBackend::SetInstanceWrapperCommand {
+                            id: page.instance_id,
+                            wrapper_command: page.get_wrapper_command_configuration(cx)
+                        });
+                        cx.notify();
+                    }
+                })))
+                .child(Input::new(&self.wrapper_command_input_state).disabled(!wrapper_command_enabled))
             );
 
         #[cfg(target_os = "linux")]
@@ -994,7 +939,31 @@ impl Render for InstanceSettingsSubpage {
         let actions_content = v_flex()
             .gap_4()
             .size_full()
-            .child(Button::new("shortcut").label("Create shortcut").success().on_click({
+            .child(crate::labelled(
+                ts!("instance.instance_folder"),
+                Button::new("relocate").icon(PandoraIcon::Folder).child(self.instance_root_label.clone()).success().on_click({
+                    let instance = self.instance.clone();
+                    let backend_handle = self.backend_handle.clone();
+                    move |_: &ClickEvent, _, cx| {
+                        let user_dirs = directories::UserDirs::new();
+                        let directory = user_dirs.as_ref()
+                            .and_then(directories::UserDirs::desktop_dir).unwrap_or(Path::new("."));
+
+                        let instance = instance.read(cx);
+                        let id = instance.id;
+
+                        let receiver = cx.prompt_for_new_path(directory, Some(instance.name.as_str()));
+                        let backend_handle = backend_handle.clone();
+                        cx.spawn(async move |_| {
+                            let Ok(Ok(Some(path))) = receiver.await else {
+                                return;
+                            };
+                            backend_handle.send(MessageToBackend::RelocateInstance { id, path });
+                        }).detach();
+                    }
+                })
+            ))
+            .child(Button::new("shortcut").label(ts!("instance.create_shortcut")).success().on_click({
                 let instance = self.instance.clone();
                 let backend_handle = self.backend_handle.clone();
                 move |_: &ClickEvent, _, cx| {
@@ -1023,7 +992,7 @@ impl Render for InstanceSettingsSubpage {
                     .detach();
                 }
             }))
-            .child(Button::new("delete").label("Delete this instance").danger().on_click({
+            .child(Button::new("delete").label(ts!("instance.delete_instance")).danger().on_click({
                 let instance = self.instance.clone();
                 let backend_handle = self.backend_handle.clone();
                 move |click: &ClickEvent, window, cx| {
@@ -1045,16 +1014,12 @@ impl Render for InstanceSettingsSubpage {
                 }
             }));
 
-        let sections = h_flex()
+        let sections = HorizontalSections::new()
             .size_full()
-            .justify_evenly()
-            .items_start()
             .p_4()
-            .gap_4()
+            .gap_8()
             .child(basic_content)
-            .child(div().bg(cx.theme().border).h_full().min_w_px().max_w_px().w_px())
             .child(runtime_content)
-            .child(div().bg(cx.theme().border).h_full().min_w_px().max_w_px().w_px())
             .child(actions_content);
 
         v_flex().p_4().size_full().child(header).child(
@@ -1065,13 +1030,5 @@ impl Render for InstanceSettingsSubpage {
                 .border_color(theme.border)
                 .child(sections),
         )
-    }
-}
-
-fn opt_path_to_string(path: &Option<Arc<Path>>) -> SharedString {
-    if let Some(path) = path {
-        SharedString::new(path.to_string_lossy())
-    } else {
-        SharedString::new_static("<unset>")
     }
 }

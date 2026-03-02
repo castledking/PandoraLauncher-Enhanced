@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bridge::{handle::BackendHandle, message::{EmbeddedOrRaw, MessageToBackend}};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, IconName, Selectable, WindowExt, alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dialog::{Dialog, DialogFooter}, h_flex, input::{Input, InputEvent, InputState}, select::{Select, SelectState}, skeleton::Skeleton, v_flex
+    ActiveTheme, Selectable, WindowExt, alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dialog::Dialog, h_flex, input::{Input, InputEvent, InputState}, select::{Select, SelectState}, skeleton::Skeleton, v_flex
 };
 use schema::{loader::Loader, version_manifest::{MinecraftVersionManifest, MinecraftVersionType}};
 
@@ -195,7 +195,7 @@ impl CreateInstanceModalState {
         }
     }
 
-    pub fn render(&mut self, modal: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+    pub fn render(&mut self, modal: Dialog, _window: &mut Window, cx: &mut Context<Self>) -> Dialog {
         if let Some(error) = self.error_loading_versions.clone() {
             let error_widget = Alert::new("error", format!("{}", error))
                 .icon(PandoraIcon::CircleX)
@@ -294,7 +294,6 @@ impl CreateInstanceModalState {
             })));
 
         let name_is_invalid = self.name_invalid;
-        let entity = cx.entity();
         modal
             .overlay_closable(false)
             .title(ts!("instance.create"))

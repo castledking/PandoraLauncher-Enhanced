@@ -1,12 +1,12 @@
-use std::{io::{BufRead, Read, Seek, SeekFrom, Write}, path::Path, sync::{atomic::Ordering, Arc}, time::{Duration, SystemTime}};
+use std::{io::{BufRead, Read}, sync::Arc, time::{Duration, SystemTime}};
 
 use auth::{credentials::AccountCredentials, models::{MinecraftAccessToken, MinecraftProfileResponse}, secret::PlatformSecretStorage};
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{InstanceStatus, ContentType, ContentSummary}, message::{BackendConfigWithPassword, LogFiles, MessageToBackend, MessageToFrontend, MinecraftCapeInfo, MinecraftProfileInfo, MinecraftSkinInfo}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, serial::AtomicOptionSerial
 };
 use futures::TryFutureExt;
-use rustc_hash::{FxHashMap, FxHashSet};
 use reqwest::StatusCode;
+use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, modrinth::ModrinthLoader, version::{LaunchArgument, LaunchArgumentValue}};
 use serde::Deserialize;
 use strum::IntoEnumIterator;
@@ -14,7 +14,7 @@ use tokio::{io::AsyncBufReadExt, sync::Semaphore};
 use ustr::Ustr;
 
 use crate::{
-    BackendState, LoginError, account::{BackendAccount, MinecraftLoginInfo}, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::ModUpdateAction
+    BackendState, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}
 };
 
 /// Extract stable texture key from skin URL (last path segment). Used for deduplication.
@@ -1635,7 +1635,7 @@ impl BackendState {
 
                 struct UpdateResult {
                     mod_summary: Arc<ContentSummary>,
-                    action: ModUpdateAction,
+                    action: ContentUpdateAction,
                 }
 
                 { // Scope is needed so await doesn't complain about the non-send RwLockReadGuard
@@ -1650,7 +1650,7 @@ impl BackendState {
                                 ContentSource::Manual => {
                                     tracker.add_count(1);
                                     tracker.notify();
-                                    Ok(ModUpdateAction::ManualInstall)
+                                    Ok(ContentUpdateAction::ManualInstall)
                                 },
                                 ContentSource::ModrinthUnknown | ContentSource::ModrinthProject { .. } => {
                                     let permit = semaphore.acquire().await.unwrap();
@@ -1698,7 +1698,7 @@ impl BackendState {
                                     tracker.notify();
 
                                     if let Err(MetaLoadError::NonOK(404)) = result {
-                                        return Ok(ModUpdateAction::ErrorNotFound);
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
                                     }
 
                                     let result = result?;
@@ -1707,7 +1707,7 @@ impl BackendState {
                                         if &result.0.project_id != project {
                                             log::error!("Refusing to update {:?}, mismatched project ids: expected {}, got {}",
                                                 summary.content_summary.hash, &result.0.project_id, &project);
-                                            return Ok(ModUpdateAction::ErrorNotFound);
+                                            return Ok(ContentUpdateAction::ErrorNotFound);
                                         }
                                     }
 
@@ -1720,13 +1720,13 @@ impl BackendState {
 
                                     let mut latest_hash = [0u8; 20];
                                     let Ok(_) = hex::decode_to_slice(&*install_file.hashes.sha1, &mut latest_hash) else {
-                                        return Ok(ModUpdateAction::ErrorInvalidHash);
+                                        return Ok(ContentUpdateAction::ErrorInvalidHash);
                                     };
 
                                     if latest_hash == summary.content_summary.hash {
-                                        Ok(ModUpdateAction::AlreadyUpToDate)
+                                        Ok(ContentUpdateAction::AlreadyUpToDate)
                                     } else {
-                                        Ok(ModUpdateAction::Modrinth {
+                                        Ok(ContentUpdateAction::Modrinth {
                                             file: install_file.clone(),
                                             project_id: result.0.project_id.clone(),
                                         })
@@ -1747,8 +1747,19 @@ impl BackendState {
                         let mut meta_updates = self.mod_metadata_manager.updates.write();
 
                         for update in updates {
-                            update.mod_summary.update_status.store(update.action.to_status(), Ordering::Relaxed);
-                            meta_updates.insert(update.mod_summary.hash, update.action);
+                            meta_updates.insert(ContentUpdateKey {
+                                hash: update.mod_summary.hash,
+                                loader,
+                                version,
+                            }, update.action);
+                        }
+
+                        drop(meta_updates);
+
+                        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                            for (_, state) in &mut instance.content_state {
+                                state.mark_dirty(None);
+                            }
                         }
                     },
                     Err(error) => {
@@ -1772,34 +1783,38 @@ impl BackendState {
                         return;
                     };
 
-                    let Some(update_info) = self.mod_metadata_manager.updates.read().get(&mod_summary.content_summary.hash).cloned() else {
+                    let Some(update_info) = self.mod_metadata_manager.updates.read().get(&ContentUpdateKey {
+                        hash: mod_summary.content_summary.hash,
+                        loader: loader,
+                        version: minecraft_version
+                    }).cloned() else {
                         self.send.send_error("Can't update mod in instance, missing update action");
                         modal_action.set_finished();
                         return;
                     };
 
                     match update_info {
-                        ModUpdateAction::ErrorNotFound => {
+                        ContentUpdateAction::ErrorNotFound => {
                             self.send.send_error("Can't update mod in instance, 404 not found");
                             modal_action.set_finished();
                             return;
                         },
-                        ModUpdateAction::ErrorInvalidHash => {
+                        ContentUpdateAction::ErrorInvalidHash => {
                             self.send.send_error("Can't update mod in instance, returned invalid hash");
                             modal_action.set_finished();
                             return;
                         },
-                        ModUpdateAction::AlreadyUpToDate => {
+                        ContentUpdateAction::AlreadyUpToDate => {
                             self.send.send_error("Can't update mod in instance, already up-to-date");
                             modal_action.set_finished();
                             return;
                         },
-                        ModUpdateAction::ManualInstall => {
+                        ContentUpdateAction::ManualInstall => {
                             self.send.send_error("Can't update mod in instance, mod was manually installed");
                             modal_action.set_finished();
                             return;
                         },
-                        ModUpdateAction::Modrinth { file, project_id } => {
+                        ContentUpdateAction::Modrinth { file, project_id } => {
                             let mut path = mod_summary.path.with_file_name(&*file.filename);
                             if !mod_summary.enabled {
                                 path.add_extension("disabled");
@@ -2321,6 +2336,113 @@ impl BackendState {
                     crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args);
                 }
             },
+            MessageToBackend::RelocateInstance { id, path } => {
+                if path.exists() {
+                    self.send.send_warning("Cannot relocate instance: path already exists");
+                    return;
+                }
+
+                let mut is_normal_instance_folder = false;
+
+                if let Ok(path) = path.strip_prefix(&self.directories.instances_dir) && crate::is_single_component_path(path) {
+                    is_normal_instance_folder = true;
+
+                    let instance_root = if let Some(instance) = self.instance_state.read().instances.get(id) {
+                        instance.root_path.clone()
+                    } else {
+                        return;
+                    };
+
+                    #[cfg(unix)]
+                    let is_real_folder = !instance_root.is_symlink();
+                    #[cfg(windows)]
+                    let is_real_folder = !instance_root.is_symlink() && !junction::exists(&instance_root).unwrap_or(false);
+
+                    if is_real_folder && let Some(name) = path.to_str() {
+                        self.rename_instance(id, name).await;
+                        return;
+                    }
+                };
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if cfg!(windows) {
+                        self.file_watching.write().unwatch_subdirectories_of_instance(id);
+                        instance.mark_all_dirty();
+                    }
+
+                    #[cfg(windows)]
+                    if let Ok(target) = junction::get_target(&instance.root_path) {
+                        if let Err(err) = std::fs::rename(&target, &path) {
+                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
+                            self.send.send_error(format!("Unable to move instance files: {err}"));
+                            return;
+                        }
+
+                        _ = junction::delete(&instance.root_path);
+
+                        if !is_normal_instance_folder {
+                            if let Err(err) = junction::create(&path, &instance.root_path) {
+                                log::error!("Error while creating junction to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
+                                return;
+                            }
+                        }
+                    };
+
+                    if let Ok(target) = std::fs::read_link(&instance.root_path) {
+                        if let Err(err) = std::fs::rename(&target, &path) {
+                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
+                            self.send.send_error(format!("Unable to move instance files: {err}"));
+                            return;
+                        }
+
+                        _ = std::fs::remove_file(&instance.root_path);
+
+                        if !is_normal_instance_folder {
+                            #[cfg(unix)]
+                            if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
+                                log::error!("Error while linking to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                                return;
+                            }
+                            #[cfg(windows)]
+                            if let Err(err) = std::os::windows::fs::symlink_dir(&path, &instance.root_path) {
+                                log::error!("Error while linking to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                                return;
+                            }
+                            #[cfg(not(any(unix, windows)))]
+                            compile_error!("Unsupported platform");
+                        }
+
+                        return;
+                    }
+
+                    if let Err(err) = std::fs::rename(&instance.root_path, &path) {
+                        log::error!("Unable to move instance files: {err:?}");
+                        self.send.send_error(format!("Unable to move instance files: {err}"));
+                        return;
+                    }
+
+                    if !is_normal_instance_folder {
+                        #[cfg(unix)]
+                        if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
+                            log::error!("Error while linking to moved instance: {err:?}");
+                            self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                            return;
+                        }
+                        #[cfg(windows)]
+                        if let Err(err) = junction::create(&path, &instance.root_path) {
+                            log::error!("Error while creating junction to moved instance: {err:?}");
+                            self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
+                            return;
+                        }
+                        #[cfg(not(any(unix, windows)))]
+                        compile_error!("Unsupported platform");
+                    }
+
+                }
+            },
             MessageToBackend::InstallUpdate { update, modal_action } => {
                 tokio::task::spawn(crate::update::install_update(self.redirecting_http_client.clone(), self.directories.clone(), self.send.clone(), update, modal_action));
             },
@@ -2525,40 +2647,6 @@ impl BackendState {
 
         println!("Done downloading all metadata");
     }
-}
-
-fn set_mod_child_enabled(child_state_path: &Path, child: &str, enabled: bool) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .read(true)
-        .open(child_state_path)?;
-
-    let _ = file.lock();
-
-    let mut string = String::new();
-    file.read_to_string(&mut string)?;
-
-    if !string.ends_with('\n') {
-        string.push('\n');
-    }
-
-    let line = format!("{}\n", child);
-    let was_enabled = string.find(&line);
-
-    if was_enabled.is_none() != enabled {
-        if !enabled {
-            string.push_str(&line);
-        } else {
-            let from = was_enabled.unwrap();
-            string.replace_range(from..from+line.len() , "");
-        }
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        file.write_all(string.as_bytes())?;
-    }
-
-    Ok(())
 }
 
 fn check_argument_expansions(argument: &str) {

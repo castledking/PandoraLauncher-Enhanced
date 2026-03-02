@@ -16,7 +16,7 @@ use gpui_component::{
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashSet;
 
-use crate::{component::page::Page, entity::DataEntities, icon::PandoraIcon, ts, ui};
+use crate::{component::page::Page, entity::DataEntities, icon::PandoraIcon, ts};
 
 pub struct SyncingPage {
     backend_handle: BackendHandle,
@@ -182,10 +182,9 @@ impl Render for SyncingPage {
             }))
             .child(h_flex()
                 .w_full()
-                .max_w_128()
                 .gap_2()
-                .child(Input::new(&self.custom_input_state).w_full())
-                .child(Button::new("custom_file").label(ts!("instance.sync.sync_file")).on_click(cx.listener(|page, _, _, cx| {
+                .child(Input::new(&self.custom_input_state).max_w_128())
+                .child(Button::new("custom_file").label(ts!("instance.sync.sync_file")).on_click(cx.listener(|page, _, window, cx| {
                     let input = page.custom_input_state.read(cx).value();
                     let input = input.as_str().trim_ascii();
                     if SafePath::new(input).is_some() {
@@ -201,9 +200,11 @@ impl Render for SyncingPage {
                             page.pending.insert(name.clone());
                             page.update_sync_state(cx);
                         }
+
+                        page.custom_input_state.update(cx, |state, cx| state.set_value("", window, cx));
                     }
                 })))
-                .child(Button::new("custom_folder").label(ts!("instance.sync.sync_folder")).on_click(cx.listener(|page, _, _, cx| {
+                .child(Button::new("custom_folder").label(ts!("instance.sync.sync_folder")).on_click(cx.listener(|page, _, window, cx| {
                     let input = page.custom_input_state.read(cx).value();
                     let input = input.as_str().trim_ascii();
                     if SafePath::new(input).is_some() {
@@ -219,6 +220,8 @@ impl Render for SyncingPage {
                             page.pending.insert(name.clone());
                             page.update_sync_state(cx);
                         }
+
+                        page.custom_input_state.update(cx, |state, cx| state.set_value("", window, cx));
                     }
                 })))
             );

@@ -1,9 +1,9 @@
-use std::sync::{atomic::{AtomicBool, AtomicU8, Ordering}, Arc};
+use std::sync::Arc;
 
-use bridge::{handle::BackendHandle, instance::InstanceID, message::EmbeddedOrRaw, modal_action::ModalAction};
+use bridge::message::EmbeddedOrRaw;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::{Button, ButtonVariants}, h_flex, input::{Input, InputEvent, InputState}, scroll::ScrollableElement, v_flex, Disableable, Icon, IconName, Sizable, StyleSized, WindowExt
+    button::{Button, ButtonVariants}, v_flex, Icon, Sizable, WindowExt
 };
 use parking_lot::RwLock;
 

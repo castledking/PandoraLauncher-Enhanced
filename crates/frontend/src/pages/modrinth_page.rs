@@ -1,9 +1,26 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::{atomic::AtomicBool, Arc}, time::Duration};
 
-use bridge::{instance::{AtomicContentUpdateStatus, ContentType, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID}, message::{AtomicBridgeDataLoadState, MessageToBackend}, meta::MetadataRequest, modal_action::ModalAction, serial::AtomicOptionSerial};
+use bridge::{
+    instance::{ContentType, ContentUpdateContext, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID},
+    message::{AtomicBridgeDataLoadState, MessageToBackend},
+    meta::MetadataRequest,
+    modal_action::ModalAction,
+    serial::AtomicOptionSerial,
+};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Selectable, Sizable, StyledExt, WindowExt, breadcrumb::Breadcrumb, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, label::Label, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, tooltip::Tooltip, v_flex
+    ActiveTheme, Icon, IconName, Selectable, Sizable, StyledExt, WindowExt,
+    breadcrumb::Breadcrumb,
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
+    checkbox::Checkbox,
+    h_flex,
+    input::{Input, InputEvent, InputState},
+    label::Label,
+    notification::NotificationType,
+    scroll::{ScrollableElement, Scrollbar},
+    skeleton::Skeleton,
+    tooltip::Tooltip,
+    v_flex,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{content::ContentSource, loader::Loader, modrinth::{
@@ -13,8 +30,8 @@ use ustr::Ustr;
 
 use crate::{
     component::{error_alert::ErrorAlert, page::Page, page_path::PagePath}, entity::{
-        DataEntities, instance::InstanceEntries, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
-    }, icon::PandoraIcon, interface_config::InterfaceConfig, ts, ts_short, ui
+        DataEntities, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
+    }, icon::PandoraIcon, interface_config::InterfaceConfig, ts, ts_short
 };
 
 fn show_vanilla_change_to_fabric_modal(
@@ -103,7 +120,7 @@ pub struct ModrinthSearchPage {
 
 struct InstalledContent {
     content_id: InstanceContentID,
-    status: Arc<AtomicContentUpdateStatus>,
+    status: ContentUpdateContext,
     mod_id: Option<Arc<str>>,
 }
 
@@ -111,7 +128,7 @@ impl Clone for InstalledContent {
     fn clone(&self) -> Self {
         Self {
             content_id: self.content_id,
-            status: Arc::clone(&self.status),
+            status: self.status,
             mod_id: self.mod_id.clone(),
         }
     }
@@ -260,17 +277,19 @@ impl ModrinthSearchPage {
         if let Some(install_for) = self.install_for {
             if let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) {
                 let instance = entry.read(cx);
+                let instance_loader = instance.configuration.loader;
+                let instance_version = instance.configuration.minecraft_version;
 
                 let mods = instance.mods.read(cx);
                 for summary in mods.iter() {
                     let content = InstalledContent {
                         content_id: summary.id,
-                        status: summary.content_summary.update_status.clone(),
+                        status: summary.update,
                         mod_id: summary.content_summary.id.clone(),
                     };
 
                     if let ContentSource::ModrinthProject { project } = &summary.content_source {
-                        let project_key: Arc<str> = project.to_lowercase().into();
+                        let project_key: Arc<str> = Arc::from(project.to_lowercase().as_str());
                         let installed = self.installed_mods_by_project.entry(project_key).or_default();
                         installed.push(content.clone());
                     }
@@ -284,7 +303,7 @@ impl ModrinthSearchPage {
                     }
 
                     if let Some(ref mod_id) = summary.content_summary.id {
-                        let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
+                        let mod_id_key: Arc<str> = Arc::from(mod_id.to_lowercase().as_str());
                         self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(content.clone());
                     }
 
@@ -305,19 +324,19 @@ impl ModrinthSearchPage {
 
                                 let bundled_content = InstalledContent {
                                     content_id: summary.id,
-                                    status: bundled.update_status.clone(),
+                                    status: ContentUpdateContext::new(ContentUpdateStatus::Unknown, instance_loader, instance_version),
                                     mod_id: bundled.id.clone(),
                                 };
                                 self.installed_mods_by_hash.insert(bundled.hash, bundled_content.clone());
 
                                 if let Some(ref mod_id) = bundled.id {
-                                    let mod_id_key: Arc<str> = mod_id.to_lowercase().into();
+                                    let mod_id_key: Arc<str> = Arc::from(mod_id.to_lowercase().as_str());
                                     self.installed_mods_by_mod_id.entry(mod_id_key.clone()).or_insert(bundled_content.clone());
                                     self.installed_mods_by_filename_prefix.entry(mod_id_key).or_insert(bundled_content.clone());
                                 }
 
                                 if let Some(ref name) = bundled.name {
-                                    let name_key: Arc<str> = name.to_lowercase().into();
+                                    let name_key: Arc<str> = Arc::from(name.to_lowercase().as_str());
                                     self.installed_mods_by_filename_prefix.entry(name_key).or_insert(bundled_content.clone());
                                 }
 
@@ -335,14 +354,14 @@ impl ModrinthSearchPage {
                                 }
 
                                 if let Some(ref project) = modpack_project {
-                                    let project_key: Arc<str> = project.to_lowercase().into();
+                                    let project_key: Arc<str> = Arc::from(project.to_lowercase().as_str());
                                     self.installed_resourcepacks_by_hash.insert(bundled.hash, project_key);
                                 }
                             }
                         }
 
                         if let Some(project) = modpack_project {
-                            let project_key: Arc<str> = project.to_lowercase().into();
+                            let project_key: Arc<str> = Arc::from(project.to_lowercase().as_str());
                             let installed = self.installed_modpacks_by_project.entry(project_key).or_default();
                             installed.push(content);
                         }
@@ -353,21 +372,21 @@ impl ModrinthSearchPage {
                 for summary in resource_packs.iter() {
                     match &summary.content_source {
                         ContentSource::ModrinthProject { project } => {
-                            let project_key: Arc<str> = project.to_lowercase().into();
+                            let project_key: Arc<str> = Arc::from(project.to_lowercase().as_str());
                             let installed = self.installed_resourcepacks_by_project.entry(project_key).or_default();
                             installed.push(InstalledContent {
                                 content_id: summary.id,
-                                status: summary.content_summary.update_status.clone(),
+                                status: summary.update,
                                 mod_id: summary.content_summary.id.clone(),
                             });
                         }
                         ContentSource::ModrinthUnknown => {
                             if let Some(project) = self.installed_resourcepacks_by_hash.get(&summary.content_summary.hash) {
-                                let project_key: Arc<str> = project.to_lowercase().into();
+                                let project_key: Arc<str> = Arc::from(project.to_lowercase().as_str());
                                 let installed = self.installed_resourcepacks_by_project.entry(project_key).or_default();
                                 installed.push(InstalledContent {
                                     content_id: summary.id,
-                                    status: summary.content_summary.update_status.clone(),
+                                    status: summary.update,
                                     mod_id: summary.content_summary.id.clone(),
                                 });
                             }
@@ -385,10 +404,10 @@ impl ModrinthSearchPage {
                                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                                     let shader_name = filename.trim_end_matches(".zip").trim_end_matches(".disabled");
                                     if !shader_name.is_empty() {
-                                        let filename_prefix: Arc<str> = shader_name.to_lowercase().into();
+                                        let filename_prefix: Arc<str> = Arc::from(shader_name.to_lowercase().as_str());
                                         let content = InstalledContent {
                                             content_id: InstanceContentID::dangling(),
-                                            status: Arc::new(AtomicContentUpdateStatus::new(ContentUpdateStatus::ManualInstall)),
+                                            status: ContentUpdateContext::new(ContentUpdateStatus::ManualInstall, instance_loader, instance_version),
                                             mod_id: None,
                                         };
                                         self.installed_shaders_by_filename_prefix.entry(filename_prefix).or_insert(content);
@@ -976,9 +995,17 @@ impl ModrinthSearchPage {
                 return (PrimaryAction::Reinstall, None);
             }
 
+            let (loader, version) = self.install_for.and_then(|id| {
+                self.data.instances.read(cx).entries.get(&id).map(|e| {
+                    let cfg = e.read(cx).configuration;
+                    (cfg.loader, cfg.minecraft_version)
+                })
+            }).unwrap_or((Loader::Vanilla, Ustr::from("")));
+
             let mut nub_action = NubAction::CheckForUpdates;
             for installed_content in installed {
-                match installed_content.status.load(std::sync::atomic::Ordering::Relaxed) {
+                let status = installed_content.status.status_if_matches(loader, version);
+                match status {
                     ContentUpdateStatus::Unknown => {}
                     ContentUpdateStatus::AlreadyUpToDate => {
                         if !matches!(nub_action, NubAction::Update(..)) {

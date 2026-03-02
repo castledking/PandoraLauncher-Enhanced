@@ -227,16 +227,32 @@ async fn install_update_inner(http_client: reqwest::Client, dirs: &LauncherDirec
 
     match update.install_type {
         UpdateInstallType::AppImage(appimage) => {
-            // Replace in-place so desktop shortcuts, favorites, and app menu entries keep working
-            write_new_exe(appimage.clone(), appimage, &bytes, dirs)?;
+            let Some(filename) = appimage.file_name() else {
+                return Err("Appimage path has no filename".into());
+            };
+
+            // This is temporary to address pre-3.3.0 including the version inside the filename
+            // This should be removed at some point in the near future
+            let new_filename = replace_os_str(filename, &format!("-{}", &update.old_version), "");
+            let new_appimage = appimage.with_file_name(new_filename);
+
+            write_new_exe(appimage, new_appimage, &bytes, dirs)?;
         },
         UpdateInstallType::Executable => {
             let Ok(current_exe) = std::env::current_exe() else {
                 return Err("Unable to determine current exe path".into());
             };
 
-            // Replace in-place so desktop shortcuts and app menu entries keep working
-            write_new_exe(current_exe.clone(), current_exe, &bytes, dirs)?;
+            let Some(filename) = current_exe.file_name() else {
+                return Err("Current exe path has no filename".into());
+            };
+
+            // This is temporary to address pre-3.3.0 including the version inside the filename
+            // This should be removed at some point in the near future
+            let new_filename = replace_os_str(filename, &format!("-{}", &update.old_version), "");
+            let new_exe = current_exe.with_file_name(new_filename);
+
+            write_new_exe(current_exe, new_exe, &bytes, dirs)?;
         },
         UpdateInstallType::App(current_app_folder) => {
             let mut temp_extract = dirs.temp_dir.join(format!("app_unpack_{}", rand::thread_rng().next_u64()));

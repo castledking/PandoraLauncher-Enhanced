@@ -11,7 +11,7 @@ use gpui_component::{
     sheet::Sheet,
     spinner::Spinner,
     tab::{Tab, TabBar},
-    v_flex, ActiveTheme, Disableable, IconName, Sizable, ThemeRegistry,
+    v_flex, ActiveTheme, Disableable, Sizable, ThemeRegistry,
 };
 use schema::backend_config::{BackendConfig, ProxyConfig, ProxyProtocol};
 
@@ -114,7 +114,7 @@ pub fn build_settings_sheet(data: &DataEntities, window: &mut Window, cx: &mut A
         settings
     });
 
-    move |sheet, window, cx| {
+    move |sheet, _, cx| {
         sheet
             .title(ts!("settings.title"))
             .size(px(420.))
@@ -181,9 +181,8 @@ impl Settings {
         event: &SelectEvent<Vec<&'static str>>,
         _cx: &mut Context<Self>,
     ) {
-        if let SelectEvent::Confirm(_) = event {
-            self.save_proxy_config(_cx);
-        }
+        let SelectEvent::Confirm(_) = event;
+        self.save_proxy_config(_cx);
     }
 
     fn on_proxy_input_changed(

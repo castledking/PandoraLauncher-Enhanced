@@ -475,6 +475,8 @@ instance:
       en: Mods
     modpacks:
       en: Modpacks
+    datapacks:
+      en: Datapacks
     resourcepacks:
       en: Resourcepacks
     shaders:
@@ -488,6 +490,8 @@ instance:
         en: "Pack Version"
       shader:
         en: "Shader Version"
+      datapack:
+        en: "Datapack Version"
       file:
         en: "File Version"
     search:
@@ -499,6 +503,8 @@ instance:
         en: "Search resourcepacks..."
       shader:
         en: "Search shaders..."
+      datapack:
+        en: "Search datapacks..."
       file:
         en: "Search..."
     requesting_from_modrinth_error:
@@ -562,6 +568,8 @@ instance:
           en: Create new instance with this resourcepack
         shader:
           en: Create new instance with this shader
+        datapack:
+          en: Create new instance with this datapack
         file:
           en: Create new instance with this file
       add_to_instance:
@@ -581,6 +589,25 @@ instance:
         en: Install %{num} dependencies
       no_mod_version_selected:
         en: No mod version selected
+      datapack:
+        prime:
+          title:
+            en: Prime datapack for first world?
+          message:
+            en: No worlds exist yet. Install to "World" (Minecraft's default first world name)? When you create your first world, the datapack will be ready. Future datapack installs will use this world without asking.
+          yes:
+            en: Yes, prime for World
+          cancel:
+            en: Cancel
+        select_world:
+          title:
+            en: Select world for datapack
+          label:
+            en: World
+          prime_for_next:
+            en: Prime for next world
+      cancelled:
+        en: Install cancelled
       unable_install_other:
         en: Unable to install 'other' project type
       no_matching_versions:

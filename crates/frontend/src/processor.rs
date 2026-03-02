@@ -152,6 +152,9 @@ impl Processor {
             MessageToFrontend::InstanceWorldsUpdated { id, worlds } => {
                 InstanceEntries::set_worlds(&self.data.instances, id, worlds, cx);
             },
+            MessageToFrontend::InstanceWorldDatapacksUpdated { id, world_folder, datapacks } => {
+                InstanceEntries::set_world_datapacks(&self.data.instances, id, world_folder, datapacks, cx);
+            },
             MessageToFrontend::InstanceServersUpdated { id, servers } => {
                 InstanceEntries::set_servers(&self.data.instances, id, servers, cx);
             },

@@ -108,6 +108,8 @@ pub struct ModrinthSearchPage {
     installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>>,
     installed_shaders_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
     installed_shaders_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
+    installed_datapacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
+    installed_datapacks_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent>,
     last_search: Arc<str>,
     scroll_handle: UniformListScrollHandle,
     search_error: Option<SharedString>,
@@ -115,6 +117,7 @@ pub struct ModrinthSearchPage {
     mods_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>,
     _instance_mods_subscription: Option<Subscription>,
     _instance_resourcepacks_subscription: Option<Subscription>,
+    _instance_worlds_subscription: Option<Subscription>,
     _shader_refresh_task: Option<Task<()>>,
 }
 
@@ -148,11 +151,14 @@ impl ModrinthSearchPage {
         let mut installed_resourcepacks_by_hash: FxHashMap<[u8; 20], Arc<str>> = FxHashMap::default();
         let mut installed_shaders_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
         let mut installed_shaders_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
+        let mut installed_datapacks_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
+        let mut installed_datapacks_by_filename_prefix: FxHashMap<Arc<str>, InstalledContent> = FxHashMap::default();
         let mut filter_version = None;
 
         let mut mods_load_state = None;
         let mut _instance_mods_subscription = None;
         let mut _instance_resourcepacks_subscription = None;
+        let mut _instance_worlds_subscription = None;
         let mut _shader_refresh_task = None;
 
         if let Some(install_for) = install_for {
@@ -161,10 +167,13 @@ impl ModrinthSearchPage {
                 can_install_latest = true;
                 filter_version = Some(instance.configuration.minecraft_version);
 
+                data.backend_handle.send(MessageToBackend::RequestLoadWorlds { id: install_for });
+
                 mods_load_state = Some((instance.mods_state.clone(), AtomicOptionSerial::default()));
 
                 let mods_entity = instance.mods.clone();
                 let resource_packs_entity = instance.resource_packs.clone();
+                let worlds_entity = instance.worlds.clone();
 
                 _instance_mods_subscription = Some(cx.observe(&mods_entity, |page, _mods, cx| {
                     page.refill_installed_content_from_instance(cx);
@@ -172,6 +181,11 @@ impl ModrinthSearchPage {
                 }));
 
                 _instance_resourcepacks_subscription = Some(cx.observe(&resource_packs_entity, |page, _resource_packs, cx| {
+                    page.refill_installed_content_from_instance(cx);
+                    cx.notify();
+                }));
+
+                _instance_worlds_subscription = Some(cx.observe(&worlds_entity, |page, _worlds, cx| {
                     page.refill_installed_content_from_instance(cx);
                     cx.notify();
                 }));
@@ -226,6 +240,8 @@ impl ModrinthSearchPage {
             installed_resourcepacks_by_hash,
             installed_shaders_by_project,
             installed_shaders_by_filename_prefix,
+            installed_datapacks_by_project,
+            installed_datapacks_by_filename_prefix,
             last_search: Arc::from(""),
             scroll_handle: UniformListScrollHandle::new(),
             search_error: None,
@@ -233,6 +249,7 @@ impl ModrinthSearchPage {
             mods_load_state,
             _instance_mods_subscription,
             _instance_resourcepacks_subscription,
+            _instance_worlds_subscription,
             _shader_refresh_task,
         };
         page.refill_installed_content_from_instance(cx);
@@ -273,10 +290,15 @@ impl ModrinthSearchPage {
         self.installed_resourcepacks_by_hash.clear();
         self.installed_shaders_by_project.clear();
         self.installed_shaders_by_filename_prefix.clear();
+        self.installed_datapacks_by_project.clear();
+        self.installed_datapacks_by_filename_prefix.clear();
 
         if let Some(install_for) = self.install_for {
             if let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) {
                 let instance = entry.read(cx);
+                let instance_loader = instance.configuration.loader;
+                let instance_version = instance.configuration.minecraft_version;
+
                 let instance_loader = instance.configuration.loader;
                 let instance_version = instance.configuration.minecraft_version;
 
@@ -417,6 +439,42 @@ impl ModrinthSearchPage {
                         }
                     }
                 }
+
+                let saves_path = instance.dot_minecraft_folder.join("saves");
+                if saves_path.exists() {
+                    if let Ok(world_dirs) = std::fs::read_dir(&saves_path) {
+                        for world_dir in world_dirs.flatten() {
+                            let datapacks_path = world_dir.path().join("datapacks");
+                            if datapacks_path.is_dir() {
+                                if let Ok(entries) = std::fs::read_dir(&datapacks_path) {
+                                    for entry in entries.flatten() {
+                                        let path = entry.path();
+                                        if path.is_file() {
+                                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                                let dp_name = filename.trim_end_matches(".zip").trim_end_matches(".disabled");
+                                                if !dp_name.is_empty() {
+                                                    let content = InstalledContent {
+                                                        content_id: InstanceContentID::dangling(),
+                                                        status: ContentUpdateContext::new(ContentUpdateStatus::ManualInstall, instance_loader, instance_version),
+                                                        mod_id: None,
+                                                    };
+                                                    let filename_prefix: Arc<str> = Arc::from(dp_name.to_lowercase().as_str());
+                                                    self.installed_datapacks_by_filename_prefix.entry(filename_prefix.clone()).or_insert(content.clone());
+                                                    if let Some(project_prefix) = extract_modrinth_project_id_from_filename(filename) {
+                                                        let project_key: Arc<str> = project_prefix.to_lowercase().into();
+                                                        self.installed_datapacks_by_filename_prefix.entry(project_key.clone()).or_insert(content.clone());
+                                                        let installed = self.installed_datapacks_by_project.entry(project_key).or_default();
+                                                        installed.push(content);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -434,6 +492,7 @@ impl ModrinthSearchPage {
                 ModrinthProjectType::Modpack => ts!("instance.content.search.modpack"),
                 ModrinthProjectType::Resourcepack => ts!("instance.content.search.resourcepack"),
                 ModrinthProjectType::Shader => ts!("instance.content.search.shader"),
+                ModrinthProjectType::Datapack => ts!("instance.content.search.datapack"),
                 ModrinthProjectType::Other => ts!("instance.content.search.file"),
             };
             state.set_placeholder(placeholder, window, cx)
@@ -493,6 +552,7 @@ impl ModrinthSearchPage {
             ModrinthProjectType::Modpack => "modpack",
             ModrinthProjectType::Resourcepack => "resourcepack",
             ModrinthProjectType::Shader => "shader",
+            ModrinthProjectType::Datapack => "datapack",
         };
 
         let offset = if self.pending_clear { 0 } else { self.hits.len() };
@@ -500,8 +560,12 @@ impl ModrinthSearchPage {
         let mut facets = format!("[[\"project_type={}\"]", project_type);
 
         let is_mod = self.filter_project_type == ModrinthProjectType::Mod || self.filter_project_type == ModrinthProjectType::Modpack;
+        let applies_version_filter = matches!(
+            self.filter_project_type,
+            ModrinthProjectType::Mod | ModrinthProjectType::Modpack | ModrinthProjectType::Shader
+        );
         let filter_by_instance = self.install_for.is_some() && InterfaceConfig::get(cx).modrinth_filter_version;
-        if filter_by_instance && let Some(filter_version) = &self.filter_version {
+        if filter_by_instance && applies_version_filter && let Some(filter_version) = &self.filter_version {
             facets.push_str(",[\"versions=");
             facets.push_str(filter_version);
             facets.push_str("\"]");
@@ -714,9 +778,15 @@ impl ModrinthSearchPage {
                         let project_id = hit.project_id.clone();
                         let install_for = self.install_for.clone();
                         let project_type = hit.project_type;
+                        let filter_project_type = self.filter_project_type;
                         let main_action = main_action.clone();
 
                         move |_, window, cx| {
+                            let effective_type = if filter_project_type == ModrinthProjectType::Datapack {
+                                ModrinthProjectType::Datapack
+                            } else {
+                                project_type
+                            };
                             if project_type != ModrinthProjectType::Other {
                                 match main_action {
                                     PrimaryAction::Install | PrimaryAction::Reinstall => {
@@ -724,8 +794,9 @@ impl ModrinthSearchPage {
                                             let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
                                                 .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
                                                 .unwrap_or(false);
-                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
-                                            if is_vanilla && is_mod_or_modpack {
+                                            let is_mod_or_modpack = matches!(filter_project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                            let is_datapack = filter_project_type == ModrinthProjectType::Datapack;
+                                            if is_vanilla && is_mod_or_modpack && !is_datapack {
                                                 let name = name.clone();
                                                 let project_id = project_id.clone();
                                                 let data = data.clone();
@@ -736,7 +807,7 @@ impl ModrinthSearchPage {
                                                         crate::modals::modrinth_install::open_with_version(
                                                             name.as_str(),
                                                             project_id.clone(),
-                                                            project_type,
+                                                            effective_type,
                                                             Some(install_for_id),
                                                             &data,
                                                             window,
@@ -752,7 +823,7 @@ impl ModrinthSearchPage {
                                                 crate::modals::modrinth_install::open(
                                                     name.as_str(),
                                                     project_id.clone(),
-                                                    project_type,
+                                                    effective_type,
                                                     install_for,
                                                     &data,
                                                     window,
@@ -763,7 +834,7 @@ impl ModrinthSearchPage {
                                             crate::modals::modrinth_install::open(
                                                 name.as_str(),
                                                 project_id.clone(),
-                                                project_type,
+                                                effective_type,
                                                 install_for,
                                                 &data,
                                                 window,
@@ -776,8 +847,9 @@ impl ModrinthSearchPage {
                                             let is_vanilla = data.instances.read(cx).entries.get(&install_for_id)
                                                 .map(|e| e.read(cx).configuration.loader == Loader::Vanilla)
                                                 .unwrap_or(false);
-                                            let is_mod_or_modpack = matches!(project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
-                                            if is_vanilla && is_mod_or_modpack {
+                                            let is_mod_or_modpack = matches!(filter_project_type, ModrinthProjectType::Mod | ModrinthProjectType::Modpack);
+                                            let is_datapack = filter_project_type == ModrinthProjectType::Datapack;
+                                            if is_vanilla && is_mod_or_modpack && !is_datapack {
                                                 let name = name.clone();
                                                 let project_id = project_id.clone();
                                                 let data = data.clone();
@@ -799,6 +871,17 @@ impl ModrinthSearchPage {
                                                     window,
                                                     cx,
                                                 );
+                                            } else if is_datapack {
+                                                crate::modals::modrinth_install_auto::open(
+                                                    name.as_str(),
+                                                    project_id.clone(),
+                                                    ModrinthProjectType::Datapack,
+                                                    install_for_id,
+                                                    &data,
+                                                    window,
+                                                    cx,
+                                                    None,
+                                                );
                                             } else {
                                                 crate::modals::modrinth_install_auto::open(
                                                     name.as_str(),
@@ -813,7 +896,17 @@ impl ModrinthSearchPage {
                                             }
                                         }
                                     },
-                                    PrimaryAction::Installed => {},
+                                    PrimaryAction::Installed => {
+                                        crate::modals::modrinth_install::open(
+                                            name.as_str(),
+                                            project_id.clone(),
+                                            effective_type,
+                                            install_for,
+                                            &data,
+                                            window,
+                                            cx,
+                                        );
+                                    },
                                     PrimaryAction::Update(ref ids) => {
                                         for id in ids {
                                             let modal_action = ModalAction::default();
@@ -977,6 +1070,7 @@ impl ModrinthSearchPage {
         let is_resourcepack = project_type == ModrinthProjectType::Resourcepack;
         let is_modpack = project_type == ModrinthProjectType::Modpack;
         let is_shader = project_type == ModrinthProjectType::Shader;
+        let is_datapack = project_type == ModrinthProjectType::Datapack;
 
         let project_id_key: Arc<str> = project_id.to_lowercase().into();
 
@@ -986,6 +1080,8 @@ impl ModrinthSearchPage {
             self.installed_modpacks_by_project.get(&project_id_key)
         } else if is_shader {
             self.installed_shaders_by_project.get(&project_id_key)
+        } else if is_datapack {
+            self.installed_datapacks_by_project.get(&project_id_key)
         } else {
             self.installed_mods_by_project.get(&project_id_key)
         };
@@ -997,7 +1093,7 @@ impl ModrinthSearchPage {
 
             let (loader, version) = self.install_for.and_then(|id| {
                 self.data.instances.read(cx).entries.get(&id).map(|e| {
-                    let cfg = e.read(cx).configuration;
+                    let cfg = e.read(cx).configuration.clone();
                     (cfg.loader, cfg.minecraft_version)
                 })
             }).unwrap_or((Loader::Vanilla, Ustr::from("")));
@@ -1033,7 +1129,7 @@ impl ModrinthSearchPage {
             return (main_action, Some(nub_action));
         }
 
-        if !is_resourcepack && !is_modpack {
+        if !is_resourcepack && !is_modpack && !is_datapack {
             if let Some(slug) = &hit.slug {
                 let slug_key: Arc<str> = slug.to_lowercase().into();
                 if self.installed_mods_by_mod_id.contains_key(&slug_key) {
@@ -1076,6 +1172,18 @@ impl ModrinthSearchPage {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        if is_datapack {
+            if self.installed_datapacks_by_filename_prefix.contains_key(&project_id_key) {
+                return (PrimaryAction::Installed, Some(NubAction::UpToDate));
+            }
+            if let Some(slug) = &hit.slug {
+                let slug_key: Arc<str> = slug.to_lowercase().into();
+                if self.installed_datapacks_by_filename_prefix.contains_key(&slug_key) {
+                    return (PrimaryAction::Installed, Some(NubAction::UpToDate));
                 }
             }
         }
@@ -1243,11 +1351,13 @@ impl Render for ModrinthSearchPage {
                     .selected(self.filter_project_type == ModrinthProjectType::Resourcepack),
             )
             .child(Button::new("shaders").label(ts!("instance.content.shaders")).selected(self.filter_project_type == ModrinthProjectType::Shader))
+            .child(Button::new("datapacks").label(ts!("instance.content.datapacks")).selected(self.filter_project_type == ModrinthProjectType::Datapack))
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(ModrinthProjectType::Mod, window, cx),
                 1 => page.set_project_type(ModrinthProjectType::Modpack, window, cx),
                 2 => page.set_project_type(ModrinthProjectType::Resourcepack, window, cx),
                 3 => page.set_project_type(ModrinthProjectType::Shader, window, cx),
+                4 => page.set_project_type(ModrinthProjectType::Datapack, window, cx),
                 _ => {},
             }));
 
@@ -1276,6 +1386,7 @@ impl Render for ModrinthSearchPage {
             ModrinthProjectType::Modpack => FILTER_MODPACK_CATEGORIES,
             ModrinthProjectType::Resourcepack => FILTER_RESOURCEPACK_CATEGORIES,
             ModrinthProjectType::Shader => FILTER_SHADERPACK_CATEGORIES,
+            ModrinthProjectType::Datapack => FILTER_DATAPACK_CATEGORIES,
             ModrinthProjectType::Other => &[],
         };
 
@@ -1317,8 +1428,11 @@ impl Render for ModrinthSearchPage {
             )
             .into_any_element();
 
-        let is_mod = self.filter_project_type == ModrinthProjectType::Mod || self.filter_project_type == ModrinthProjectType::Modpack;
-        let filter_version_toggle = if is_mod && let Some(filter_version) = self.filter_version {
+        let shows_version_filter = matches!(
+            self.filter_project_type,
+            ModrinthProjectType::Mod | ModrinthProjectType::Modpack | ModrinthProjectType::Shader
+        );
+        let filter_version_toggle = if shows_version_filter && let Some(filter_version) = self.filter_version {
             let title = format!("{}: {}", ts!("instance.version"), filter_version);
             Some(Button::new("filter_version").label(title)
                 .outline()
@@ -1504,6 +1618,14 @@ const FILTER_RESOURCEPACK_CATEGORIES: &[&'static str] = &[
     "tweaks",
     "utility",
     "vanilla-like",
+];
+
+const FILTER_DATAPACK_CATEGORIES: &[&'static str] = &[
+    "adventure",
+    "decoration",
+    "game-mechanics",
+    "mobs",
+    "worldgen",
 ];
 
 const FILTER_SHADERPACK_CATEGORIES: &[&'static str] = &[

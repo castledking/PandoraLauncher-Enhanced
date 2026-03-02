@@ -22,7 +22,7 @@ use crate::{
     install::ContentInstall,
     instance::{
         InstanceContentID, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus,
-        InstanceWorldSummary,
+        InstanceWorldSummary, WorldDatapackSummary,
     },
     keep_alive::{KeepAlive, KeepAliveHandle},
     meta::{MetadataRequest, MetadataResult},
@@ -108,6 +108,21 @@ pub enum MessageToBackend {
     },
     RequestLoadWorlds {
         id: InstanceID,
+    },
+    RequestLoadWorldDatapacks {
+        id: InstanceID,
+        world_folder: String,
+    },
+    DeleteDatapack {
+        id: InstanceID,
+        world_folder: String,
+        filename: String,
+    },
+    SetDatapackEnabled {
+        id: InstanceID,
+        world_folder: String,
+        filename: String,
+        enabled: bool,
     },
     RequestLoadServers {
         id: InstanceID,
@@ -203,7 +218,7 @@ pub enum MessageToBackend {
     },
     RelocateInstance {
         id: InstanceID,
-        path: PathBuf
+        path: PathBuf,
     },
     InstallUpdate {
         update: UpdatePrompt,
@@ -271,6 +286,11 @@ pub enum MessageToFrontend {
     InstanceWorldsUpdated {
         id: InstanceID,
         worlds: Arc<[InstanceWorldSummary]>,
+    },
+    InstanceWorldDatapacksUpdated {
+        id: InstanceID,
+        world_folder: String,
+        datapacks: Arc<[WorldDatapackSummary]>,
     },
     InstanceServersUpdated {
         id: InstanceID,

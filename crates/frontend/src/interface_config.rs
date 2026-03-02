@@ -1,4 +1,4 @@
-use std::{io::Write, path::Path, sync::Arc, time::Duration};
+use std::{collections::HashMap, io::Write, path::Path, sync::Arc, time::Duration};
 
 use gpui::{App, SharedString, Task};
 use rand::RngCore;
@@ -14,6 +14,10 @@ struct InterfaceConfigHolder {
 }
 
 impl gpui::Global for InterfaceConfigHolder {}
+
+fn default_modrinth_filter_version() -> bool {
+    true
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct InterfaceConfig {
@@ -33,7 +37,7 @@ pub struct InterfaceConfig {
     pub quick_delete_instance: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub modrinth_install_normally: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(default = "default_modrinth_filter_version", deserialize_with = "schema::try_deserialize")]
     pub modrinth_filter_version: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub modrinth_page_project_type: ModrinthProjectType,
@@ -43,6 +47,9 @@ pub struct InterfaceConfig {
     pub show_snapshots_in_create_instance: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instances_view_mode: InstancesViewMode,
+    /// Per-instance datapack world: key = dot_minecraft_folder path, value = world folder name.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub datapack_world_by_instance: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

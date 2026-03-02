@@ -2,7 +2,7 @@ use std::{cmp::Ordering, sync::Arc};
 
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
-    instance::{ContentType, InstanceID},
+    instance::{ContentType, InstanceID, InstanceWorldSummary},
     message::MessageToBackend,
     meta::MetadataRequest,
     modal_action::ModalAction,
@@ -11,23 +11,24 @@ use bridge::{
 use enumset::EnumSet;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    IndexPath, WindowExt,
+    Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     dialog::Dialog,
     h_flex,
     notification::{Notification, NotificationType},
-    select::{SearchableVec, Select, SelectItem, SelectState},
     spinner::Spinner,
     v_flex,
 };
+use super::modrinth_install;
 use relative_path::RelativePath;
 use rustc_hash::FxHashMap;
 use schema::{
     content::ContentSource,
+    instance::InstanceConfiguration,
     loader::Loader,
     modrinth::{
-        ModrinthDependency, ModrinthDependencyType, ModrinthLoader, ModrinthProjectType, ModrinthProjectVersion,
+        ModrinthDependency, ModrinthDependencyType, ModrinthFile, ModrinthLoader, ModrinthProjectType, ModrinthProjectVersion,
         ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthVersionStatus, ModrinthVersionType,
     },
 };
@@ -35,6 +36,9 @@ use uuid::Uuid;
 
 use crate::{
     component::{error_alert::ErrorAlert, instance_dropdown::InstanceDropdown},
+    interface_config::InterfaceConfig,
+    png_render_cache,
+    ts,
     entity::{
         DataEntities,
         instance::InstanceEntry,
@@ -42,6 +46,11 @@ use crate::{
     },
     root,
 };
+
+struct WorldSelectState {
+    selected_idx: usize,
+    worlds: Vec<InstanceWorldSummary>,
+}
 
 // struct VersionMatrixLoaders {
 //     loaders: EnumSet<ModrinthLoader>,
@@ -103,6 +112,7 @@ pub fn open(
 
     if handle_project_versions(
         data,
+        name,
         title.clone(),
         key,
         project_id.clone(),
@@ -119,10 +129,12 @@ pub fn open(
     let _subscription = window.observe(&project_versions, cx, {
         let title = title.clone();
         let data = data.clone();
+        let name = name.to_string();
         let loader_override = loader_override;
         move |project_versions, window, cx| {
             handle_project_versions(
                 &data,
+                &name,
                 title.clone(),
                 key,
                 project_id.clone(),
@@ -148,13 +160,14 @@ pub fn open(
                 .child(Spinner::new())
                 .into_any_element()
         })
-        .autohide(false);
+        .autohide(true);
 
     window.push_notification(notification, cx);
 }
 
 fn handle_project_versions(
     data: &DataEntities,
+    name: &str,
     title: SharedString,
     key: Uuid,
     project_id: Arc<str>,
@@ -165,12 +178,20 @@ fn handle_project_versions(
     cx: &mut App,
     loader_override: Option<Loader>,
 ) -> bool {
-    let result: FrontendMetadataResult<ModrinthProjectVersionsResult> = project_versions.read(cx).result();
-    match result {
+    let project_versions_owned = match crate::entity::metadata::AsMetadataResult::<ModrinthProjectVersionsResult>::result(
+        &*project_versions.read(cx),
+    ) {
         FrontendMetadataResult::Loading => {
             return false;
         },
-        FrontendMetadataResult::Loaded(project_versions) => {
+        FrontendMetadataResult::Loaded(v) => v.clone(),
+        FrontendMetadataResult::Error(e) => {
+            push_error(title.clone(), key, (*e).clone().into(), window, cx);
+            return true;
+        },
+    };
+    let project_versions = &project_versions_owned;
+    {
             let Some(instance) = data.instances.read(cx).entries.get(&install_for) else {
                 return true;
             };
@@ -178,8 +199,11 @@ fn handle_project_versions(
             let effective_loader = loader_override.unwrap_or(configuration.loader);
             let modrinth_loader = effective_loader.as_modrinth_loader();
             let is_mod = project_type == ModrinthProjectType::Mod || project_type == ModrinthProjectType::Modpack;
-            let allow_all_versions =
-                project_type == ModrinthProjectType::Resourcepack || project_type == ModrinthProjectType::Shader;
+            let is_datapack = project_type == ModrinthProjectType::Datapack;
+            let allow_all_versions = matches!(
+                project_type,
+                ModrinthProjectType::Resourcepack | ModrinthProjectType::Shader | ModrinthProjectType::Datapack
+            );
             let matching_versions = project_versions
                 .0
                 .iter()
@@ -202,6 +226,9 @@ fn handle_project_versions(
                         return false;
                     }
                     if is_mod && effective_loader != Loader::Vanilla && !loaders.contains(&modrinth_loader) {
+                        return false;
+                    }
+                    if is_datapack && !loaders.contains(&ModrinthLoader::Datapack) && !loaders.contains(&ModrinthLoader::Minecraft) {
                         return false;
                     }
                     true
@@ -240,13 +267,275 @@ fn handle_project_versions(
 
             let version = matching_versions[highest];
 
+            let required_dependencies: Option<Vec<ModrinthDependency>> = version.dependencies.as_ref().map(|deps| {
+                deps.iter()
+                    .filter(|dep| dep.project_id.is_some() && dep.dependency_type == ModrinthDependencyType::Required)
+                    .cloned()
+                    .collect()
+            });
+
             let install_file = version.files.iter().find(|file| file.primary).unwrap_or(version.files.first().unwrap());
+
+            let (datapack_world, show_datapack_world_modal) = if project_type == ModrinthProjectType::Datapack {
+                let instance_read = instance.read(cx);
+                let config_key = instance_read.dot_minecraft_folder.to_string_lossy().to_string();
+                let saved_world = InterfaceConfig::get(cx).datapack_world_by_instance.get(&config_key).cloned();
+                let worlds_list: Vec<_> = instance_read.worlds.read(cx).iter()
+                    .filter_map(|w| w.level_path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .collect();
+                let saved_still_exists = saved_world.as_ref().map_or(false, |sw| worlds_list.iter().any(|w| w == sw));
+                // Always show modal for datapacks so user can choose/confirm world (or prime)
+                let show_modal = true;
+                let world_for_install = if saved_still_exists { saved_world } else {
+                    worlds_list.first().cloned()
+                };
+                (world_for_install, show_modal)
+            } else {
+                (None, false)
+            };
+
+            if project_type == ModrinthProjectType::Datapack && show_datapack_world_modal {
+                let instance_read = instance.read(cx);
+                let config_key = instance_read.dot_minecraft_folder.to_string_lossy().to_string();
+                let worlds: Vec<InstanceWorldSummary> = instance_read.worlds.read(cx).to_vec();
+                data.backend_handle.send(MessageToBackend::RequestLoadWorlds { id: install_for });
+                let install_file = install_file.clone();
+                let required_deps = Arc::new(required_dependencies.as_deref().unwrap_or(&[]).to_vec());
+                let version_hint = Some(configuration.minecraft_version.to_string());
+                let name = name.to_string();
+                let data = data.clone();
+                if worlds.is_empty() {
+                    window.open_dialog(cx, move |modal, _window, _cx| {
+                        let config_key = config_key.clone();
+                        let data = data.clone();
+                        let version_hint = version_hint.clone();
+                        modal
+                            .title(ts!("instance.content.install.datapack.prime.title"))
+                            .child(
+                                v_flex()
+                                    .gap_3()
+                                    .child(ts!("instance.content.install.datapack.prime.message"))
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("prime_yes")
+                                                    .success()
+                                                    .label(ts!("instance.content.install.datapack.prime.yes"))
+                                                    .on_click({
+                                                        let install_file = install_file.clone();
+                                                        let required_deps = required_deps.clone();
+                                                        let project_id = project_id.clone();
+                                                        let name = name.clone();
+                                                        let data = data.clone();
+                                                        let version_hint = version_hint.clone();
+                                                        move |_, window, cx| {
+                                                            InterfaceConfig::get_mut(cx)
+                                                                .datapack_world_by_instance
+                                                                .insert(config_key.clone(), "World".to_string());
+                                                            window.close_dialog(cx);
+                                                            modrinth_install::perform_datapack_install(
+                                                                "World".to_string(),
+                                                                &install_file,
+                                                                InstallTarget::Instance(install_for),
+                                                                Some(effective_loader),
+                                                                &None,
+                                                                &version_hint.as_ref().map(|s| s.clone().into()),
+                                                                true,
+                                                                required_deps.as_ref(),
+                                                                project_id.clone(),
+                                                                &name,
+                                                                &data,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                Button::new("prime_cancel")
+                                                    .label(ts!("instance.content.install.datapack.prime.cancel"))
+                                                    .on_click(|_, window, cx| {
+                                                        window.close_dialog(cx);
+                                                    }),
+                                            ),
+                                    ),
+                            )
+                    });
+                } else {
+                    let world_folders: Vec<String> = worlds
+                        .iter()
+                        .map(|w| {
+                            w.level_path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    let state = cx.new(|cx| WorldSelectState {
+                        selected_idx: 0,
+                        worlds: worlds.clone(),
+                    });
+                    window.open_dialog(cx, move |modal, window, cx| {
+                        let state_entity = state.clone();
+                        let version_hint = version_hint.clone();
+                        cx.update_entity(&state_entity, |state, cx| {
+                            let world_buttons = state
+                                .worlds
+                                .iter()
+                                .enumerate()
+                                .map(|(i, w)| {
+                                    let folder_name = w
+                                        .level_path
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "World".to_string());
+                                    let icon = if let Some(png_icon) = w.png_icon.as_ref() {
+                                        png_render_cache::render(Arc::clone(png_icon), cx)
+                                    } else {
+                                        gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
+                                    };
+                                    Button::new(("world_select", i))
+                                        .outline()
+                                        .selected(state.selected_idx == i)
+                                        .w_full()
+                                        .min_h(px(72.0))
+                                        .on_click({
+                                            let state_entity = state_entity.clone();
+                                            move |_, _, cx| {
+                                                cx.update_entity(&state_entity, |s, cx| {
+                                                    s.selected_idx = i;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .child(
+                                            h_flex()
+                                                .gap_3()
+                                                .items_center()
+                                                .w_full()
+                                                .child(icon.w(px(64.0)).h(px(64.0)))
+                                                .child(SharedString::from(folder_name)),
+                                        )
+                                })
+                                .collect::<Vec<_>>();
+                            modal
+                                .title(ts!("instance.content.install.datapack.select_world.title"))
+                                .child(
+                                    v_flex()
+                                        .gap_3()
+                                        .child(
+                                            v_flex()
+                                                .gap_2()
+                                                .children(world_buttons),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(
+                                                    Button::new("world_install")
+                                                        .success()
+                                                        .label("Install")
+                                                        .on_click({
+                                                            let config_key = config_key.clone();
+                                                            let world_folders = world_folders.clone();
+                                                            let install_file = install_file.clone();
+                                                            let required_deps = required_deps.clone();
+                                                            let data = data.clone();
+                                                            let project_id = project_id.clone();
+                                                            let name = name.clone();
+                                                            let version_hint = version_hint.clone();
+                                                            let state_entity = state_entity.clone();
+                                                            move |_, window, cx| {
+                                                                let idx = state_entity.read(cx).selected_idx;
+                                                                let world_folder = world_folders.get(idx).cloned();
+                                                                if let Some(world) = world_folder {
+                                                                    InterfaceConfig::get_mut(cx)
+                                                                        .datapack_world_by_instance
+                                                                        .insert(config_key.clone(), world.clone());
+                                                                    window.close_dialog(cx);
+                                                                    modrinth_install::perform_datapack_install(
+                                                                        world,
+                                                                        &install_file,
+                                                                        InstallTarget::Instance(install_for),
+                                                                        Some(effective_loader),
+                                                                        &None,
+                                                                        &version_hint.as_ref().map(|s| s.clone().into()),
+                                                                        true,
+                                                                        required_deps.as_ref(),
+                                                                        project_id.clone(),
+                                                                        &name,
+                                                                        &data,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                }
+                                                            }
+                                                        }),
+                                                )
+                                                .child(
+                                                    Button::new("world_prime")
+                                                        .outline()
+                                                        .label(ts!("instance.content.install.datapack.select_world.prime_for_next"))
+                                                        .on_click({
+                                                            let config_key = config_key.clone();
+                                                            let install_file = install_file.clone();
+                                                            let required_deps = required_deps.clone();
+                                                            let data = data.clone();
+                                                            let project_id = project_id.clone();
+                                                            let name = name.clone();
+                                                            let version_hint = version_hint.clone();
+                                                            move |_, window, cx| {
+                                                                InterfaceConfig::get_mut(cx)
+                                                                    .datapack_world_by_instance
+                                                                    .insert(config_key.clone(), "World".to_string());
+                                                                window.close_dialog(cx);
+                                                                modrinth_install::perform_datapack_install(
+                                                                    "World".to_string(),
+                                                                    &install_file,
+                                                                    InstallTarget::Instance(install_for),
+                                                                    Some(effective_loader),
+                                                                    &None,
+                                                                    &version_hint.as_ref().map(|s| s.clone().into()),
+                                                                    true,
+                                                                    required_deps.as_ref(),
+                                                                    project_id.clone(),
+                                                                    &name,
+                                                                    &data,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            }
+                                                        }),
+                                                )
+                                                .child(
+                                                    Button::new("world_cancel")
+                                                        .label(ts!("instance.content.install.datapack.prime.cancel"))
+                                                        .on_click(move |_, window, cx| {
+                                                            window.close_dialog(cx);
+                                                        }),
+                                                ),
+                                        ),
+                                )
+                        })
+                    });
+                }
+                return true;
+            }
+            let datapack_world = datapack_world.unwrap_or_default();
 
             let path = match project_type {
                 ModrinthProjectType::Mod => RelativePath::new("mods").join(&*install_file.filename),
                 ModrinthProjectType::Modpack => RelativePath::new("mods").join(&*install_file.filename),
                 ModrinthProjectType::Resourcepack => RelativePath::new("resourcepacks").join(&*install_file.filename),
                 ModrinthProjectType::Shader => RelativePath::new("shaderpacks").join(&*install_file.filename),
+                ModrinthProjectType::Datapack => {
+                    let world = &datapack_world;
+                    RelativePath::new("saves")
+                        .join(&world)
+                        .join("datapacks")
+                        .join(&*install_file.filename)
+                },
                 ModrinthProjectType::Other => {
                     push_error(title.clone(), key, "Unable to install 'other' project type".into(), window, cx);
                     return true;
@@ -270,14 +559,7 @@ fn handle_project_versions(
 
             let mut files = Vec::new();
 
-            let required_dependencies = version.dependencies.as_ref().map(|deps| {
-                deps.iter()
-                    .filter(|dep| dep.project_id.is_some() && dep.dependency_type == ModrinthDependencyType::Required)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            });
-
-            if let Some(required_dependencies) = required_dependencies {
+            if let Some(ref required_dependencies) = required_dependencies {
                 for dep in required_dependencies.iter() {
                     files.push(ContentInstallFile {
                         replace_old: None,
@@ -326,18 +608,74 @@ fn handle_project_versions(
             );
 
             return true;
-        },
-        FrontendMetadataResult::Error(error) => {
-            push_error(
-                title.clone(),
-                key,
-                format!("Error loading project versions from Modrinth:\n{error}").into(),
-                window,
-                cx,
-            );
-            return true;
-        },
+        }
+}
+
+fn do_datapack_install(
+    world: String,
+    version: Arc<ModrinthProjectVersion>,
+    install_file: Arc<ModrinthFile>,
+    project_id: Arc<str>,
+    install_for: InstanceID,
+    configuration: InstanceConfiguration,
+    effective_loader: Loader,
+    title: SharedString,
+    key: Uuid,
+    required_dependencies: &[ModrinthDependency],
+    data: DataEntities,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let path = RelativePath::new("saves")
+        .join(&world)
+        .join("datapacks")
+        .join(&*install_file.filename);
+    let Some(path) = SafePath::from_relative_path(&path) else {
+        push_error(title, key, "Invalid/dangerous filename".into(), window, cx);
+        return;
+    };
+    let mut files = Vec::new();
+    for dep in required_dependencies {
+        files.push(ContentInstallFile {
+            replace_old: None,
+            path: bridge::install::ContentInstallPath::Automatic,
+            download: ContentDownload::Modrinth {
+                project_id: dep.project_id.clone().unwrap(),
+                version_id: dep.version_id.clone(),
+            },
+            content_source: ContentSource::ModrinthProject {
+                project: dep.project_id.clone().unwrap(),
+            },
+        });
     }
+    files.push(ContentInstallFile {
+        replace_old: None,
+        path: bridge::install::ContentInstallPath::Safe(path),
+        download: ContentDownload::Url {
+            url: install_file.url.clone(),
+            sha1: install_file.hashes.sha1.clone(),
+            size: install_file.size,
+        },
+        content_source: ContentSource::ModrinthProject { project: project_id },
+    });
+    let content_install = ContentInstall {
+        target: InstallTarget::Instance(install_for),
+        loader_hint: effective_loader,
+        version_hint: Some(configuration.minecraft_version.into()),
+        files: files.into(),
+    };
+    let modal_action = ModalAction::default();
+    data.backend_handle.send(MessageToBackend::InstallContent {
+        content: content_install.clone(),
+        modal_action: modal_action.clone(),
+    });
+    crate::modals::generic::show_notification_with_note(
+        window,
+        cx,
+        "Error installing content".into(),
+        modal_action,
+        Notification::new().id1::<AutoInstallNotificationType>(key),
+    );
 }
 
 fn push_error(title: SharedString, key: Uuid, message: SharedString, window: &mut Window, cx: &mut App) {

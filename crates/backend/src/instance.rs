@@ -8,7 +8,7 @@ use anyhow::Context;
 use base64::Engine;
 use bridge::{
     instance::{
-        ContentSummary, ContentUpdateContext, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary
+        ContentSummary, ContentUpdateContext, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary, WorldDatapackSummary
     }, message::{AtomicBridgeDataLoadState, BridgeDataLoadState, MessageToFrontend}, notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle}
 };
 use parking_lot::RwLock;
@@ -858,6 +858,12 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
         .collect();
 
     let disabled_children = read_disabled_children_for(&summary, path).unwrap_or_default();
+    
+    let update_status = mod_metadata_manager.updates.read().get(&ContentUpdateKey {
+        hash: summary.hash,
+        loader: for_loader,
+        version: for_version,
+    }).map(ContentUpdateAction::to_status).unwrap_or(ContentUpdateStatus::Unknown);
 
     let update_status = mod_metadata_manager.updates.read().get(&ContentUpdateKey {
         hash: summary.hash,
@@ -931,13 +937,61 @@ fn load_world_summary(path: &Path) -> anyhow::Result<InstanceWorldSummary> {
         None
     };
 
+    let datapacks_path = path.join("datapacks");
+    let has_datapacks = datapacks_path.is_dir()
+        && std::fs::read_dir(&datapacks_path)
+            .map(|d| {
+                d.filter_map(Result::ok).any(|e| {
+                    let p = e.path();
+                    let name = p.file_name().map(|n| n.to_string_lossy());
+                    p.is_file()
+                        && name.map_or(false, |n| n.ends_with(".zip") || n.ends_with(".zip.disabled"))
+                })
+            })
+            .unwrap_or(false);
+
     Ok(InstanceWorldSummary {
         title,
         subtitle,
         level_path: path.into(),
         last_played,
         png_icon: icon,
+        has_datapacks,
     })
+}
+
+pub fn load_world_datapacks(world_path: &Path) -> Vec<WorldDatapackSummary> {
+    let datapacks_path = world_path.join("datapacks");
+    if !datapacks_path.is_dir() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(&datapacks_path) else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = match p.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.ends_with(".zip") && !name.ends_with(".zip.disabled") {
+            continue;
+        }
+        let (filename, enabled) = if name.ends_with(".zip.disabled") {
+            (name.strip_suffix(".disabled").unwrap_or(&name).to_string(), false)
+        } else {
+            (name.clone(), true)
+        };
+        result.push(WorldDatapackSummary {
+            filename: Arc::from(filename),
+            enabled,
+        });
+    }
+    result
 }
 
 fn load_servers_summary(server_dat_path: &Path) -> anyhow::Result<Vec<InstanceServerSummary>> {

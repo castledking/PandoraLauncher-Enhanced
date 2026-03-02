@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bridge::{instance::InstanceID, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, WindowExt, button::{Button, ButtonVariants}, h_flex, input::{Input, InputState}, notification::{Notification, NotificationType}, resizable::{ResizablePanelEvent, ResizableState, h_resizable, resizable_panel}, scroll::ScrollableElement, sidebar::SidebarFooter, tooltip::Tooltip, v_flex
+    ActiveTheme as _, Disableable, Icon, IconName, IconNamed, WindowExt, button::{Button, ButtonVariants}, h_flex, input::{Input, InputState}, notification::{Notification, NotificationType}, resizable::{ResizablePanelEvent, ResizableState, h_resizable, resizable_panel}, scroll::ScrollableElement, sidebar::SidebarFooter, tooltip::Tooltip, v_flex
 };
 use rand::Rng;
 use schema::modrinth::ModrinthProjectType;
@@ -505,6 +505,24 @@ impl Render for LauncherUI {
                     window.open_sheet_at(gpui_component::Placement::Left, cx, build);
                 }
             });
+        let bug_report_button = div()
+            .id("bug-report-button")
+            .p_2()
+            .rounded(cx.theme().radius)
+            .hover(|this| {
+                this.bg(cx.theme().sidebar_accent)
+                    .text_color(cx.theme().sidebar_accent_foreground)
+            })
+            .child(PandoraIcon::Bug)
+            .tooltip(move |window, cx| {
+                Tooltip::new("Report a bug").build(window, cx)
+            })
+            .on_click({
+                move |_, window, cx| {
+                    open_bug_report_url(window, cx);
+                }
+            });
+
         let bug_report_button = div()
             .id("bug-report-button")
             .p_2()

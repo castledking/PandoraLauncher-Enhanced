@@ -1,12 +1,14 @@
 use std::{path::Path, sync::Arc};
 
 use bridge::{
-    instance::{InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary},
+    instance::{InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceStatus, InstanceWorldSummary, WorldDatapackSummary},
     message::AtomicBridgeDataLoadState,
 };
 use gpui::{prelude::*, *};
 use gpui_component::select::SelectItem;
 use indexmap::IndexMap;
+use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 use schema::{instance::InstanceConfiguration, loader::Loader};
 
 pub struct InstanceEntries {
@@ -40,6 +42,7 @@ impl InstanceEntries {
                 status: InstanceStatus::NotRunning,
                 worlds_state,
                 worlds: cx.new(|_| [].into()),
+                world_datapacks: cx.new(|_| Arc::new(RwLock::new(FxHashMap::default()))),
                 servers_state,
                 servers: cx.new(|_| [].into()),
                 mods_state,
@@ -129,6 +132,25 @@ impl InstanceEntries {
         });
     }
 
+    pub fn set_world_datapacks(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        world_folder: String,
+        datapacks: Arc<[WorldDatapackSummary]>,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.world_datapacks.update(cx, |map, cx| {
+                        map.write().insert(world_folder, datapacks);
+                        cx.notify();
+                    })
+                });
+            }
+        });
+    }
+
     pub fn set_servers(entity: &Entity<Self>, id: InstanceID, servers: Arc<[InstanceServerSummary]>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
@@ -199,6 +221,7 @@ pub struct InstanceEntry {
     pub status: InstanceStatus,
     pub worlds_state: Arc<AtomicBridgeDataLoadState>,
     pub worlds: Entity<Arc<[InstanceWorldSummary]>>,
+    pub world_datapacks: Entity<Arc<RwLock<FxHashMap<String, Arc<[WorldDatapackSummary]>>>>>,
     pub servers_state: Arc<AtomicBridgeDataLoadState>,
     pub servers: Entity<Arc<[InstanceServerSummary]>>,
     pub mods_state: Arc<AtomicBridgeDataLoadState>,

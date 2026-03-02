@@ -267,16 +267,16 @@ impl BackendState {
                                 };
 
                                 let base = if let Some(mod_summary) = &mod_summary {
-                                    match mod_summary.extra {
-                                        ContentType::Fabric | ContentType::Forge | ContentType::LegacyForge | ContentType::NeoForge | ContentType::JavaModule | ContentType::ModrinthModpack { .. } => {
-                                            Path::new("mods")
-                                        },
-                                        ContentType::ResourcePack => {
-                                            Path::new("resourcepacks")
-                                        }
+                                    match &mod_summary.extra {
+                                        ContentType::Fabric | ContentType::Forge | ContentType::LegacyForge
+                                            | ContentType::NeoForge | ContentType::JavaModule
+                                            | ContentType::ModrinthModpack { .. } => Path::new("mods"),
+                                        ContentType::ResourcePack => Path::new("resourcepacks"),
                                     }
                                 } else {
-                                    return Err(ContentInstallError::UnableToDetermineContentType(file_name.to_string_lossy().into()))
+                                    return Err(ContentInstallError::UnableToDetermineContentType(
+                                        file_name.to_string_lossy().into(),
+                                    ));
                                 };
 
                                 base.join(file_name).into()
@@ -300,20 +300,22 @@ impl BackendState {
         match result {
             Ok(files) => {
                 let mut instance_dir = None;
-
+                let mut instance_id_for_reload = None;
                 let mut loader_hint = content.loader_hint;
-                let mut version_hint = content.version_hint;
+                let mut version_hint = content.version_hint.clone();
 
                 match content.target {
                     bridge::install::InstallTarget::Instance(instance_id) => {
+                        instance_id_for_reload = Some(instance_id);
                         if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
-                            if instance.configuration.get().loader == Loader::Vanilla {
+                            let installs_to_mods = files.iter().any(|f| f.install_path.starts_with(std::path::Path::new("mods")));
+                            if installs_to_mods && instance.configuration.get().loader == Loader::Vanilla {
                                 if loader_hint == Loader::Unknown {
                                     loader_hint = determine_loader_from_content(&files).unwrap_or(Loader::Unknown);
                                 }
                                 if loader_hint != Loader::Unknown {
                                     instance.configuration.modify(|config| {
-                                        config.loader = content.loader_hint;
+                                        config.loader = loader_hint;
                                     });
                                 }
                             }
@@ -332,19 +334,18 @@ impl BackendState {
                             }
                         }
 
-                        if let Some(version_hint) = version_hint {
+                        if let Some(version_hint) = &version_hint {
                             if loader_hint == Loader::Unknown {
                                 loader_hint = determine_loader_from_content(&files).unwrap_or(Loader::Unknown);
                             }
 
-                            let mut name = name;
-                            if name.is_none() {
-                                name = determine_name_from_content(&files);
-                            }
-                            let name = name.as_deref().unwrap_or("New Instance");
+                            let name_opt = name.or_else(|| determine_name_from_content(&files));
+                            let name = name_opt.as_deref().unwrap_or("New Instance");
 
                             // todo: use icon of mod/modpack/etc. for icon of instance
-                            instance_dir = self.create_instance_sanitized(&name, &version_hint, loader_hint, None).await
+                            instance_dir = self
+                                .create_instance_sanitized(name, &*version_hint, loader_hint, None)
+                                .await
                                 .map(|v| v.join(".minecraft").into());
                         }
                     },
@@ -361,8 +362,14 @@ impl BackendState {
                 self.mod_metadata_manager.set_content_sources(sources);
 
                 if let Some(instance_dir) = instance_dir {
+                    let mut installed_datapack = false;
                     for install in files {
                         let target_path = instance_dir.join(&install.install_path);
+                        if install.install_path.starts_with(std::path::Path::new("saves"))
+                            && install.install_path.to_string_lossy().contains("datapacks")
+                        {
+                            installed_datapack = true;
+                        }
 
                         let _ = std::fs::create_dir_all(target_path.parent().unwrap());
 
@@ -375,6 +382,11 @@ impl BackendState {
                             }
                         }
                         let _ = std::fs::hard_link(install.from, target_path);
+                    }
+                    if installed_datapack {
+                        if let Some(instance_id) = instance_id_for_reload {
+                            tokio::task::spawn(self.clone().load_instance_worlds(instance_id));
+                        }
                     }
                 }
             },
@@ -560,7 +572,7 @@ fn determine_loader_from_content(content: &[InstallFromContentLibrary]) -> Optio
                             "forge" => return Some(Loader::Forge),
                             "neoforge" => return Some(Loader::NeoForge),
                             "fabric-loader" => return Some(Loader::Fabric),
-                            _ => {}
+                            _ => {},
                         }
                     }
                 },

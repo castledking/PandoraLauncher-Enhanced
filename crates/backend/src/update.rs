@@ -9,6 +9,11 @@ use rand::RngCore;
 
 use crate::directories::LauncherDirectories;
 
+fn replace_os_str(filename: &OsStr, from: &str, to: &str) -> OsString {
+    let s = filename.to_string_lossy();
+    OsString::from(s.replace(from, to))
+}
+
 pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandle) {
     if option_env!("PANDORA_UPDATE_PUBKEY").is_none() {
         return;

@@ -83,6 +83,7 @@ pub enum ModrinthProjectType {
     Modpack,
     Resourcepack,
     Shader,
+    Datapack,
     #[serde(other)]
     #[default]
     Other,
@@ -95,6 +96,7 @@ impl ModrinthProjectType {
             ModrinthProjectType::Modpack => "modpack",
             ModrinthProjectType::Resourcepack => "resourcepack",
             ModrinthProjectType::Shader => "shader",
+            ModrinthProjectType::Datapack => "datapack",
             ModrinthProjectType::Other => "other",
         }
     }
@@ -147,6 +149,8 @@ pub enum ModrinthLoader {
     Iris,
     Optifine,
     Canvas,
+    // Datapacks
+    Datapack,
     // Other
     #[serde(other)]
     Unknown,
@@ -159,6 +163,7 @@ impl ModrinthLoader {
             ModrinthLoader::Minecraft => Some("resourcepacks"),
             ModrinthLoader::Iris | ModrinthLoader::Optifine => Some("shaderpacks"),
             ModrinthLoader::Canvas => Some("resourcepacks"),
+            ModrinthLoader::Datapack => Some("saves/World/datapacks"),
             ModrinthLoader::Unknown => None,
         }
     }
@@ -172,6 +177,7 @@ impl ModrinthLoader {
             Self::Iris => "Iris",
             Self::Optifine => "Optifine",
             Self::Canvas => "Canvas",
+            Self::Datapack => "Datapack",
             Self::Unknown => "Unknown",
         }
     }
@@ -185,6 +191,7 @@ impl ModrinthLoader {
             Self::Iris => "iris",
             Self::Optifine => "optifine",
             Self::Canvas => "canvas",
+            Self::Datapack => "datapack",
             Self::Unknown => "unknown",
         }
     }
@@ -198,6 +205,7 @@ impl ModrinthLoader {
             "Iris" | "iris" => Self::Iris,
             "Optifine" | "optifine" => Self::Optifine,
             "Canvas" | "canvas" => Self::Canvas,
+            "Datapack" | "datapack" => Self::Datapack,
             _ => Self::Unknown,
         }
     }

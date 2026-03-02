@@ -1,6 +1,12 @@
 use std::sync::Arc;
 
-use bridge::{handle::BackendHandle, import::{ImportFromOtherLaunchers, OtherLauncher}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, message::MessageToBackend, modal_action::ModalAction};
+use bridge::{
+    handle::BackendHandle,
+    import::{ImportFromOtherLaunchers, OtherLauncher},
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
+    message::MessageToBackend,
+    modal_action::ModalAction,
+};
 use gpui::{prelude::*, *};
 use gpui_component::{
     button::{Button, ButtonVariants}, checkbox::Checkbox, scroll::ScrollableElement, spinner::Spinner, v_flex, ActiveTheme as _, Disableable, Sizable
@@ -89,7 +95,7 @@ impl Render for ImportPage {
                             files: true,
                             directories: false,
                             multiple: false,
-                            prompt: Some("Select Modrinth Pack".into())
+                            prompt: Some("Select Modrinth Pack".into()),
                         });
                         let page_entity = cx.entity();
                         page._open_file_task = window.spawn(cx, async move |cx| {
@@ -104,18 +110,16 @@ impl Render for ImportPage {
                                     target: InstallTarget::NewInstance { name: None },
                                     loader_hint: Loader::Unknown,
                                     version_hint: None,
-                                    files: Arc::from([
-                                        ContentInstallFile {
-                                            replace_old: None,
-                                            path: ContentInstallPath::Automatic,
-                                            download: ContentDownload::File { path: path.into() },
-                                            content_source: ContentSource::Manual,
-                                        }
-                                    ]),
+                                    files: Arc::from([ContentInstallFile {
+                                        replace_old: None,
+                                        path: ContentInstallPath::Automatic,
+                                        download: ContentDownload::File { path: path.clone() },
+                                        content_source: ContentSource::Manual,
+                                    }]),
                                 };
                                 root::start_install(content_install, &page.backend_handle, window, cx);
                             });
-                        })
+                        });
                     })))
             );
 

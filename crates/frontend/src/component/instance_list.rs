@@ -4,7 +4,7 @@ use bridge::message::MessageToBackend;
 use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, prelude::*, *};
 use gpui_component::Icon;
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable, StyledExt,
+    ActiveTheme, IconName, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     table::{Column, ColumnSort, TableDelegate, TableState},

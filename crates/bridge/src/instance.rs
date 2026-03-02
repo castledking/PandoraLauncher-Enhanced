@@ -50,6 +50,14 @@ pub struct InstanceWorldSummary {
     pub level_path: Arc<Path>,
     pub last_played: i64,
     pub png_icon: Option<Arc<[u8]>>,
+    /// True if the world has at least one datapack in its datapacks folder.
+    pub has_datapacks: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorldDatapackSummary {
+    pub filename: Arc<str>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone)]

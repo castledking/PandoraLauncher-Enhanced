@@ -10,7 +10,7 @@ use auth::{
     serve_redirect::{self, ProcessAuthorizationError},
 };
 use bridge::{
-    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{ContentType, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceWorldSummary}, message::{EmbeddedOrRaw, MessageToBackend, MessageToFrontend}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
+    handle::{BackendHandle, BackendReceiver, FrontendHandle}, install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath}, instance::{ContentType, InstanceContentSummary, InstanceID, InstanceServerSummary, InstanceWorldSummary, WorldDatapackSummary}, message::{EmbeddedOrRaw, MessageToBackend, MessageToFrontend}, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 use image::ImageFormat;
 use indexmap::IndexSet;
@@ -22,6 +22,8 @@ use sha1::{Digest, Sha1};
 use strum::IntoEnumIterator;
 use tokio::sync::{mpsc::Receiver, OnceCell};
 use uuid::Uuid;
+
+use ustr::Ustr;
 
 use crate::{
     account::{BackendAccountInfo, MinecraftLoginInfo}, directories::LauncherDirectories, id_slab::IdSlab, instance::{Instance, ContentFolder}, launch::Launcher, metadata::{items::MinecraftVersionManifestMetadataItem, manager::MetadataManager}, mod_metadata::ModMetadataManager, persistent::Persistent
@@ -324,7 +326,7 @@ impl BackendState {
             let Ok(mut instance) = instance else {
                 instance_state.instances.retain_mut(|existing| {
                     if &*existing.root_path == path {
-                        self.send.send(MessageToFrontend::InstanceRemoved { id: existing.id});
+                        self.send.send(MessageToFrontend::InstanceRemoved { id: existing.id });
                         show_errors = true;
                         false
                     } else {
@@ -1046,21 +1048,40 @@ impl BackendState {
 
         let result = Instance::load_worlds(self.instance_state.clone(), id).await;
 
-        if let Some((worlds, newly_loaded)) = result.clone() && newly_loaded {
+        if let Some((worlds, newly_loaded)) = result.clone() {
+            if newly_loaded {
+                let mut file_watching = self.file_watching.write();
+                for summary in worlds.iter() {
+                    file_watching.watch_filesystem(summary.level_path.clone(), WatchTarget::InstanceWorldDir {
+                        id,
+                    });
+                }
+            }
+            // Always notify frontend so refill runs (e.g. after datapack install)
             self.send.send(MessageToFrontend::InstanceWorldsUpdated {
                 id,
                 worlds: Arc::clone(&worlds)
             });
-
-            let mut file_watching = self.file_watching.write();
-            for summary in worlds.iter() {
-                file_watching.watch_filesystem(summary.level_path.clone(), WatchTarget::InstanceWorldDir {
-                    id,
-                });
-            }
         }
 
         result.map(|(worlds, _)| worlds)
+    }
+
+    pub async fn load_instance_world_datapacks(self, id: InstanceID, world_folder: String) {
+        let instance_state = self.instance_state.read();
+        let Some(instance) = instance_state.instances.get(id).map(|i| i.clone()) else {
+            return;
+        };
+        let world_path = instance.saves_path.join(&world_folder);
+        if !world_path.is_dir() {
+            return;
+        }
+        let datapacks = crate::instance::load_world_datapacks(&world_path);
+        self.send.send(MessageToFrontend::InstanceWorldDatapacksUpdated {
+            id,
+            world_folder,
+            datapacks: datapacks.into(),
+        });
     }
 
     pub async fn create_instance_sanitized(&self, name: &str, version: &str, loader: Loader, icon: Option<EmbeddedOrRaw>) -> Option<PathBuf> {
@@ -1202,7 +1223,7 @@ impl BackendStateFileWatching {
     pub fn watch_filesystem(&mut self, path: Arc<Path>, target: WatchTarget) {
         // Ensure path exists so canonicalize can succeed (e.g. .minecraft/mods may not exist yet)
         if !path.exists() {
-            let is_file = matches!(target, WatchTarget::ServersDat { .. });
+            let is_file = false;
             if is_file {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);

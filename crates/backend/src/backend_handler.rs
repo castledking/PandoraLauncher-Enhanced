@@ -14,7 +14,7 @@ use tokio::{io::AsyncBufReadExt, sync::Semaphore};
 use ustr::Ustr;
 
 use crate::{
-    BackendState, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}
+    BackendState, LoginError, account::{BackendAccount, MinecraftLoginInfo}, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}
 };
 
 /// Extract stable texture key from skin URL (last path segment). Used for deduplication.
@@ -445,6 +445,50 @@ impl BackendState {
             },
             MessageToBackend::RequestLoadWorlds { id } => {
                 tokio::task::spawn(self.clone().load_instance_worlds(id));
+            },
+            MessageToBackend::RequestLoadWorldDatapacks { id, world_folder } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    backend.load_instance_world_datapacks(id, world_folder).await;
+                });
+            },
+            MessageToBackend::DeleteDatapack { id, world_folder, filename } => {
+                if let Some(instance) = self.instance_state.read().instances.get(id) {
+                    let path = instance.saves_path.join(&world_folder).join("datapacks").join(&filename);
+                    if path.is_file() {
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            self.send.send_error(format!("Failed to delete datapack: {}", e));
+                        } else {
+                            let backend = self.clone();
+                            tokio::task::spawn(async move {
+                                backend.load_instance_world_datapacks(id, world_folder).await;
+                            });
+                        }
+                    }
+                }
+            },
+            MessageToBackend::SetDatapackEnabled { id, world_folder, filename, enabled } => {
+                if let Some(instance) = self.instance_state.read().instances.get(id) {
+                    let datapacks_dir = instance.saves_path.join(&world_folder).join("datapacks");
+                    // When enabling: pack.zip.disabled -> pack.zip. When disabling: pack.zip -> pack.zip.disabled.
+                    let (src_name, dst_name) = if enabled {
+                        (format!("{}.disabled", filename), filename.clone())
+                    } else {
+                        (filename.clone(), format!("{}.disabled", filename))
+                    };
+                    let src = datapacks_dir.join(&src_name);
+                    let dst = datapacks_dir.join(&dst_name);
+                    if src.is_file() {
+                        if let Err(e) = std::fs::rename(&src, &dst) {
+                            self.send.send_error(format!("Failed to {} datapack: {}", if enabled { "enable" } else { "disable" }, e));
+                        } else {
+                            let backend = self.clone();
+                            tokio::task::spawn(async move {
+                                backend.load_instance_world_datapacks(id, world_folder).await;
+                            });
+                        }
+                    }
+                }
             },
             MessageToBackend::RequestLoadServers { id } => {
                 tokio::task::spawn(self.clone().load_instance_servers(id));
@@ -2322,6 +2366,118 @@ impl BackendState {
 
                 // Notify user that restart is required for proxy changes to take effect
                 self.send.send_info("Proxy settings saved. Restart the launcher to apply changes.");
+            },
+            MessageToBackend::RelocateInstance { id, path } => {
+                if path.exists() {
+                    self.send.send_warning("Cannot relocate instance: path already exists");
+                    return;
+                }
+
+                let mut is_normal_instance_folder = false;
+
+                if let Ok(path) = path.strip_prefix(&self.directories.instances_dir)
+                    && crate::is_single_component_path(path)
+                {
+                    is_normal_instance_folder = true;
+
+                    let instance_root = if let Some(instance) = self.instance_state.read().instances.get(id) {
+                        instance.root_path.clone()
+                    } else {
+                        return;
+                    };
+
+                    #[cfg(unix)]
+                    let is_real_folder = !instance_root.is_symlink();
+                    #[cfg(windows)]
+                    let is_real_folder = !instance_root.is_symlink() && !junction::exists(&instance_root).unwrap_or(false);
+
+                    if is_real_folder && let Some(name) = path.to_str() {
+                        self.rename_instance(id, name).await;
+                        return;
+                    }
+                }
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    #[cfg(windows)]
+                    if let Ok(target) = junction::get_target(&instance.root_path) {
+                        if let Err(err) = std::fs::rename(&target, &path) {
+                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
+                            self.send.send_error(format!("Unable to move instance files: {err}"));
+                            return;
+                        }
+
+                        _ = junction::delete(&instance.root_path);
+
+                        if !is_normal_instance_folder {
+                            if let Err(err) = junction::create(&path, &instance.root_path) {
+                                log::error!("Error while creating junction to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
+                                return;
+                            }
+                        } else {
+                            instance.on_root_renamed(&path);
+                            let _ = self.send.send(instance.create_modify_message());
+                        }
+                        return;
+                    }
+
+                    if let Ok(target) = std::fs::read_link(&instance.root_path) {
+                        if let Err(err) = std::fs::rename(&target, &path) {
+                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
+                            self.send.send_error(format!("Unable to move instance files: {err}"));
+                            return;
+                        }
+
+                        _ = std::fs::remove_file(&instance.root_path);
+
+                        if !is_normal_instance_folder {
+                            #[cfg(unix)]
+                            if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
+                                log::error!("Error while linking to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                                return;
+                            }
+                            #[cfg(windows)]
+                            if let Err(err) = std::os::windows::fs::symlink_dir(&path, &instance.root_path) {
+                                log::error!("Error while linking to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                                return;
+                            }
+                            #[cfg(not(any(unix, windows)))]
+                            compile_error!("Unsupported platform");
+                        } else {
+                            instance.on_root_renamed(&path);
+                            let _ = self.send.send(instance.create_modify_message());
+                        }
+                        return;
+                    }
+
+                    if let Err(err) = std::fs::rename(&instance.root_path, &path) {
+                        log::error!("Unable to move instance files: {err:?}");
+                        self.send.send_error(format!("Unable to move instance files: {err}"));
+                        return;
+                    }
+
+                    if !is_normal_instance_folder {
+                        #[cfg(unix)]
+                        if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
+                            log::error!("Error while linking to moved instance: {err:?}");
+                            self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                            return;
+                        }
+                        #[cfg(windows)]
+                        if let Err(err) = junction::create(&path, &instance.root_path) {
+                            log::error!("Error while creating junction to moved instance: {err:?}");
+                            self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
+                            return;
+                        }
+                        #[cfg(not(any(unix, windows)))]
+                        compile_error!("Unsupported platform");
+                    } else {
+                        instance.on_root_renamed(&path);
+                        let _ = self.send.send(instance.create_modify_message());
+                    }
+                }
             },
             MessageToBackend::CreateInstanceShortcut { id, path } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {

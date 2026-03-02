@@ -3,14 +3,15 @@ use std::{cmp::Ordering, sync::Arc};
 use crate::ts;
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
-    instance::InstanceID,
+    instance::{InstanceID, InstanceWorldSummary},
+    message::MessageToBackend,
     meta::MetadataRequest,
     safe_path::SafePath,
 };
 use enumset::EnumSet;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    IndexPath, WindowExt,
+    IndexPath, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     dialog::Dialog,
@@ -33,13 +34,99 @@ use schema::{
 
 use crate::{
     component::{error_alert::ErrorAlert, instance_dropdown::InstanceDropdown},
+    png_render_cache,
     entity::{
         DataEntities,
         instance::InstanceEntry,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
     },
+    interface_config::InterfaceConfig,
     root,
 };
+
+pub fn perform_datapack_install(
+    world: String,
+    install_file: &schema::modrinth::ModrinthFile,
+    target: InstallTarget,
+    loader_override: Option<Loader>,
+    selected_loader: &Option<SharedString>,
+    selected_minecraft_version: &Option<SharedString>,
+    install_dependencies: bool,
+    required_dependencies: &[ModrinthDependency],
+    project_id: Arc<str>,
+    name: &str,
+    data: &DataEntities,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let path = RelativePath::new("saves")
+        .join(&world)
+        .join("datapacks")
+        .join(&*install_file.filename);
+    let Some(path) = SafePath::from_relative_path(&path) else {
+        window.push_notification((NotificationType::Error, "Invalid/dangerous filename"), cx);
+        return;
+    };
+    let mut loader_hint = Loader::Unknown;
+    if let Some(override_loader) = loader_override {
+        loader_hint = override_loader;
+    } else if let Some(selected_loader) = selected_loader {
+        let modrinth_loader = ModrinthLoader::from_name(selected_loader);
+        match modrinth_loader {
+            ModrinthLoader::Fabric => loader_hint = Loader::Fabric,
+            ModrinthLoader::Forge => loader_hint = Loader::Forge,
+            ModrinthLoader::NeoForge => loader_hint = Loader::NeoForge,
+            _ => {},
+        }
+    }
+    let mut version_hint = None;
+    if let Some(selected_minecraft_version) = selected_minecraft_version {
+        version_hint = Some(selected_minecraft_version.as_str().into());
+    }
+    let mut target = target;
+    if let InstallTarget::NewInstance { name: ref mut instance_name } = target {
+        *instance_name = Some(name.into());
+    }
+    let mut files = Vec::new();
+    if install_dependencies {
+        for dep in required_dependencies {
+            files.push(ContentInstallFile {
+                replace_old: None,
+                path: bridge::install::ContentInstallPath::Automatic,
+                download: ContentDownload::Modrinth {
+                    project_id: dep.project_id.clone().unwrap(),
+                    version_id: dep.version_id.clone(),
+                },
+                content_source: ContentSource::ModrinthProject {
+                    project: dep.project_id.clone().unwrap(),
+                },
+            });
+        }
+    }
+    files.push(ContentInstallFile {
+        replace_old: None,
+        path: bridge::install::ContentInstallPath::Safe(path),
+        download: ContentDownload::Url {
+            url: install_file.url.clone(),
+            sha1: install_file.hashes.sha1.clone(),
+            size: install_file.size,
+        },
+        content_source: ContentSource::ModrinthProject { project: project_id },
+    });
+    let content_install = ContentInstall {
+        target,
+        loader_hint,
+        version_hint,
+        files: files.into(),
+    };
+    window.close_dialog(cx);
+    root::start_install(content_install, &data.backend_handle, window, cx);
+}
+
+struct WorldSelectState {
+    selected_idx: usize,
+    worlds: Vec<InstanceWorldSummary>,
+}
 
 struct VersionMatrixLoaders {
     loaders: EnumSet<ModrinthLoader>,
@@ -227,8 +314,10 @@ fn open_from_entity(
 
                 let minecraft_version = instance.configuration.minecraft_version.as_str();
                 let instance_loader = instance.configuration.loader;
-                let allow_all_versions =
-                    project_type == ModrinthProjectType::Resourcepack || project_type == ModrinthProjectType::Shader;
+                let allow_all_versions = matches!(
+                    project_type,
+                    ModrinthProjectType::Resourcepack | ModrinthProjectType::Shader | ModrinthProjectType::Datapack
+                );
 
                 let fixed_minecraft_version = if allow_all_versions {
                     None
@@ -264,6 +353,8 @@ fn open_from_entity(
                     && instance_loader != Loader::Vanilla
                 {
                     Some(instance_loader.as_modrinth_loader())
+                } else if project_type == ModrinthProjectType::Datapack {
+                    Some(ModrinthLoader::Datapack)
                 } else {
                     None
                 };
@@ -389,6 +480,7 @@ impl InstallDialog {
                 ModrinthProjectType::Modpack => "Create new instance with this modpack",
                 ModrinthProjectType::Resourcepack => "Create new instance with this resourcepack",
                 ModrinthProjectType::Shader => "Create new instance with this shader",
+                ModrinthProjectType::Datapack => "Create new instance with this datapack",
                 ModrinthProjectType::Other => "Create new instance with this file",
             };
 
@@ -433,9 +525,7 @@ impl InstallDialog {
                 })
                 .child(Button::new("create").success().label(create_instance_label).on_click(cx.listener(
                     |this, _, _, _| {
-                        this.target = Some(InstallTarget::NewInstance {
-                            name: None,
-                        });
+                        this.target = Some(InstallTarget::NewInstance { name: None });
                     },
                 )));
 
@@ -587,7 +677,8 @@ impl InstallDialog {
                     if version.files.is_empty() {
                         return None;
                     }
-                    let matches_game_version = game_versions.iter().any(|v| v.as_str() == selected_game_version);
+                    let matches_game_version = self.project_type == ModrinthProjectType::Datapack
+                        || game_versions.iter().any(|v| v.as_str() == selected_game_version);
                     let matches_loader = if let Some(selected_loader) = selected_loader {
                         loaders.contains(&selected_loader)
                     } else {
@@ -669,6 +760,7 @@ impl InstallDialog {
             ModrinthProjectType::Modpack => "Modpack version: ",
             ModrinthProjectType::Resourcepack => "Pack version: ",
             ModrinthProjectType::Shader => "Shader version: ",
+            ModrinthProjectType::Datapack => "Datapack version: ",
             ModrinthProjectType::Other => "File version: ",
         };
 
@@ -728,93 +820,361 @@ impl InstallDialog {
                                 .find(|file| file.primary)
                                 .unwrap_or(selected_mod_version.files.first().unwrap());
 
-                            let path = match this.project_type {
-                                ModrinthProjectType::Mod => RelativePath::new("mods").join(&*install_file.filename),
-                                ModrinthProjectType::Modpack => RelativePath::new("mods").join(&*install_file.filename),
-                                ModrinthProjectType::Resourcepack => {
-                                    RelativePath::new("resourcepacks").join(&*install_file.filename)
-                                },
-                                ModrinthProjectType::Shader => {
-                                    RelativePath::new("shaderpacks").join(&*install_file.filename)
-                                },
-                                ModrinthProjectType::Other => {
-                                    window.push_notification(
-                                        (NotificationType::Error, "Unable to install 'other' project type"),
-                                        cx,
-                                    );
+                            let path = if this.project_type != ModrinthProjectType::Datapack {
+                                Some(match this.project_type {
+                                    ModrinthProjectType::Mod => RelativePath::new("mods").join(&*install_file.filename),
+                                    ModrinthProjectType::Modpack => RelativePath::new("mods").join(&*install_file.filename),
+                                    ModrinthProjectType::Resourcepack => {
+                                        RelativePath::new("resourcepacks").join(&*install_file.filename)
+                                    },
+                                    ModrinthProjectType::Shader => {
+                                        RelativePath::new("shaderpacks").join(&*install_file.filename)
+                                    },
+                                    ModrinthProjectType::Datapack => unreachable!(),
+                                    ModrinthProjectType::Other => {
+                                        window.push_notification(
+                                            (NotificationType::Error, "Unable to install 'other' project type"),
+                                            cx,
+                                        );
+                                        return;
+                                    },
+                                })
+                            } else {
+                                None
+                            };
+
+                            if this.project_type == ModrinthProjectType::Datapack {
+                                let target = this.target.clone().unwrap();
+                                match &target {
+                                    InstallTarget::NewInstance { .. } | InstallTarget::Library => {
+                                        perform_datapack_install(
+                                            "World".to_string(),
+                                            install_file,
+                                            this.target.clone().unwrap(),
+                                            this.loader_override,
+                                            &selected_loader,
+                                            &selected_minecraft_version,
+                                            this.install_dependencies,
+                                            &required_dependencies,
+                                            this.project_id.clone(),
+                                            this.name.as_str(),
+                                            &this.data,
+                                            window,
+                                            cx,
+                                        );
+                                        return;
+                                    },
+                                    InstallTarget::Instance(instance_id) => {
+                                        let Some(entry) = this.data.instances.read(cx).entries.get(instance_id) else {
+                                            window.push_notification((NotificationType::Error, ts!("instance.unable_to_find")), cx);
+                                            return;
+                                        };
+                                        let instance = entry.read(cx);
+                                        let config_key = instance.dot_minecraft_folder.to_string_lossy().to_string();
+                                        let worlds: Vec<InstanceWorldSummary> = instance.worlds.read(cx).to_vec();
+                                        let world_folders: Vec<String> = worlds.iter()
+                                            .filter_map(|w| w.level_path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                                            .collect();
+                                        // Always show world/prime modal for datapacks so user can choose
+                                        this.data.backend_handle.send(MessageToBackend::RequestLoadWorlds {
+                                            id: *instance_id,
+                                        });
+                                        let install_file = Arc::new(install_file.clone());
+                                        let target = Arc::new(this.target.clone().unwrap());
+                                        let loader_override = this.loader_override;
+                                        let install_dependencies = this.install_dependencies;
+                                        let project_id = Arc::new(this.project_id.clone());
+                                        let name = Arc::new(this.name.to_string());
+                                        let data = Arc::new(this.data.clone());
+                                        let config_key = Arc::new(config_key.clone());
+                                        let selected_loader = Arc::new(selected_loader.clone());
+                                        let selected_minecraft_version = Arc::new(selected_minecraft_version.clone());
+                                        let required_deps = Arc::clone(&required_dependencies);
+                                        window.close_dialog(cx);
+                                        if worlds.is_empty() {
+                                            window.open_dialog(cx, move |modal, window, cx| {
+                                                let config_key = Arc::clone(&config_key);
+                                                let install_file = Arc::clone(&install_file);
+                                                let target = Arc::clone(&target);
+                                                let selected_loader = Arc::clone(&selected_loader);
+                                                let selected_minecraft_version = Arc::clone(&selected_minecraft_version);
+                                                let required_deps = Arc::clone(&required_deps);
+                                                let project_id = Arc::clone(&project_id);
+                                                let name = Arc::clone(&name);
+                                                let data = Arc::clone(&data);
+                                                modal
+                                                    .title(ts!("instance.content.install.datapack.prime.title"))
+                                                    .child(
+                                                        v_flex()
+                                                            .gap_3()
+                                                            .child(ts!("instance.content.install.datapack.prime.message"))
+                                                            .child(
+                                                                h_flex()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        Button::new("prime_yes")
+                                                                            .success()
+                                                                            .label(ts!("instance.content.install.datapack.prime.yes"))
+                                                                            .on_click(move |_, window, cx| {
+                                                                                InterfaceConfig::get_mut(cx)
+                                                                                    .datapack_world_by_instance
+                                                                                    .insert((*config_key).clone(), "World".to_string());
+                                                                                window.close_dialog(cx);
+                                                                                perform_datapack_install(
+                                                                                    "World".to_string(),
+                                                                                    install_file.as_ref(),
+                                                                                    (*target).clone(),
+                                                                                    loader_override,
+                                                                                    selected_loader.as_ref(),
+                                                                                    selected_minecraft_version.as_ref(),
+                                                                                    install_dependencies,
+                                                                                    required_deps.as_ref(),
+                                                                                    Arc::clone(&project_id),
+                                                                                    name.as_str(),
+                                                                                    data.as_ref(),
+                                                                                    window,
+                                                                                    cx,
+                                                                                );
+                                                                            }),
+                                                                    )
+                                                                    .child(
+                                                                        Button::new("prime_cancel")
+                                                                            .label(ts!("instance.content.install.datapack.prime.cancel"))
+                                                                            .on_click(move |_, window, cx| {
+                                                                                window.close_dialog(cx);
+                                                                            }),
+                                                                    ),
+                                                            ),
+                                                    )
+                                            });
+                                        } else {
+                                            let world_folders: Vec<String> = worlds
+                                                .iter()
+                                                .map(|w| {
+                                                    w.level_path
+                                                        .file_name()
+                                                        .map(|n| n.to_string_lossy().to_string())
+                                                        .unwrap_or_default()
+                                                })
+                                                .collect();
+                                            let state = cx.new(|cx| WorldSelectState {
+                                                selected_idx: 0,
+                                                worlds: worlds.clone(),
+                                            });
+                                            let required_deps_world = Arc::clone(&required_deps);
+                                            window.open_dialog(cx, move |modal, window, cx| {
+                                                let state_entity = state.clone();
+                                                cx.update_entity(&state_entity, |state, cx| {
+                                                    let world_buttons = state
+                                                        .worlds
+                                                        .iter()
+                                                        .enumerate()
+                                                        .map(|(i, w)| {
+                                                            let folder_name = w
+                                                                .level_path
+                                                                .file_name()
+                                                                .map(|n| n.to_string_lossy().to_string())
+                                                                .unwrap_or_else(|| "World".to_string());
+                                                            let icon = if let Some(png_icon) = w.png_icon.as_ref() {
+                                                                png_render_cache::render(Arc::clone(png_icon), cx)
+                                                            } else {
+                                                                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
+                                                            };
+                                                            Button::new(("world_select", i))
+                                                                .outline()
+                                                                .selected(state.selected_idx == i)
+                                                                .w_full()
+                                                                .min_h(px(72.0))
+                                                                .on_click({
+                                                                    let state_entity = state_entity.clone();
+                                                                    move |_, _, cx| {
+                                                                        cx.update_entity(&state_entity, |s, cx| {
+                                                                            s.selected_idx = i;
+                                                                            cx.notify();
+                                                                        });
+                                                                    }
+                                                                })
+                                                                .child(
+                                                                    h_flex()
+                                                                        .gap_3()
+                                                                        .items_center()
+                                                                        .w_full()
+                                                                        .child(icon.w(px(64.0)).h(px(64.0)))
+                                                                        .child(SharedString::from(folder_name)),
+                                                                )
+                                                        })
+                                                        .collect::<Vec<_>>();
+                                                    modal
+                                                        .title(ts!("instance.content.install.datapack.select_world.title"))
+                                                        .child(
+                                                            v_flex()
+                                                                .gap_3()
+                                                                .child(
+                                                                    v_flex()
+                                                                        .gap_2()
+                                                                        .children(world_buttons),
+                                                                )
+                                                                .child(
+                                                                    h_flex()
+                                                                        .gap_2()
+                                                                        .child(
+                                                                            Button::new("world_install")
+                                                                                .success()
+                                                                                .label("Install")
+                                                                                .on_click({
+                                                                                    let config_key = Arc::clone(&config_key);
+                                                                                    let world_folders = world_folders.clone();
+                                                                                    let install_file = Arc::clone(&install_file);
+                                                                                    let target = Arc::clone(&target);
+                                                                                    let required_deps = Arc::clone(&required_deps_world);
+                                                                                    let selected_loader = Arc::clone(&selected_loader);
+                                                                                    let selected_minecraft_version = Arc::clone(&selected_minecraft_version);
+                                                                                    let project_id = Arc::clone(&project_id);
+                                                                                    let name = Arc::clone(&name);
+                                                                                    let data = Arc::clone(&data);
+                                                                                    let state_entity = state_entity.clone();
+                                                                                    move |_, window, cx| {
+                                                                                        let idx = state_entity.read(cx).selected_idx;
+                                                                                        let world_folder = world_folders.get(idx).cloned();
+                                                                                        if let Some(world) = world_folder {
+                                                                                            InterfaceConfig::get_mut(cx)
+                                                                                                .datapack_world_by_instance
+                                                                                                .insert((*config_key).clone(), world.clone());
+                                                                                            window.close_dialog(cx);
+                                                                                            perform_datapack_install(
+                                                                                                world,
+                                                                                                install_file.as_ref(),
+                                                                                                (*target).clone(),
+                                                                                                loader_override,
+                                                                                                selected_loader.as_ref(),
+                                                                                                selected_minecraft_version.as_ref(),
+                                                                                                install_dependencies,
+                                                                                                required_deps.as_ref(),
+                                                                                                Arc::clone(&project_id),
+                                                                                                name.as_str(),
+                                                                                                data.as_ref(),
+                                                                                                window,
+                                                                                                cx,
+                                                                                            );
+                                                                                        }
+                                                                                    }
+                                                                                }),
+                                                                        )
+                                                                        .child(
+                                                                            Button::new("world_prime")
+                                                                                .outline()
+                                                                                .label(ts!("instance.content.install.datapack.select_world.prime_for_next"))
+                                                                                .on_click({
+                                                                                    let config_key = Arc::clone(&config_key);
+                                                                                    let install_file = Arc::clone(&install_file);
+                                                                                    let target = Arc::clone(&target);
+                                                                                    let required_deps = Arc::clone(&required_deps_world);
+                                                                                    let selected_loader = Arc::clone(&selected_loader);
+                                                                                    let selected_minecraft_version = Arc::clone(&selected_minecraft_version);
+                                                                                    let project_id = Arc::clone(&project_id);
+                                                                                    let name = Arc::clone(&name);
+                                                                                    let data = Arc::clone(&data);
+                                                                                    move |_, window, cx| {
+                                                                                        InterfaceConfig::get_mut(cx)
+                                                                                            .datapack_world_by_instance
+                                                                                            .insert((*config_key).clone(), "World".to_string());
+                                                                                        window.close_dialog(cx);
+                                                                                        perform_datapack_install(
+                                                                                            "World".to_string(),
+                                                                                            install_file.as_ref(),
+                                                                                            (*target).clone(),
+                                                                                            loader_override,
+                                                                                            selected_loader.as_ref(),
+                                                                                            selected_minecraft_version.as_ref(),
+                                                                                            install_dependencies,
+                                                                                            required_deps.as_ref(),
+                                                                                            Arc::clone(&project_id),
+                                                                                            name.as_str(),
+                                                                                            data.as_ref(),
+                                                                                            window,
+                                                                                            cx,
+                                                                                        );
+                                                                                    }
+                                                                                }),
+                                                                        )
+                                                                        .child(
+                                                                            Button::new("world_cancel")
+                                                                                .label(ts!("instance.content.install.datapack.prime.cancel"))
+                                                                                .on_click(move |_, window, cx| {
+                                                                                    window.close_dialog(cx);
+                                                                                }),
+                                                                        ),
+                                                                ),
+                                                        )
+                                                })
+                                            });
+                                        }
+                                        return;
+                                    },
+                                };
+                            } else if let Some(path) = path {
+                                let Some(path) = SafePath::from_relative_path(&path) else {
+                                    window.push_notification((NotificationType::Error, "Invalid/dangerous filename"), cx);
                                     return;
-                                },
-                            };
-
-                            let Some(path) = SafePath::from_relative_path(&path) else {
-                                window.push_notification((NotificationType::Error, "Invalid/dangerous filename"), cx);
-                                return;
-                            };
-
-                            let mut target = this.target.clone().unwrap();
-
-                            let mut loader_hint = Loader::Unknown;
-                            if let Some(override_loader) = this.loader_override {
-                                loader_hint = override_loader;
-                            } else if let Some(selected_loader) = &selected_loader {
-                                let modrinth_loader = ModrinthLoader::from_name(selected_loader);
-                                match modrinth_loader {
-                                    ModrinthLoader::Fabric => loader_hint = Loader::Fabric,
-                                    ModrinthLoader::Forge => loader_hint = Loader::Forge,
-                                    ModrinthLoader::NeoForge => loader_hint = Loader::NeoForge,
-                                    _ => {},
+                                };
+                                let mut target = this.target.clone().unwrap();
+                                let mut loader_hint = Loader::Unknown;
+                                if let Some(override_loader) = this.loader_override {
+                                    loader_hint = override_loader;
+                                } else if let Some(selected_loader) = &selected_loader {
+                                    let modrinth_loader = ModrinthLoader::from_name(selected_loader);
+                                    match modrinth_loader {
+                                        ModrinthLoader::Fabric => loader_hint = Loader::Fabric,
+                                        ModrinthLoader::Forge => loader_hint = Loader::Forge,
+                                        ModrinthLoader::NeoForge => loader_hint = Loader::NeoForge,
+                                        _ => {},
+                                    }
                                 }
-                            }
 
-                            let mut version_hint = None;
-                            if let Some(selected_minecraft_version) = &selected_minecraft_version {
-                                version_hint = Some(selected_minecraft_version.as_str().into());
-                            }
-
-                            if let InstallTarget::NewInstance { name } = &mut target {
-                                *name = Some(this.name.as_str().into());
-                            }
-
-                            let mut files = Vec::new();
-
-                            if this.install_dependencies {
-                                for dep in required_dependencies.iter() {
-                                    files.push(ContentInstallFile {
-                                        replace_old: None,
-                                        path: bridge::install::ContentInstallPath::Automatic,
-                                        download: ContentDownload::Modrinth {
-                                            project_id: dep.project_id.clone().unwrap(),
-                                            version_id: dep.version_id.clone(),
-                                        },
-                                        content_source: ContentSource::ModrinthProject {
-                                            project: dep.project_id.clone().unwrap(),
-                                        },
-                                    })
+                                let mut version_hint = None;
+                                if let Some(selected_minecraft_version) = &selected_minecraft_version {
+                                    version_hint = Some(selected_minecraft_version.as_str().into());
                                 }
+                                if let InstallTarget::NewInstance { name } = &mut target {
+                                    *name = Some(this.name.as_str().into());
+                                }
+                                let mut files = Vec::new();
+                                if this.install_dependencies {
+                                    for dep in required_dependencies.iter() {
+                                        files.push(ContentInstallFile {
+                                            replace_old: None,
+                                            path: bridge::install::ContentInstallPath::Automatic,
+                                            download: ContentDownload::Modrinth {
+                                                project_id: dep.project_id.clone().unwrap(),
+                                                version_id: dep.version_id.clone(),
+                                            },
+                                            content_source: ContentSource::ModrinthProject {
+                                                project: dep.project_id.clone().unwrap(),
+                                            },
+                                        })
+                                    }
+                                }
+                                files.push(ContentInstallFile {
+                                    replace_old: None,
+                                    path: bridge::install::ContentInstallPath::Safe(path),
+                                    download: ContentDownload::Url {
+                                        url: install_file.url.clone(),
+                                        sha1: install_file.hashes.sha1.clone(),
+                                        size: install_file.size,
+                                    },
+                                    content_source: ContentSource::ModrinthProject {
+                                        project: this.project_id.clone(),
+                                    },
+                                });
+                                let content_install = ContentInstall {
+                                    target,
+                                    loader_hint,
+                                    version_hint,
+                                    files: files.into(),
+                                };
+                                window.close_dialog(cx);
+                                root::start_install(content_install, &this.data.backend_handle, window, cx);
                             }
-
-                            files.push(ContentInstallFile {
-                                replace_old: None,
-                                path: bridge::install::ContentInstallPath::Safe(path),
-                                download: ContentDownload::Url {
-                                    url: install_file.url.clone(),
-                                    sha1: install_file.hashes.sha1.clone(),
-                                    size: install_file.size,
-                                },
-                                content_source: ContentSource::ModrinthProject {
-                                    project: this.project_id.clone(),
-                                },
-                            });
-
-                            let content_install = ContentInstall {
-                                target,
-                                loader_hint,
-                                version_hint,
-                                files: files.into(),
-                            };
-
-                            window.close_dialog(cx);
-                            root::start_install(content_install, &this.data.backend_handle, window, cx);
                         },
                     )))
             });

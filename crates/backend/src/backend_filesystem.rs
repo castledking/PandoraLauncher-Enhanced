@@ -29,6 +29,7 @@ impl FilesystemEvent {
 
 struct AfterDebounceEffects {
     reload_immediately: FxHashSet<(InstanceID, ContentFolder)>,
+    worlds_to_reload: FxHashSet<InstanceID>,
 }
 
 impl BackendState {
@@ -37,6 +38,7 @@ impl BackendState {
             Ok(events) => {
                 let mut after_debounce_effects = AfterDebounceEffects {
                     reload_immediately: Default::default(),
+                    worlds_to_reload: Default::default(),
                 };
 
                 let mut last_event: Option<FilesystemEvent> = None;
@@ -62,6 +64,9 @@ impl BackendState {
                 }
                 for (instance_id, folder) in after_debounce_effects.reload_immediately {
                     tokio::task::spawn(self.clone().load_instance_content(instance_id, folder));
+                }
+                for instance_id in after_debounce_effects.worlds_to_reload {
+                    tokio::task::spawn(self.clone().load_instance_worlds(instance_id));
                 }
             },
             Err(_) => {
@@ -381,16 +386,32 @@ impl BackendState {
                 }
             },
             WatchTarget::InstanceWorldDir { id } => {
-                // If a file inside the world folder is changed (e.g. icon.png), mark the world (parent) as dirty
+                // If a file inside the world folder is changed (e.g. icon.png, datapack), mark the world dirty and reload
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    instance.mark_world_dirty(Some(parent_path.into()));
+                    let world_path = if parent_path.file_name() == Some(OsStr::new("datapacks")) {
+                        parent_path.parent().map(Arc::from)
+                    } else {
+                        Some(parent_path.into())
+                    };
+                    if let Some(wp) = world_path {
+                        instance.mark_world_dirty(Some(wp));
+                    }
                 }
+                after_debounce_effects.worlds_to_reload.insert(id);
             },
             WatchTarget::InstanceSavesDir { id } => {
-                // If a world folder is added to the saves directory, mark the world (path) as dirty
+                // If a world folder or file inside a world (e.g. datapack) changed, mark the world folder dirty
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    instance.mark_world_dirty(Some(path.clone()));
+                    let world_path = if path.is_dir() {
+                        Some(path.clone())
+                    } else {
+                        path.parent().and_then(|p| p.parent()).map(Arc::from)
+                    };
+                    if let Some(world_path) = world_path {
+                        instance.mark_world_dirty(Some(world_path));
+                    }
                 }
+                after_debounce_effects.worlds_to_reload.insert(id);
             },
             WatchTarget::InstanceContentDir { id, folder } => {
                 let mut instance_state = self.instance_state.write();
@@ -433,16 +454,32 @@ impl BackendState {
                         instance.mark_servers_dirty();
                     }
                 }
-            }
+            },
             WatchTarget::InstanceWorldDir { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    instance.mark_world_dirty(Some(parent_path.into()));
+                    let world_path = if parent_path.file_name() == Some(OsStr::new("datapacks")) {
+                        parent_path.parent().map(Arc::from)
+                    } else {
+                        Some(parent_path.into())
+                    };
+                    if let Some(wp) = world_path {
+                        instance.mark_world_dirty(Some(wp));
+                    }
                 }
+                after_debounce_effects.worlds_to_reload.insert(id);
             },
             WatchTarget::InstanceSavesDir { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    instance.mark_world_dirty(Some(path.clone()));
+                    let world_path = if path.is_dir() {
+                        Some(path.clone())
+                    } else {
+                        path.parent().and_then(|p| p.parent()).map(Arc::from)
+                    };
+                    if let Some(world_path) = world_path {
+                        instance.mark_world_dirty(Some(world_path));
+                    }
                 }
+                after_debounce_effects.worlds_to_reload.insert(id);
             },
             WatchTarget::InstanceContentDir { id, folder } => {
                 let mut instance_state = self.instance_state.write();

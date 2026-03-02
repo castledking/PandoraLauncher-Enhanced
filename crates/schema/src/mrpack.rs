@@ -11,6 +11,7 @@ pub struct ModrinthIndexJson {
     pub version_id: Arc<str>,
     pub name: Arc<str>,
     pub files: Arc<[ModrinthModpackFileDownload]>,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub dependencies: IndexMap<Arc<str>, Arc<str>>,
 
     // Unofficial

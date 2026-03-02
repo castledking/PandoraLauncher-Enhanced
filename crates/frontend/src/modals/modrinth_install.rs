@@ -117,6 +117,7 @@ pub fn perform_datapack_install(
         target,
         loader_hint,
         version_hint,
+        datapack_world: Some(world.clone()),
         files: files.into(),
     };
     window.close_dialog(cx);
@@ -191,12 +192,17 @@ pub fn open_with_version(
     selected_version_id: Option<Arc<str>>,
     loader_override: Option<Loader>,
 ) {
+    let loaders = if project_type == ModrinthProjectType::Datapack {
+        Some(Arc::from([ModrinthLoader::Datapack, ModrinthLoader::Minecraft]))
+    } else {
+        None
+    };
     let project_versions = FrontendMetadata::request(
         &data.metadata,
         MetadataRequest::ModrinthProjectVersions(ModrinthProjectVersionsRequest {
             project_id: project_id.clone(),
             game_versions: None,
-            loaders: None,
+            loaders,
         }),
         cx,
     );
@@ -1170,6 +1176,7 @@ impl InstallDialog {
                                     target,
                                     loader_hint,
                                     version_hint,
+                                    datapack_world: None,
                                     files: files.into(),
                                 };
                                 window.close_dialog(cx);

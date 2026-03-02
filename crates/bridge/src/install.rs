@@ -18,6 +18,8 @@ pub struct ContentInstall {
     pub target: InstallTarget,
     pub loader_hint: Loader,
     pub version_hint: Option<Arc<str>>,
+    /// When set, dependencies are resolved as datapacks and installed to saves/{world}/datapacks
+    pub datapack_world: Option<String>,
     pub files: Arc<[ContentInstallFile]>,
 }
 

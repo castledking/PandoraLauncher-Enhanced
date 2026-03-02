@@ -97,12 +97,17 @@ pub fn open(
     cx: &mut App,
     loader_override: Option<Loader>,
 ) {
+    let loaders = if project_type == ModrinthProjectType::Datapack {
+        Some(Arc::from([ModrinthLoader::Datapack, ModrinthLoader::Minecraft]))
+    } else {
+        None
+    };
     let project_versions = FrontendMetadata::request(
         &data.metadata,
         MetadataRequest::ModrinthProjectVersions(ModrinthProjectVersionsRequest {
             project_id: project_id.clone(),
             game_versions: None,
-            loaders: None,
+            loaders,
         }),
         cx,
     );
@@ -590,6 +595,7 @@ fn handle_project_versions(
                 target: InstallTarget::Instance(install_for),
                 loader_hint: effective_loader,
                 version_hint: Some(configuration.minecraft_version.into()),
+                datapack_world: None,
                 files: files.into(),
             };
             let modal_action = ModalAction::default();
@@ -662,6 +668,7 @@ fn do_datapack_install(
         target: InstallTarget::Instance(install_for),
         loader_hint: effective_loader,
         version_hint: Some(configuration.minecraft_version.into()),
+        datapack_world: Some(world.clone()),
         files: files.into(),
     };
     let modal_action = ModalAction::default();

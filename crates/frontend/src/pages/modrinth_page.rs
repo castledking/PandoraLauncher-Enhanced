@@ -118,6 +118,7 @@ pub struct ModrinthSearchPage {
     _instance_mods_subscription: Option<Subscription>,
     _instance_resourcepacks_subscription: Option<Subscription>,
     _instance_worlds_subscription: Option<Subscription>,
+    _refresh_trigger_subscription: Subscription,
     _shader_refresh_task: Option<Task<()>>,
 }
 
@@ -160,6 +161,11 @@ impl ModrinthSearchPage {
         let mut _instance_resourcepacks_subscription = None;
         let mut _instance_worlds_subscription = None;
         let mut _shader_refresh_task = None;
+
+        let _refresh_trigger_subscription = cx.observe(&data.refresh_trigger, |page, _trigger, cx| {
+            page.refill_installed_content_from_instance(cx);
+            cx.notify();
+        });
 
         if let Some(install_for) = install_for {
             if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
@@ -250,6 +256,7 @@ impl ModrinthSearchPage {
             _instance_mods_subscription,
             _instance_resourcepacks_subscription,
             _instance_worlds_subscription,
+            _refresh_trigger_subscription,
             _shader_refresh_task,
         };
         page.refill_installed_content_from_instance(cx);

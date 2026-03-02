@@ -164,6 +164,7 @@ pub fn start(
         let accounts = cx.new(|_| AccountEntries::default());
         let minecraft_profile = cx.new(|_| crate::entity::minecraft_profile::MinecraftProfileEntries::default());
         let skin_thumbnail_cache = cx.new(|_| crate::entity::skin_thumbnail_cache::SkinThumbnailCache::default());
+        let refresh_trigger = cx.new(|_| crate::entity::RefreshTrigger::default());
         let data = DataEntities {
             instances,
             metadata,
@@ -171,6 +172,7 @@ pub fn start(
             accounts,
             minecraft_profile,
             skin_thumbnail_cache,
+            refresh_trigger,
             theme_folder: theme_folder.into(),
             launcher_dir: launcher_dir.into(),
             panic_messages: Arc::new(PanicMessages {

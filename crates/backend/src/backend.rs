@@ -816,6 +816,7 @@ impl BackendState {
                     target: bridge::install::InstallTarget::Library,
                     loader_hint: loader,
                     version_hint: Some(minecraft_version.into()),
+                    datapack_world: None,
                     files: filtered_downloads.clone().filter_map(|file| {
                         let path = SafePath::new(&file.path)?;
                         Some(ContentInstallFile {

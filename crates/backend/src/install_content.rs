@@ -85,14 +85,29 @@ impl BackendState {
                             let version = self.meta.fetch(&ModrinthVersionMetadataItem(version_id.clone())).await?;
                             Some(version)
                         } else {
+                            let loaders_filter = if content.datapack_world.is_some() {
+                                Some(Arc::from([
+                                    ModrinthLoader::Datapack,
+                                    ModrinthLoader::Minecraft,
+                                ]))
+                            } else {
+                                None
+                            };
+
                             let versions = self.meta.fetch(&ModrinthProjectVersionsMetadataItem(&ModrinthProjectVersionsRequest {
                                 project_id: project_id.clone(),
                                 game_versions: content.version_hint.clone().map(|v| [v].into()),
-                                loaders: None,
+                                loaders: loaders_filter,
                             })).await?;
 
                             let modrinth_loader = content.loader_hint.as_modrinth_loader();
-                            let version = if modrinth_loader != ModrinthLoader::Unknown {
+                            let version = if content.datapack_world.is_some() {
+                                versions.0.iter()
+                                    .find(|version| version.loaders.as_ref().map_or(false, |loaders| {
+                                        loaders.contains(&ModrinthLoader::Datapack) || loaders.contains(&ModrinthLoader::Minecraft)
+                                    }))
+                                    .or(versions.0.first())
+                            } else if modrinth_loader != ModrinthLoader::Unknown {
                                 versions.0.iter()
                                     .find(|version| if let Some(loaders) = &version.loaders {
                                         loaders.contains(&modrinth_loader)
@@ -116,11 +131,17 @@ impl BackendState {
                                 ));
                             }
 
-                            let install_file = version
-                                .files
-                                .iter()
-                                .find(|file| file.primary)
-                                .unwrap_or(version.files.first().unwrap());
+                            let install_file = if content.datapack_world.is_some() {
+                                version.files.iter()
+                                    .find(|file| file.filename.ends_with(".zip"))
+                                    .or_else(|| version.files.iter().find(|file| file.primary))
+                                    .or(version.files.first())
+                                    .unwrap()
+                            } else {
+                                version.files.iter()
+                                    .find(|file| file.primary)
+                                    .unwrap_or(version.files.first().unwrap())
+                            };
 
                             let url = &install_file.url;
                             let sha1 = &install_file.hashes.sha1;
@@ -137,13 +158,22 @@ impl BackendState {
                                 ContentInstallPath::Raw(path) => path.clone(),
                                 ContentInstallPath::Safe(safe_path) => safe_path.to_path(Path::new("")).into(),
                                 ContentInstallPath::Automatic => {
-                                    let base = if let Some(mod_summary) = &mod_summary {
+                                    let base: PathBuf = if let Some(ref world) = content.datapack_world {
+                                        let is_datapack_version = version.loaders.as_ref().map_or(false, |loaders| {
+                                            loaders.contains(&ModrinthLoader::Datapack) || loaders.contains(&ModrinthLoader::Minecraft)
+                                        });
+                                        if is_datapack_version {
+                                            Path::new("saves").join(world).join("datapacks")
+                                        } else {
+                                            PathBuf::from("mods")
+                                        }
+                                    } else if let Some(mod_summary) = &mod_summary {
                                         match mod_summary.extra {
                                             ContentType::Fabric | ContentType::Forge | ContentType::LegacyForge | ContentType::NeoForge | ContentType::JavaModule | ContentType::ModrinthModpack { .. } => {
-                                                Path::new("mods")
+                                                PathBuf::from("mods")
                                             },
                                             ContentType::ResourcePack => {
-                                                Path::new("resourcepacks")
+                                                PathBuf::from("resourcepacks")
                                             }
                                         }
                                     } else if let Some(loaders) = &version.loaders {
@@ -155,7 +185,7 @@ impl BackendState {
                                             }
                                         }
                                         if let Some(base) = base {
-                                            Path::new(base)
+                                            PathBuf::from(base)
                                         } else {
                                             return Err(ContentInstallError::UnableToDetermineContentType(install_file.filename.clone()))
                                         }
@@ -163,7 +193,7 @@ impl BackendState {
                                         return Err(ContentInstallError::UnableToDetermineContentType(install_file.filename.clone()))
                                     };
 
-                                    safe_filename.to_path(base).into()
+                                    safe_filename.to_path(&base).into()
                                 },
                             };
 
@@ -362,6 +392,7 @@ impl BackendState {
                 self.mod_metadata_manager.set_content_sources(sources);
 
                 if let Some(instance_dir) = instance_dir {
+                    let _ = std::fs::create_dir_all(&instance_dir);
                     let mut installed_datapack = false;
                     for install in files {
                         let target_path = instance_dir.join(&install.install_path);
@@ -381,13 +412,22 @@ impl BackendState {
                                 let _ = std::fs::remove_file(&aux_path);
                             }
                         }
-                        let _ = std::fs::hard_link(install.from, target_path);
+                        if target_path.exists() {
+                            let _ = std::fs::remove_file(&target_path);
+                        }
+                        if std::fs::hard_link(&install.from, &target_path).is_err()
+                            && std::fs::copy(&install.from, &target_path).is_err()
+                        {
+                            log::warn!("Failed to install {} to {:?}", install.from.display(), target_path);
+                        }
                     }
                     if installed_datapack {
                         if let Some(instance_id) = instance_id_for_reload {
                             tokio::task::spawn(self.clone().load_instance_worlds(instance_id));
                         }
                     }
+                } else if instance_id_for_reload.is_some() {
+                    modal_action.set_error_message(Arc::from("Unable to find instance. The instance may have been removed."));
                 }
             },
             Err(error) => {

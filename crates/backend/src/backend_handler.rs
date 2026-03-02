@@ -1868,6 +1868,7 @@ impl BackendState {
                                 target: InstallTarget::Instance(id),
                                 loader_hint: loader,
                                 version_hint: Some(minecraft_version.into()),
+                                datapack_world: None,
                                 files: [ContentInstallFile {
                                     replace_old: Some(mod_summary.path.clone()),
                                     path: bridge::install::ContentInstallPath::Raw(path.into()),

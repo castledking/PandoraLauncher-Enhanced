@@ -188,6 +188,10 @@ impl Processor {
                 });
             },
             MessageToFrontend::Refresh => {
+                self.data.refresh_trigger.update(cx, |trigger, cx| {
+                    trigger.0 = trigger.0.wrapping_add(1);
+                    cx.notify();
+                });
                 let Some(handle) = self.main_window_handle else {
                     return;
                 };

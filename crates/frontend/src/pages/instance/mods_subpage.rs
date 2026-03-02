@@ -82,6 +82,7 @@ impl InstanceModsSubpage {
             target: InstallTarget::Instance(self.instance),
             loader_hint: self.instance_loader,
             version_hint: Some(self.instance_version.into()),
+            datapack_world: None,
             files: paths
                 .into_iter()
                 .filter_map(|path| {

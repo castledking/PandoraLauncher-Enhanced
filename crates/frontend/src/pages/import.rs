@@ -110,6 +110,7 @@ impl Render for ImportPage {
                                     target: InstallTarget::NewInstance { name: None },
                                     loader_hint: Loader::Unknown,
                                     version_hint: None,
+                                    datapack_world: None,
                                     files: Arc::from([ContentInstallFile {
                                         replace_old: None,
                                         path: ContentInstallPath::Automatic,

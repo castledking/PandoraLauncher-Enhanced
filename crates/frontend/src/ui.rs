@@ -588,8 +588,8 @@ fn open_bug_report_url(window: &mut Window, cx: &mut App) {
 "#);
 
     use std::fmt::Write;
-    _ = writeln!(&mut body, "Version: {:?}", option_env!("PANDORA_RELEASE_VERSION"));
-    _ = writeln!(&mut body, "Distributor: {:?}", option_env!("PANDORA_DISTRIBUTION"));
+    _ = writeln!(&mut body, "Version: {}", option_env!("PANDORA_RELEASE_VERSION").unwrap_or("unknown"));
+    _ = writeln!(&mut body, "Distributor: {}", option_env!("PANDORA_DISTRIBUTION").unwrap_or("unknown"));
     _ = writeln!(&mut body, "OS: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
 
     if cfg!(target_os = "linux") {
@@ -604,13 +604,13 @@ fn open_bug_report_url(window: &mut Window, cx: &mut App) {
             }
         }
 
-        _ = writeln!(&mut body, "Desktop: {:?}", std::env::var_os("XDG_CURRENT_DESKTOP"));
+        _ = writeln!(&mut body, "Desktop: {}", std::env::var_os("XDG_CURRENT_DESKTOP").map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "unknown".to_string()));
 
         if let Some(snap_name) = std::env::var_os("SNAP_NAME") {
-            _ = writeln!(&mut body, "Snap: {:?}", snap_name);
+            _ = writeln!(&mut body, "Snap: {}", snap_name.to_string_lossy());
         }
-        if let Some(snap_name) = std::env::var_os("FLATPAK_ID") {
-            _ = writeln!(&mut body, "Flatpak ID: {:?}", snap_name);
+        if let Some(flatpak_id) = std::env::var_os("FLATPAK_ID") {
+            _ = writeln!(&mut body, "Flatpak ID: {}", flatpak_id.to_string_lossy());
         }
         if std::env::var_os("APPIMAGE").is_some() {
             body.push_str("AppImage: true\n");

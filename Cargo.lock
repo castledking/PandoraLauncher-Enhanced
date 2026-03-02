@@ -5416,7 +5416,7 @@ dependencies = [
 
 [[package]]
 name = "pandora_launcher"
-version = "2.2.5"
+version = "2.2.6"
 dependencies = [
  "backend",
  "backtrace",

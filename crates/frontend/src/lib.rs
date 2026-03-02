@@ -223,7 +223,7 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
                 ..Default::default()
             }),
             window_bounds,
-            window_decorations: Some(WindowDecorations::Server),
+            window_decorations: Some(WindowDecorations::Client),
             ..Default::default()
         },
         |window, cx| {

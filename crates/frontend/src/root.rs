@@ -66,12 +66,7 @@ impl Render for LauncherRoot {
             return v_flex().size_full().text_color(gpui::white()).bg(gpui::red()).child(ts!("system.backend_shutdown")).into_any_element();
         }
 
-        let has_csd_titlebar = matches!(window.window_decorations(), Decorations::Client { .. });
-        Theme::global_mut(cx).sheet.margin_top = if has_csd_titlebar {
-            gpui_component::TITLE_BAR_HEIGHT
-        } else {
-            Pixels::ZERO
-        };
+        Theme::global_mut(cx).sheet.margin_top = Pixels::ZERO;
 
         let sheet_layer = Root::render_sheet_layer(window, cx);
         let dialog_layer = Root::render_dialog_layer(window, cx);
@@ -80,9 +75,6 @@ impl Render for LauncherRoot {
         v_flex()
             .size_full()
             .font_family(MAIN_FONT)
-            .when(has_csd_titlebar, |this| {
-                this.child(gpui_component::TitleBar::new().child(ts!("common.app_name")))
-            })
             .child(self.ui.clone())
             .children(sheet_layer)
             .children(dialog_layer)

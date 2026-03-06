@@ -29,9 +29,9 @@ use schema::{content::ContentSource, loader::Loader, modrinth::{
 use ustr::Ustr;
 
 use crate::{
-    component::{error_alert::ErrorAlert, page::Page, page_path::PagePath}, entity::{
+    component::error_alert::ErrorAlert, entity::{
         DataEntities, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
-    }, icon::PandoraIcon, interface_config::InterfaceConfig, ts, ts_short
+    }, icon::PandoraIcon, interface_config::InterfaceConfig, pages::page::{Page, page_layout}, ts, ts_short, ui::PageType
 };
 
 fn show_vanilla_change_to_fabric_modal(
@@ -85,7 +85,6 @@ fn show_vanilla_change_to_fabric_modal(
 pub struct ModrinthSearchPage {
     data: DataEntities,
     hits: Vec<ModrinthHit>,
-    page_path: PagePath,
     install_for: Option<InstanceID>,
     filter_version: Option<Ustr>,
     loading: Option<Subscription>,
@@ -94,7 +93,6 @@ pub struct ModrinthSearchPage {
     search_state: Entity<InputState>,
     _search_input_subscription: Subscription,
     _delayed_clear_task: Task<()>,
-    filter_project_type: ModrinthProjectType,
     filter_loaders: FxHashSet<Loader>,
     filter_categories: FxHashSet<&'static str>,
     show_categories: Arc<AtomicBool>,
@@ -115,6 +113,7 @@ pub struct ModrinthSearchPage {
     search_error: Option<SharedString>,
     image_cache: Entity<RetainAllImageCache>,
     mods_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>,
+    resource_packs_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>,
     _instance_mods_subscription: Option<Subscription>,
     _instance_resourcepacks_subscription: Option<Subscription>,
     _instance_worlds_subscription: Option<Subscription>,
@@ -139,7 +138,7 @@ impl Clone for InstalledContent {
 }
 
 impl ModrinthSearchPage {
-    pub fn new(install_for: Option<InstanceID>, project_type: Option<ModrinthProjectType>, page_path: PagePath, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(install_for: Option<InstanceID>, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(ts!("instance.content.search.mod")).clean_on_escape());
 
         let mut can_install_latest = false;
@@ -157,6 +156,7 @@ impl ModrinthSearchPage {
         let mut filter_version = None;
 
         let mut mods_load_state = None;
+        let mut resource_packs_load_state = None;
         let mut _instance_mods_subscription = None;
         let mut _instance_resourcepacks_subscription = None;
         let mut _instance_worlds_subscription = None;
@@ -176,6 +176,7 @@ impl ModrinthSearchPage {
                 data.backend_handle.send(MessageToBackend::RequestLoadWorlds { id: install_for });
 
                 mods_load_state = Some((instance.mods_state.clone(), AtomicOptionSerial::default()));
+                let resource_packs_load_state = Some((instance.resource_packs_state.clone(), AtomicOptionSerial::default()));
 
                 let mods_entity = instance.mods.clone();
                 let resource_packs_entity = instance.resource_packs.clone();
@@ -210,20 +211,9 @@ impl ModrinthSearchPage {
 
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
-        let mut filter_project_type = if let Some(project_type) = project_type {
-            InterfaceConfig::get_mut(cx).modrinth_page_project_type = project_type;
-            project_type
-        } else {
-            InterfaceConfig::get(cx).modrinth_page_project_type
-        };
-        if filter_project_type == ModrinthProjectType::Other {
-            filter_project_type = ModrinthProjectType::Mod;
-        }
-
         let mut page = Self {
             data: data.clone(),
             hits: Vec::new(),
-            page_path,
             install_for,
             filter_version,
             loading: None,
@@ -232,7 +222,6 @@ impl ModrinthSearchPage {
             search_state,
             _search_input_subscription,
             _delayed_clear_task: Task::ready(()),
-            filter_project_type,
             filter_loaders: FxHashSet::default(),
             filter_categories: FxHashSet::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
@@ -253,6 +242,7 @@ impl ModrinthSearchPage {
             search_error: None,
             image_cache: RetainAllImageCache::new(cx),
             mods_load_state,
+            resource_packs_load_state,
             _instance_mods_subscription,
             _instance_resourcepacks_subscription,
             _instance_worlds_subscription,
@@ -487,11 +477,10 @@ impl ModrinthSearchPage {
     }
 
     fn set_project_type(&mut self, project_type: ModrinthProjectType, window: &mut Window, cx: &mut Context<Self>) {
-        if self.filter_project_type == project_type {
+        if InterfaceConfig::get(cx).modrinth_page_project_type == project_type {
             return;
         }
         InterfaceConfig::get_mut(cx).modrinth_page_project_type = project_type;
-        self.filter_project_type = project_type;
         self.filter_categories.clear();
         self.search_state.update(cx, |state, cx| {
             let placeholder = match project_type {
@@ -554,7 +543,11 @@ impl ModrinthSearchPage {
             Some(self.last_search.clone())
         };
 
-        let project_type = match self.filter_project_type {
+        let config = InterfaceConfig::get(cx);
+        let filter_project_type = config.modrinth_page_project_type;
+        let modrinth_filter_version = config.modrinth_filter_version;
+
+        let project_type = match filter_project_type {
             ModrinthProjectType::Mod | ModrinthProjectType::Other => "mod",
             ModrinthProjectType::Modpack => "modpack",
             ModrinthProjectType::Resourcepack => "resourcepack",
@@ -566,12 +559,12 @@ impl ModrinthSearchPage {
 
         let mut facets = format!("[[\"project_type={}\"]", project_type);
 
-        let is_mod = self.filter_project_type == ModrinthProjectType::Mod || self.filter_project_type == ModrinthProjectType::Modpack;
+        let is_mod = filter_project_type == ModrinthProjectType::Mod || filter_project_type == ModrinthProjectType::Modpack;
         let applies_version_filter = matches!(
-            self.filter_project_type,
+            filter_project_type,
             ModrinthProjectType::Mod | ModrinthProjectType::Modpack | ModrinthProjectType::Shader
         );
-        let filter_by_instance = self.install_for.is_some() && InterfaceConfig::get(cx).modrinth_filter_version;
+        let filter_by_instance = self.install_for.is_some() && modrinth_filter_version;
         if filter_by_instance && applies_version_filter && let Some(filter_version) = &self.filter_version {
             facets.push_str(",[\"versions=");
             facets.push_str(filter_version);
@@ -785,7 +778,7 @@ impl ModrinthSearchPage {
                         let project_id = hit.project_id.clone();
                         let install_for = self.install_for.clone();
                         let project_type = hit.project_type;
-                        let filter_project_type = self.filter_project_type;
+                        let filter_project_type = InterfaceConfig::get(cx).modrinth_page_project_type;
                         let main_action = main_action.clone();
 
                         move |_, window, cx| {
@@ -1073,7 +1066,7 @@ impl ModrinthSearchPage {
         let title = hit.title.as_deref().unwrap_or("");
         let install_latest = self.can_install_latest && !InterfaceConfig::get(cx).modrinth_install_normally;
 
-        let project_type = self.filter_project_type;
+        let project_type = InterfaceConfig::get(cx).modrinth_page_project_type;
         let is_resourcepack = project_type == ModrinthProjectType::Resourcepack;
         let is_modpack = project_type == ModrinthProjectType::Modpack;
         let is_shader = project_type == ModrinthProjectType::Shader;
@@ -1273,8 +1266,18 @@ impl PrimaryAction {
     }
 }
 
+impl Page for ModrinthSearchPage {
+    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+
+    fn scrollable(&self, _cx: &App) -> bool {
+        false
+    }
+}
+
 impl Render for ModrinthSearchPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let can_load_more = self.total_hits > self.hits.len();
         let scroll_handle = self.scroll_handle.clone();
 
@@ -1286,6 +1289,14 @@ impl Render for ModrinthSearchPage {
             let state = mods_state.load(std::sync::atomic::Ordering::SeqCst);
             if state.should_send_load_request() {
                 self.data.backend_handle.send_with_serial(MessageToBackend::RequestLoadMods { id: install_for }, load_serial);
+            }
+        }
+        if let Some((resource_packs_state, load_serial)) = &self.resource_packs_load_state
+            && let Some(install_for) = self.install_for
+        {
+            let state = resource_packs_state.load(std::sync::atomic::Ordering::SeqCst);
+            if state.should_send_load_request() {
+                self.data.backend_handle.send_with_serial(MessageToBackend::RequestLoadResourcePacks { id: install_for }, load_serial);
             }
         }
 
@@ -1343,22 +1354,25 @@ impl Render for ModrinthSearchPage {
             .child(top_bar)
             .child(div().size_full().rounded_lg().border_1().border_color(theme.border).child(list));
 
+        let config = InterfaceConfig::get(cx);
+        let filter_project_type = config.modrinth_page_project_type;
+
         let type_button_group = ButtonGroup::new("type")
             .layout(Axis::Vertical)
             .outline()
-            .child(Button::new("mods").label(ts!("instance.content.mods")).selected(self.filter_project_type == ModrinthProjectType::Mod))
+            .child(Button::new("mods").label(ts!("instance.content.mods")).selected(filter_project_type == ModrinthProjectType::Mod))
             .child(
                 Button::new("modpacks")
                     .label(ts!("instance.content.modpacks"))
-                    .selected(self.filter_project_type == ModrinthProjectType::Modpack),
+                    .selected(filter_project_type == ModrinthProjectType::Modpack),
             )
             .child(
                 Button::new("resourcepacks")
                     .label(ts!("instance.content.resourcepacks"))
-                    .selected(self.filter_project_type == ModrinthProjectType::Resourcepack),
+                    .selected(filter_project_type == ModrinthProjectType::Resourcepack),
             )
-            .child(Button::new("shaders").label(ts!("instance.content.shaders")).selected(self.filter_project_type == ModrinthProjectType::Shader))
-            .child(Button::new("datapacks").label(ts!("instance.content.datapacks")).selected(self.filter_project_type == ModrinthProjectType::Datapack))
+            .child(Button::new("shaders").label(ts!("instance.content.shaders")).selected(filter_project_type == ModrinthProjectType::Shader))
+            .child(Button::new("datapacks").label(ts!("instance.content.datapacks")).selected(filter_project_type == ModrinthProjectType::Datapack))
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(ModrinthProjectType::Mod, window, cx),
                 1 => page.set_project_type(ModrinthProjectType::Modpack, window, cx),
@@ -1368,7 +1382,7 @@ impl Render for ModrinthSearchPage {
                 _ => {},
             }));
 
-        let loader_button_group = if self.filter_project_type == ModrinthProjectType::Mod || self.filter_project_type == ModrinthProjectType::Modpack {
+        let loader_button_group = if filter_project_type == ModrinthProjectType::Mod || filter_project_type == ModrinthProjectType::Modpack {
             Some(ButtonGroup::new("loader_group")
                 .layout(Axis::Vertical)
                 .outline()
@@ -1388,7 +1402,7 @@ impl Render for ModrinthSearchPage {
             None
         };
 
-        let categories = match self.filter_project_type {
+        let categories = match filter_project_type {
             ModrinthProjectType::Mod => FILTER_MOD_CATEGORIES,
             ModrinthProjectType::Modpack => FILTER_MODPACK_CATEGORIES,
             ModrinthProjectType::Resourcepack => FILTER_RESOURCEPACK_CATEGORIES,
@@ -1436,7 +1450,7 @@ impl Render for ModrinthSearchPage {
             .into_any_element();
 
         let shows_version_filter = matches!(
-            self.filter_project_type,
+            filter_project_type,
             ModrinthProjectType::Mod | ModrinthProjectType::Modpack | ModrinthProjectType::Shader
         );
         let filter_version_toggle = if shows_version_filter && let Some(filter_version) = self.filter_version {
@@ -1465,8 +1479,12 @@ impl Render for ModrinthSearchPage {
             .when_some(filter_version_toggle, |this, button| this.child(button))
             .child(category);
 
-        Page::new(self.page_path.create_breadcrumb(&self.data, cx))
-            .child(h_flex().flex_1().min_h_0().size_full().child(parameters).child(content))
+        let inner = h_flex().flex_1().min_h_0().size_full().child(parameters).child(content);
+        let page_type = InterfaceConfig::get(cx).main_page.clone();
+        let page_path = InterfaceConfig::get(cx).page_path.clone();
+        let scrollable = self.scrollable(cx);
+        let controls = self.controls(window, cx);
+        page_layout(page_type, page_path, controls, scrollable, inner)
     }
 }
 

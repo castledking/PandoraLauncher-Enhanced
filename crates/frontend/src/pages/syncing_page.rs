@@ -16,7 +16,7 @@ use gpui_component::{
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashSet;
 
-use crate::{component::page::Page, entity::DataEntities, icon::PandoraIcon, ts};
+use crate::{entity::DataEntities, icon::PandoraIcon, interface_config::InterfaceConfig, pages::page::{Page, page_layout}, ts, ui::PageType};
 
 pub struct SyncingPage {
     backend_handle: BackendHandle,
@@ -129,16 +129,27 @@ impl SyncingPage {
     }
 }
 
+impl Page for SyncingPage {
+    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+
+    fn scrollable(&self, _cx: &App) -> bool {
+        true
+    }
+}
+
 impl Render for SyncingPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(sync_state) = &self.sync_state else {
+            let page_type = PageType::Syncing;
+            let page_path = InterfaceConfig::get(cx).page_path.clone();
+            let scrollable = self.scrollable(cx);
             let content = v_flex().size_full().p_3().gap_3()
                 .child(ts!("instance.sync.description"))
                 .child(Spinner::new().with_size(gpui_component::Size::Large));
-
-            return Page::new(ts!("instance.sync.label"))
-                .scrollable()
-                .child(content);
+            let controls = self.controls(window, cx);
+            return page_layout(page_type, page_path, controls, scrollable, content);
         };
 
         let sync_folder = sync_state.sync_folder.clone();
@@ -226,9 +237,11 @@ impl Render for SyncingPage {
                 })))
             );
 
-        Page::new(ts!("instance.sync.label"))
-            .scrollable()
-            .child(content)
+        let page_type = PageType::Syncing;
+        let page_path = InterfaceConfig::get(cx).page_path.clone();
+        let scrollable = self.scrollable(cx);
+        let controls = self.controls(window, cx);
+        page_layout(page_type, page_path, controls, scrollable, content)
     }
 }
 

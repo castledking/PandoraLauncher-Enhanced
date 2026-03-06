@@ -156,7 +156,7 @@ fn build_parts(slim: bool) -> Vec<BodyPart> {
     p.push(make(4., 12., 4., -4. - h_b, 0. - h_b, -2. - h_b, -2., 12., 0., Limb::RightLeg, true)); // R-Leg
     p.push(make(4., 12., 4., 0. - h_b, 0. - h_b, -2. - h_b, 2., 12., 0., Limb::LeftLeg, true)); // L-Leg
 
-    // Cape: 10x16x1
+    // Cape: 10×16×1
     p.push(make(10., 16., 1., -5., 8., -3., 0., 24., -2., Limb::Cape, false));
 
     p
@@ -191,7 +191,12 @@ struct Triangle {
     normal: Vec3,
 }
 
-fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
+/// Cape texture format: Mojang 64x32/92x44 use (1,1,10,16). OptiFine 46x22 uses (22,0,20,32).
+fn generate_triangles(
+    part: &BodyPart,
+    is_64x32: bool,
+    cape_tex_size: Option<(u32, u32)>,
+) -> Vec<Triangle> {
     let bloat = if part.is_overlay { 0.5 } else { 0.0 };
     let sw = part.size.x + bloat;
     let sh = part.size.y + bloat;
@@ -204,13 +209,13 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
     let h = part.dims.1;
     let d = part.dims.2;
 
-    let is_left = match part.limb {
+    let is_left_limb = match part.limb {
         Limb::LeftArm | Limb::LeftLeg => true,
         _ => false,
     };
 
-    // Determine if we need to mirror for 64x32 format
-    if is_64x32 && is_left && !part.is_overlay {
+    // Left limbs in 64x32: use right-side UV location (texture stores left on right)
+    if is_64x32 && is_left_limb && !part.is_overlay {
         match part.limb {
             Limb::LeftArm => {
                 u = 40.0;
@@ -223,7 +228,10 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
             _ => {},
         }
     }
-    let need_mirror = is_64x32 && is_left && !part.is_overlay;
+
+    // Vertex mirror: only for left limbs in 64x32 (positions stored on right, mirrored to left)
+    let mirror_vertices = is_64x32 && is_left_limb && !part.is_overlay;
+    let mirror_uvs = mirror_vertices;
 
     let mut tris = Vec::new();
 
@@ -238,7 +246,7 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
     let mut p011 = part.pos + Vec3 { x: 0., y: sh, z: sd };
 
     // Mirror vertex positions for left limbs in 64x32
-    if need_mirror {
+    if mirror_vertices {
         let pivot_x = part.pivot.x;
         let mirror = |v: Vec3| -> Vec3 {
             Vec3 {
@@ -264,7 +272,7 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
         let (mut u3, mut v3) = (tx, ty + th);
 
         // Flip UVs for mirrored limbs
-        if need_mirror {
+        if mirror_uvs {
             u0 = tx + tw;
             u1 = tx;
             u2 = tx;
@@ -301,23 +309,41 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
         });
     };
 
-    // Minecraft skin UV mapping - standard cube faces (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
-    // Front face (touching player back for cape, chest for others)
+    // Minecraft skin UV mapping. Cape: Mojang (1,1,10,16), OptiFine 46x22 (22,0,20,32).
+    // Front face (touching player back for cape)
     let front_u = if part.limb == Limb::Cape { u + d + w + d } else { u + d };
     add_face(p011, p111, p101, p001, front_u, v + d, w, h);
-    // Back face (visible part for cape, back for others)
-    let back_u = if part.limb == Limb::Cape { u + d } else { u + d + w + d };
-    add_face(p110, p010, p000, p100, back_u, v + d, w, h);
+    // Back face (visible part for cape)
+    let (back_u, back_v, back_w, back_h) = if part.limb == Limb::Cape {
+        match cape_tex_size {
+            Some((_, 22)) => (22.0, 0.0, 20.0, 32.0), // OptiFine 46x22
+            _ => (1.0, 1.0, 10.0, 16.0),              // Mojang 64x32
+        }
+    } else {
+        (u + d + w + d, v + d, w, h)
+    };
+    add_face(p110, p010, p000, p100, back_u, back_v, back_w, back_h);
     // Right face
-    let right_u = if part.limb == Limb::Cape { u + d + w } else { u };
-    add_face(p111, p110, p100, p101, right_u, v + d, d, h);
+    let right_u = if part.limb == Limb::Cape { back_u + back_w - 1.0 } else { u };
+    let (right_v, right_dw, right_dh) = if part.limb == Limb::Cape { (back_v, 1.0, back_h) } else { (v + d, d, h) };
+    add_face(p111, p110, p100, p101, right_u, right_v, right_dw, right_dh);
     // Left face
-    let left_u = if part.limb == Limb::Cape { u } else { u + d + w };
-    add_face(p010, p011, p001, p000, left_u, v + d, d, h);
+    let left_u = if part.limb == Limb::Cape { back_u } else { u + d + w };
+    add_face(p010, p011, p001, p000, left_u, right_v, right_dw, right_dh);
     // Top face
-    add_face(p010, p110, p111, p011, u + d, v, w, d);
+    let (top_u, top_v, top_w, top_d) = if part.limb == Limb::Cape {
+        (back_u, back_v, back_w, 4.0)
+    } else {
+        (u + d, v, w, d)
+    };
+    add_face(p010, p110, p111, p011, top_u, top_v, top_w, top_d);
     // Bottom face
-    add_face(p001, p101, p100, p000, u + d + w, v, w, d);
+    let (bot_u, bot_v, bot_w, bot_d) = if part.limb == Limb::Cape {
+        (back_u, back_v + back_h - 4.0, back_w, 3.0)
+    } else {
+        (u + d + w, v, w, d)
+    };
+    add_face(p001, p101, p100, p000, bot_u, bot_v, bot_w, bot_d);
 
     tris
 }
@@ -526,7 +552,8 @@ impl SkinRenderer {
         .normalize(); // Light from front-top-left
 
         for part in parts {
-            let tex_to_use = if part.limb == Limb::Cape {
+            let use_cape_texture = part.limb == Limb::Cape;
+            let tex_to_use = if use_cape_texture {
                 if let Some(cape) = &self.parsed_cape {
                     cape
                 } else {
@@ -536,7 +563,12 @@ impl SkinRenderer {
                 tex
             };
 
-            let tris = generate_triangles(&part, is_64x32);
+            let cape_tex_size = if use_cape_texture {
+                Some((tex_to_use.width(), tex_to_use.height()))
+            } else {
+                None
+            };
+            let tris = generate_triangles(&part, is_64x32, cape_tex_size);
             for t in tris {
                 // Project normal
                 let mut norm = t.normal;
@@ -595,21 +627,30 @@ impl SkinRenderer {
                                 let u = w0 * v_proj[0].1 .0 + w1 * v_proj[1].1 .0 + w2 * v_proj[2].1 .0;
                                 let v = w0 * v_proj[0].1 .1 + w1 * v_proj[1].1 .1 + w2 * v_proj[2].1 .1;
 
-                                let tx = (u * (tex_to_use.width() as f32 / 64.0))
-                                    .clamp(0.0, (tex_to_use.width() - 1) as f32)
-                                    as u32;
-                                let ty = if part.limb == Limb::Cape {
-                                    (v * (tex_to_use.height() as f32 / 32.0))
-                                        .clamp(0.0, (tex_to_use.height() - 1) as f32)
-                                        as u32
+                                let (tx, ty) = if part.limb == Limb::Cape {
+                                    // Cape: UVs in 64×32 space; scale by texture size (Mojang 64×32, OptiFine 46×22).
+                                    // Half-texel inset for cape to avoid sampling transparent edge pixels (cf. skinview3d alpha handling).
+                                    let w = tex_to_use.width() as f32;
+                                    let h = tex_to_use.height() as f32;
+                                    let tx_f = (u * (w / 64.0))
+                                        .clamp(0.5, w - 1.5);
+                                    let ty_f = (v * (h / 32.0))
+                                        .clamp(0.5, h - 1.5);
+                                    (tx_f as u32, ty_f as u32)
                                 } else {
-                                    (v * (tex_to_use.height() as f32 / if is_64x32 { 32.0 } else { 64.0 }))
+                                    let tx = (u * (tex_to_use.width() as f32 / 64.0))
+                                        .clamp(0.0, (tex_to_use.width() - 1) as f32)
+                                        as u32;
+                                    let ty = (v * (tex_to_use.height() as f32 / if is_64x32 { 32.0 } else { 64.0 }))
                                         .clamp(0.0, (tex_to_use.height() - 1) as f32)
-                                        as u32
+                                        as u32;
+                                    (tx, ty)
                                 };
 
                                 let pixel = tex_to_use.get_pixel(tx, ty);
-                                if pixel[3] > 128 {
+                                // Stricter alpha for cape to avoid semi-transparent edge artifacts
+                                let alpha_thresh = if part.limb == Limb::Cape { 200 } else { 128 };
+                                if pixel[3] > alpha_thresh {
                                     zbuf[idx] = z;
                                     let cidx = idx * 4;
                                     colorbuf[cidx] = (pixel[2] as f32 * light_intensity).min(255.0) as u8;
@@ -708,7 +749,7 @@ impl Render for SkinRenderer {
                 this.child(
                     div()
                         .absolute()
-                        .top_2()
+                        .top_1()
                         .w_full()
                         .h_flex()
                         .justify_center()

@@ -25,8 +25,7 @@ use crate::{
     },
     interface_config::InterfaceConfig,
     modals,
-    pages::instance::instance_page::InstanceSubpageType,
-    png_render_cache, root, ui,
+    png_render_cache, root, ts, ui,
 };
 
 pub struct InstanceList {
@@ -213,7 +212,7 @@ impl InstanceList {
                                         .child(edit_icon.clone().size_4()),
                                 ),
                         )
-                        .child(div().text_color(GRAY).text_xs().child(loader_and_version)),
+                        .child(div().text_color(GRAY).text_xs().child(loader_and_version.clone())),
                 ),
             )
             .child(
@@ -226,7 +225,7 @@ impl InstanceList {
                         let backend_handle = self.backend_handle.clone();
                         match status {
                             InstanceStatus::NotRunning => {
-                                Button::new(("start", index)).flex_grow().small().success().label("Start").on_click(
+                                Button::new(("start", index)).flex_grow().small().success().label(ts!("instance.start.label")).on_click(
                                     move |_, window, cx| {
                                         root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
                                     },
@@ -249,11 +248,11 @@ impl InstanceList {
                                 }),
                         }
                     })
-                    .child(Button::new(("view", index)).flex_grow().small().info().label("View").on_click({
-                        let id = item.id;
+                    .child(Button::new(("view", index)).flex_grow().small().info().label(ts!("instance.view")).on_click({
+                        let name = item.name.clone();
                         move |_, window, cx| {
                             root::switch_page(
-                                ui::PageType::InstancePage(id, InstanceSubpageType::Quickplay),
+                                ui::PageType::InstancePage { name: name.clone() },
                                 &[ui::PageType::Instances],
                                 window,
                                 cx,
@@ -261,6 +260,7 @@ impl InstanceList {
                         }
                     })),
             )
+
     }
 }
 
@@ -325,45 +325,19 @@ impl TableDelegate for InstanceList {
                         .size_full()
                         .gap_2()
                         .border_r_4()
-                        .child({
+                        .child(Button::new(("start", row_ix)).w(relative(0.5)).small().success().label(ts!("instance.start.label")).on_click({
                             let name = item.name.clone();
                             let id = item.id;
-                            let status = item.status;
                             let backend_handle = backend_handle.clone();
-                            match status {
-                                InstanceStatus::NotRunning => {
-                                    Button::new("start").w(relative(0.5)).small().success().label("Start").on_click(
-                                        move |_, window, cx| {
-                                            root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
-                                        },
-                                    )
-                                },
-                                InstanceStatus::Launching => Button::new("starting")
-                                    .w_auto()
-                                    .small()
-                                    .warning()
-                                    .icon(IconName::Loader)
-                                    .label("Starting..."),
-                                InstanceStatus::Running => Button::new("kill")
-                                    .w(relative(0.5))
-                                    .small()
-                                    .danger()
-                                    .icon(IconName::Close)
-                                    .label("Kill")
-                                    .on_click(move |_, _, _| {
-                                        backend_handle.send(MessageToBackend::KillInstance { id });
-                                    }),
-                            }
-                        })
-                        .child(Button::new("view").w(relative(0.5)).small().info().label("View").on_click({
-                            let id = item.id;
                             move |_, window, cx| {
-                                root::switch_page(
-                                    ui::PageType::InstancePage(id, InstanceSubpageType::Quickplay),
-                                    &[ui::PageType::Instances],
-                                    window,
-                                    cx,
-                                );
+                                root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                            }
+                        }))
+                        .child(Button::new(("view", row_ix)).w(relative(0.5)).small().info().label(ts!("instance.view")).on_click({
+                            let name = item.name.clone();
+                            move |_, window, cx| {
+                                root::switch_page(ui::PageType::InstancePage { name: name.clone() },
+                                    &[ui::PageType::Instances], window, cx);
                             }
                         }))
                         .into_any_element()

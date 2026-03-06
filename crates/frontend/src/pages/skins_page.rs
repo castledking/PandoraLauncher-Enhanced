@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use futures::AsyncReadExt;
 use bridge::{
     handle::BackendHandle,
     message::{MessageToBackend, MinecraftProfileInfo},
@@ -9,6 +10,7 @@ use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedStr
 use gpui_component::{
     Disableable, IconName, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
+    checkbox::Checkbox,
     h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement,
@@ -16,10 +18,22 @@ use gpui_component::{
 };
 
 use crate::{
-    component::{cape_card, page::Page, skin_renderer::SkinRenderer},
+    component::{cape_card, skin_renderer::SkinRenderer},
     entity::{account::{AccountEntries, AccountChanged}, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
+    interface_config::InterfaceConfig,
     modals::upload_skin_modal,
+    pages::page::{Page, page_layout},
+    ui::PageType,
 };
+
+/// OptiFine serves donor capes at this URL by Minecraft username (same as used by the Capes mod).
+/// See: https://github.com/CaelTheColher/Capes and https://optifine.readthedocs.io/capes.html
+fn optifine_cape_url(username: &str) -> String {
+    format!("https://optifine.net/capes/{}.png", username)
+}
+
+/// OptiFine cape editor / customization page (donors can change cape design here).
+const OPTIFINE_CAPE_EDITOR_URL: &str = "https://optifine.net/capeChange";
 
 enum SkinPageState {
     Loading,
@@ -39,6 +53,7 @@ pub struct SkinsPage {
     state: SkinPageState,
     selected_skin_id: Option<Arc<str>>,
     skins_expanded: bool,
+    optifine_cape_in_preview: bool,
     _subscription: Subscription,
     _account_subscription: Subscription,
     _get_profile_task: Task<()>,
@@ -47,7 +62,9 @@ pub struct SkinsPage {
     last_rendered_skin_url: Option<String>,
     _download_active_cape_task: Option<Task<()>>,
     last_rendered_cape_url: Option<String>,
-    
+    _download_optifine_cape_task: Option<Task<()>>,
+    last_rendered_optifine_username: Option<String>,
+
     _thumbnail_tasks: std::collections::HashMap<Arc<str>, Task<()>>,
     _cape_thumbnail_tasks: std::collections::HashMap<Arc<str>, Task<()>>, // key: "skin_url\0cape_url"
 }
@@ -82,6 +99,7 @@ impl SkinsPage {
             state,
             selected_skin_id: None,
             skins_expanded: false,
+            optifine_cape_in_preview: false,
             _subscription,
             _account_subscription,
             _get_profile_task: Task::ready(()),
@@ -90,6 +108,8 @@ impl SkinsPage {
             last_rendered_skin_url: None,
             _download_active_cape_task: None,
             last_rendered_cape_url: None,
+            _download_optifine_cape_task: None,
+            last_rendered_optifine_username: None,
             _thumbnail_tasks: std::collections::HashMap::new(),
             _cape_thumbnail_tasks: std::collections::HashMap::new(),
         };
@@ -214,7 +234,47 @@ impl SkinsPage {
                 self.skin_renderer.update(cx, |r, _| r.update_image(None, false));
             }
 
-            if let Some(active_cape) = profile.capes.iter().find(|c| c.state.as_ref() == "ACTIVE") {
+            // Cape logic: OptiFine toggle takes precedence when ON. When OFF, show Mojang cape if equipped.
+            if self.optifine_cape_in_preview {
+                // Show OptiFine cape when toggle is on (same API as Capes mod)
+                self.last_rendered_cape_url = None;
+                let username = profile.name.to_string();
+                if self.last_rendered_optifine_username.as_deref() != Some(username.as_str()) {
+                    let optifine_url = optifine_cape_url(&username);
+                    let skin_renderer = self.skin_renderer.clone();
+                    let client = cx.http_client();
+                    let username_clone = username.clone();
+                    self._download_optifine_cape_task = Some(cx.spawn(async move |this, cx| {
+                        let ok = async {
+                            let mut response = client.get(&optifine_url, ().into(), true).await.ok()?;
+                            // OptiFine returns 404 if the player has no donor cape
+                            if response.status().as_u16() != 200 {
+                                return None;
+                            }
+                            use futures::AsyncReadExt;
+                            let mut bytes = Vec::new();
+                            response.body_mut().read_to_end(&mut bytes).await.ok()?;
+                            Some(Arc::from(bytes.into_boxed_slice()) as Arc<[u8]>)
+                        };
+                        if let Some(data) = ok.await {
+                            let _ = skin_renderer.update(cx, |r, cx| {
+                                r.update_cape(Some(data));
+                                cx.notify();
+                            });
+                        } else {
+                            let _ = skin_renderer.update(cx, |r, cx| {
+                                r.update_cape(None);
+                                cx.notify();
+                            });
+                        }
+                        let _ = this.update(cx, |p, cx| {
+                            p.last_rendered_optifine_username = Some(username_clone);
+                            cx.notify();
+                        });
+                    }));
+                }
+            } else if let Some(active_cape) = profile.capes.iter().find(|c| c.state.as_ref() == "ACTIVE") {
+                self.last_rendered_optifine_username = None;
                 let url = active_cape.url.to_string();
                 if self.last_rendered_cape_url.as_deref() != Some(url.as_str()) {
                     self.last_rendered_cape_url = Some(url.clone());
@@ -226,14 +286,22 @@ impl SkinsPage {
                             let mut bytes = Vec::new();
                             if response.body_mut().read_to_end(&mut bytes).await.is_ok() {
                                 let data: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
-                                let _ = skin_renderer.update(cx, |r, _| r.update_cape(Some(data)));
+                                let _ = skin_renderer.update(cx, |r, cx| {
+                                    r.update_cape(Some(data));
+                                    cx.notify();
+                                });
                             }
                         }
                     }));
                 }
             } else {
-                self.skin_renderer.update(cx, |r, _| r.update_cape(None));
                 self.last_rendered_cape_url = None;
+                if self.last_rendered_optifine_username.take().is_some() {
+                    self.skin_renderer.update(cx, |r, cx| {
+                        r.update_cape(None);
+                        cx.notify();
+                    });
+                }
             }
 
             // Lazy load thumbnails - keyed by URL to avoid duplicates
@@ -385,8 +453,18 @@ impl SkinsPage {
     }
 }
 
+impl Page for SkinsPage {
+    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+
+    fn scrollable(&self, _cx: &App) -> bool {
+        true
+    }
+}
+
 impl Render for SkinsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = v_flex().p_4().gap_4().children(match &self.state {
             SkinPageState::Loading => {
                 vec![div().child("Loading...").into_any_element()]
@@ -404,11 +482,10 @@ impl Render for SkinsPage {
                 ]
             },
             SkinPageState::Ready(profile) => {
+                let optifine_cape_in_preview = self.optifine_cape_in_preview;
                 let left_panel = v_flex()
-                    .w(gpui::relative(0.35))
-                    .min_w(px(250.0))
-                    .max_w(px(500.0))
-                    .h_full()
+                    .w(px(320.0))
+                    .flex_shrink_0()
                     .p_4()
                     .bg(gpui::rgba(0x1e1e24ff))
                     .rounded_lg()
@@ -421,9 +498,38 @@ impl Render for SkinsPage {
                     )
                     .child(
                         div()
-                            .flex_1()
-                            .min_h_0()
+                            .w(px(288.0))
+                            .h(px(288.0))
+                            .flex_shrink_0()
+                            .overflow_hidden()
                             .child(self.skin_renderer.clone()),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .mt_4()
+                            .pt_4()
+                            .border_t_1()
+                            .border_color(gpui::rgba(0x404050ff))
+                            .child(
+                                Checkbox::new("optifine_cape_preview")
+                                    .label("Show OptiFine cape in preview")
+                                    .checked(optifine_cape_in_preview)
+                                    .on_click(cx.listener(move |this, value, _, cx| {
+                                        this.optifine_cape_in_preview = *value;
+                                        this.last_rendered_optifine_username = None;
+                                        this.update_skin_renderer(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("open_optifine_cape_editor")
+                                    .icon(IconName::ExternalLink)
+                                    .label("Open OptiFine cape editor")
+                                    .on_click(cx.listener(|_button, _event, _window, cx| {
+                                        cx.open_url(OPTIFINE_CAPE_EDITOR_URL);
+                                    })),
+                            ),
                     );
 
                 let add_skin_card = div()
@@ -617,11 +723,16 @@ impl Render for SkinsPage {
                             ),
                     )
                     .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
+                        h_flex()
+                            .items_center()
+                            .gap_2()
                             .mb_2()
-                            .child("Owned Capes"),
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Owned Capes"),
+                            ),
                     )
                     .child(
                         h_flex()
@@ -659,6 +770,7 @@ impl Render for SkinsPage {
                     .w_full()
                     .h_full()
                     .gap_6()
+                    .items_start()
                     .on_mouse_up(gpui::MouseButton::Left, {
                         let skin_renderer = self.skin_renderer.clone();
                         cx.listener(move |_, _: &MouseUpEvent, _, cx| {
@@ -686,6 +798,14 @@ impl Render for SkinsPage {
             },
         });
 
-        Page::new(h_flex().gap_8().child("Skins")).child(content.h_full())
+        let inner = v_flex()
+            .gap_4()
+            .h_full()
+            .child(content.flex_1().min_h_0());
+        let page_type = PageType::Skins;
+        let page_path = InterfaceConfig::get(cx).page_path.clone();
+        let scrollable = self.scrollable(cx);
+        let controls = self.controls(window, cx);
+        page_layout(page_type, page_path, controls, scrollable, inner)
     }
 }

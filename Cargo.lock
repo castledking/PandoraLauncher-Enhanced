@@ -2570,6 +2570,7 @@ dependencies = [
  "urlencoding",
  "ustr",
  "uuid",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -5416,7 +5417,7 @@ dependencies = [
 
 [[package]]
 name = "pandora_launcher"
-version = "2.2.7"
+version = "2.2.8"
 dependencies = [
  "backend",
  "backtrace",

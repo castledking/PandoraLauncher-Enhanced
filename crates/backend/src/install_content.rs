@@ -394,7 +394,7 @@ impl BackendState {
                 if let Some(instance_dir) = instance_dir {
                     let _ = std::fs::create_dir_all(&instance_dir);
                     let mut installed_datapack = false;
-                    for install in files {
+                    for install in &files {
                         let target_path = instance_dir.join(&install.install_path);
                         if install.install_path.starts_with(std::path::Path::new("saves"))
                             && install.install_path.to_string_lossy().contains("datapacks")
@@ -404,7 +404,7 @@ impl BackendState {
 
                         let _ = std::fs::create_dir_all(target_path.parent().unwrap());
 
-                        if let Some(replace) = install.replace {
+                        if let Some(replace) = &install.replace {
                             self.replace_aux_path(&replace, &install.mod_summary, &target_path);
                             let _ = std::fs::remove_file(replace);
                         } else if let Some(mod_summary) = &install.mod_summary {
@@ -424,6 +424,26 @@ impl BackendState {
                     if installed_datapack {
                         if let Some(instance_id) = instance_id_for_reload {
                             tokio::task::spawn(self.clone().load_instance_worlds(instance_id));
+                        }
+                    }
+                    if let Some(instance_id) = instance_id_for_reload {
+                        use crate::instance::ContentFolder;
+                        use std::collections::HashSet;
+                        let mut affected = HashSet::new();
+                        for install in &files {
+                            if install.install_path.starts_with(std::path::Path::new("mods")) {
+                                affected.insert(ContentFolder::Mods);
+                            } else if install.install_path.starts_with(std::path::Path::new("resourcepacks")) {
+                                affected.insert(ContentFolder::ResourcePacks);
+                            }
+                        }
+                        if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
+                            for folder in &affected {
+                                instance.content_state[*folder].mark_dirty(None);
+                            }
+                        }
+                        for folder in affected {
+                            tokio::task::spawn(self.clone().load_instance_content(instance_id, folder));
                         }
                     }
                 } else if instance_id_for_reload.is_some() {

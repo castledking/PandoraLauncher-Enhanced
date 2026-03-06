@@ -7,6 +7,7 @@ use bridge::{
 };
 use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, prelude::*, *};
 use gpui_component::{
+    ActiveTheme,
     button::{Button, ButtonVariants},
     dialog::Dialog,
     h_flex,
@@ -16,7 +17,7 @@ use gpui_component::{
 };
 use image::ImageEncoder;
 
-use crate::component::skin_renderer::SkinRenderer;
+use crate::{component::skin_renderer::SkinRenderer, icon::PandoraIcon};
 
 fn detect_skin_variant(bytes: &[u8]) -> &'static str {
     use image::GenericImageView;
@@ -62,6 +63,7 @@ pub struct UploadSkinModal {
     preview_back: Option<Arc<RenderImage>>,
     _select_file_task: Task<()>,
     _preview_task: Task<()>,
+    url_section_expanded: bool,
 }
 
 impl UploadSkinModal {
@@ -85,6 +87,7 @@ impl UploadSkinModal {
             preview_back: None,
             _select_file_task: Task::ready(()),
             _preview_task: Task::ready(()),
+            url_section_expanded: false,
         }
     }
 
@@ -215,23 +218,62 @@ impl UploadSkinModal {
                     })),
             );
 
+        let url_expanded = self.url_section_expanded;
         let url_section = v_flex()
             .gap_2()
-            .child(div().text_sm().child("Add from URL"))
             .child(
-                h_flex().gap_2().child(Input::new(&self.custom_skin_url).flex_1()).child(
-                    Button::new("set-url").label("Upload from URL").success().on_click(cx.listener(|this, _, _, cx| {
-                        let url = this.custom_skin_url.read(cx).value();
-                        if !url.is_empty() {
-                            this.backend_handle.send(MessageToBackend::SetSkin {
-                                skin_url: url.into(),
-                                skin_variant: this.effective_variant(),
-                                modal_action: ModalAction::default(),
-                            });
-                        }
+                Button::new("toggle-url-section")
+                    .icon(if url_expanded { PandoraIcon::ChevronDown } else { PandoraIcon::ChevronRight })
+                    .when(!url_expanded, |b| b.outline())
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().text_sm().child("Add from URL"))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded(cx.theme().radius)
+                                    .bg(hsla(0.14, 0.7, 0.45, 0.25))
+                                    .text_color(hsla(0.14, 0.8, 0.55, 1.0))
+                                    .child("Experimental"),
+                            ),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.url_section_expanded = !this.url_section_expanded;
+                        cx.notify();
                     })),
-                ),
-            );
+            )
+            .when(url_expanded, |this| {
+                this.child(
+                    v_flex()
+                        .gap_2()
+                        .pl_6()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Input::new(&self.custom_skin_url).flex_1())
+                                .child(
+                                    Button::new("set-url")
+                                        .label("Upload from URL")
+                                        .success()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            let url = this.custom_skin_url.read(cx).value();
+                                            if !url.is_empty() {
+                                                this.backend_handle.send(MessageToBackend::SetSkin {
+                                                    skin_url: url.into(),
+                                                    skin_variant: this.effective_variant(),
+                                                    modal_action: ModalAction::default(),
+                                                });
+                                            }
+                                        })),
+                                ),
+                        ),
+                )
+            });
 
         let preview_widget = if let Some(front) = &self.preview_front {
             let front_img = front.clone();

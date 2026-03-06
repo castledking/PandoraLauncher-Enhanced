@@ -29,6 +29,7 @@ intrusive-collections.workspace = true
 atomic-time.workspace = true
 reqwest_client.workspace = true
 reqwest.workspace = true
+futures.workspace = true
 uuid.workspace = true
 enumset.workspace = true
 hex.workspace = true
@@ -44,4 +45,6 @@ strum.workspace = true
 urlencoding.workspace = true
 
 rust-i18n = "3.1.5"
-futures.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true

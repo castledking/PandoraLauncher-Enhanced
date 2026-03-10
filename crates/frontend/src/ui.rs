@@ -155,10 +155,16 @@ impl LauncherUI {
                 cx.notify();
             });
         let _instance_modified_subscription =
-            cx.subscribe::<_, InstanceModifiedEvent>(&data.instances, |this, _, event, cx| {
+            cx.subscribe_in::<_, InstanceModifiedEvent>(&data.instances, window, |this, _, event, window, cx| {
                 if let Some((_, name)) = this.recent_instances.iter_mut().find(|(id, _)| *id == event.instance.id) {
                     *name = event.instance.name.clone();
                     cx.notify();
+                }
+                if let LauncherPage::InstancePage(page) = &this.page
+                    && page.read(cx).instance.read(cx).id == event.instance.id
+                {
+                    let page_path = InterfaceConfig::get_mut(cx).page_path.clone();
+                    this.switch_page(PageType::InstancePage { name: event.instance.name.clone() }, &*page_path, window, cx);
                 }
                 cx.notify();
             });

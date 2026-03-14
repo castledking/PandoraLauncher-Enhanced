@@ -419,6 +419,7 @@ impl BackendState {
 
     async fn handle_tick(&self) {
         self.meta.expire().await;
+        self.mod_metadata_manager.write_changes();
 
         let mut instance_state = self.instance_state.write();
         for instance in instance_state.instances.iter_mut() {
@@ -684,7 +685,7 @@ impl BackendState {
                     continue;
                 };
                 let file_name = entry.file_name();
-                if file_name.to_string_lossy().starts_with(".pandora.") {
+                if file_name.as_encoded_bytes().starts_with(b".pandora.") {
                     log::trace!("Removing temporary mod file {:?}", &file_name);
                     _ = std::fs::remove_file(entry.path());
                 }
@@ -753,6 +754,8 @@ impl BackendState {
                     overrides: overrides.clone(),
                 });
             } else if let ContentType::CurseforgeModpack { files, summaries, overrides, .. } = &summary.content_summary.extra {
+                // todo: apply recommended ram from modpack
+
                 let mut file_ids = Vec::new();
                 let mut hashed_downloads = Vec::new();
 
@@ -885,6 +888,20 @@ impl BackendState {
             }
 
             for file in modpack_install.hashed_downloads {
+                if let Some(aux) = &aux {
+                    if let Some(metadata) = self.mod_metadata_manager.get_cached_by_sha1(&*file.sha1) {
+                        if let Some(id) = &metadata.id && aux.disabled_children.disabled_ids.contains(id) {
+                            continue;
+                        }
+                        if let Some(name) = &metadata.name && aux.disabled_children.disabled_names.contains(name) {
+                            continue;
+                        }
+                    }
+                    if aux.disabled_children.disabled_filenames.contains(&file.path) {
+                        continue;
+                    }
+                }
+
                 let mut expected_hash = [0u8; 20];
                 let Ok(_) = hex::decode_to_slice(&*file.sha1, &mut expected_hash) else {
                     continue;

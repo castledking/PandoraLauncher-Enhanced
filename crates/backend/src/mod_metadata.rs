@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, Cursor, Read, Write}, path::{Path, PathBuf}, sync::Arc
+    hash::Hash, io::{BufRead, Cursor, Read, Write}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, Ordering}}
 };
 
 use bridge::{instance::{ContentSummary, ContentType, ContentUpdateStatus, UNKNOWN_CONTENT_SUMMARY}, safe_path::SafePath};
@@ -54,11 +54,13 @@ pub struct ContentUpdateKey {
 pub struct ModMetadataManager {
     content_library_dir: Arc<Path>,
     sources_dir: PathBuf,
+    cached_curseforge_info_dat: PathBuf,
     by_hash: RwLock<FxHashMap<[u8; 20], Arc<ContentSummary>>>,
     content_sources: RwLock<ContentSources>,
     parents_by_missing_child: RwLock<FxHashMap<[u8; 20], FxHashSet<[u8; 20]>>>,
     cached_curseforge_info: RwLock<FxHashMap<u32, CachedCurseforgeFileInfo>>,
     parents_by_missing_curseforge_id: RwLock<FxHashMap<u32, FxHashSet<[u8; 20]>>>,
+    curseforge_info_dirty: AtomicBool,
     pub updates: RwLock<FxHashMap<ContentUpdateKey, ContentUpdateAction>>,
 }
 
@@ -66,6 +68,7 @@ impl ModMetadataManager {
     pub fn load(content_meta_dir: Arc<Path>, content_library_dir: Arc<Path>) -> Self {
         let legacy_sources_json = content_meta_dir.join("sources.json");
         let sources_dir = content_meta_dir.join("sources");
+        let cached_curseforge_info_dat = content_meta_dir.join("cached_curseforge_info.dat");
 
         let content_sources = if sources_dir.is_dir() {
             ContentSources::load_all(&sources_dir).unwrap_or_default()
@@ -84,14 +87,59 @@ impl ModMetadataManager {
             Default::default()
         };
 
+        let mut cached_curseforge_info = FxHashMap::default();
+        if let Ok(data) = std::fs::read(&cached_curseforge_info_dat) {
+            let mut cursor = Cursor::new(data);
+            let mut buffer = [0_u8; 35];
+            loop {
+                let data_start = cursor.position() + 8;
+                if cursor.read_exact(&mut buffer).is_err() {
+                    break;
+                }
+                let checksum = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
+                let data_len = u32::from_le_bytes(buffer[4..8].try_into().unwrap());
+                let file_id = u32::from_le_bytes(buffer[8..12].try_into().unwrap());
+                let hash: [u8; 20] = buffer[12..32].try_into().unwrap();
+                let disabled_third_party_downloads = (buffer[32] & 1) == 1;
+                let filename_length = u16::from_le_bytes(buffer[33..35].try_into().unwrap());
+
+                let filename_start = cursor.position() as usize;
+                let filename_end = filename_start + filename_length as usize;
+
+                cursor.set_position(data_start + data_len as u64);
+
+                // Calculate and compare checksum
+                let all_bytes = &cursor.get_ref()[data_start as usize .. filename_end];
+                let calculated_checksum = crc32fast::hash(all_bytes);
+                if checksum != calculated_checksum {
+                    log::error!("Cached curseforge info checksum failed, expected {:x}, got {:x}", checksum, calculated_checksum);
+                    continue;
+                }
+
+                let filename_bytes = &cursor.get_ref()[filename_start .. filename_end];
+                let Ok(filename_str) = str::from_utf8(filename_bytes) else {
+                    continue;
+                };
+
+                let info = CachedCurseforgeFileInfo {
+                    hash,
+                    filename: filename_str.into(),
+                    disabled_third_party_downloads,
+                };
+                cached_curseforge_info.insert(file_id, info);
+            }
+        }
+
         Self {
             content_library_dir,
             sources_dir,
+            cached_curseforge_info_dat,
             by_hash: Default::default(),
             content_sources: RwLock::new(content_sources),
             parents_by_missing_child: Default::default(),
-            cached_curseforge_info: Default::default(), // todo: load this from disk
+            cached_curseforge_info: RwLock::new(cached_curseforge_info),
             parents_by_missing_curseforge_id: Default::default(),
+            curseforge_info_dirty: AtomicBool::new(false),
             updates: Default::default(),
         }
     }
@@ -100,23 +148,46 @@ impl ModMetadataManager {
         self.content_sources.read()
     }
 
+    pub fn write_changes(&self) {
+        if self.curseforge_info_dirty.swap(false, Ordering::AcqRel) {
+            let mut data = Vec::new();
+            for (file_id, info) in self.cached_curseforge_info.read().iter() {
+                if info.filename.len() >= 1 << 15 {
+                    continue;
+                }
+
+                let checksum_start = data.len();
+                data.extend_from_slice(&[0; 8]);
+
+                let data_start = data.len();
+                data.extend_from_slice(&u32::to_le_bytes(*file_id));
+                data.extend_from_slice(&info.hash);
+                data.push(info.disabled_third_party_downloads as u8);
+                data.extend_from_slice(&u16::to_le_bytes(info.filename.len() as u16));
+                data.extend_from_slice(info.filename.as_bytes());
+
+                let bytes = &data[data_start..];
+                let data_len = bytes.len();
+                let checksum = crc32fast::hash(bytes);
+                data[checksum_start..checksum_start+4].copy_from_slice(&u32::to_le_bytes(checksum));
+                data[checksum_start+4..checksum_start+8].copy_from_slice(&u32::to_le_bytes(data_len as u32));
+            }
+            _ = crate::write_safe(&self.cached_curseforge_info_dat, &data);
+        }
+        self.content_sources.write().write_dirty_to_folder(&self.sources_dir);
+    }
+
     pub fn set_content_sources(&self, sources: impl Iterator<Item = ([u8; 20], ContentSource)>) {
         let mut content_sources = self.content_sources.write();
 
-        let mut changed = FxHashSet::default();
         for (hash, source) in sources {
-            if content_sources.set(&hash, source) {
-                changed.insert(hash[0]);
-            }
-        }
-
-        for changed in changed {
-            content_sources.write_to_file(changed, &self.sources_dir);
+            content_sources.set(&hash, source);
         }
     }
 
     pub fn set_cached_curseforge_info(&self, file_id: u32, info: CachedCurseforgeFileInfo) {
         self.cached_curseforge_info.write().insert(file_id, info);
+        self.curseforge_info_dirty.store(true, Ordering::Release);
 
         if let Some(parents) = self.parents_by_missing_curseforge_id.write().remove(&file_id) {
             // Remove cached summary of parent, so it can be recalculated next time it is requested
@@ -773,12 +844,14 @@ fn create_authors_string(authors: &[Person]) -> Option<String> {
 #[derive(Debug)]
 pub struct ContentSources {
     by_first_byte: Box<[Vec<([u8; 19], ContentSource)>; 256]>,
+    dirty: [u32; 8],
 }
 
 impl Default for ContentSources {
     fn default() -> Self {
         Self {
-            by_first_byte: Box::new([const { Vec::new() }; 256])
+            by_first_byte: Box::new([const { Vec::new() }; 256]),
+            dirty: [0; 8],
         }
     }
 }
@@ -791,7 +864,7 @@ impl ContentSources {
         Some(values[index].1.clone())
     }
 
-    pub fn set(&mut self, hash: &[u8; 20], value: ContentSource) -> bool {
+    pub fn set(&mut self, hash: &[u8; 20], value: ContentSource) {
         let first_byte = hash[0];
         let values = &mut self.by_first_byte[first_byte as usize];
         match values.binary_search_by_key(&&hash[1..], |v| &v.0) {
@@ -803,16 +876,14 @@ impl ContentSources {
                     },
                     _ => old_source == &value
                 };
-                if skip {
-                    return false;
-                } else {
+                if !skip {
                     values[existing].1 = value;
-                    return true;
+                    self.dirty[(first_byte >> 5) as usize] |= 1 << (first_byte & 0b11111);
                 }
             },
             Err(new) => {
                 values.insert(new, (hash[1..].try_into().unwrap(), value));
-                return true
+                self.dirty[(first_byte >> 5) as usize] |= 1 << (first_byte & 0b11111);
             },
         }
     }
@@ -829,6 +900,18 @@ impl ContentSources {
                     Self::write(&mut data, key, source);
                 }
                 _ = crate::write_safe(&path, &data);
+            }
+        }
+    }
+
+    pub fn write_dirty_to_folder(&mut self, dir: &Path) {
+        let dirty = std::mem::take(&mut self.dirty);
+        for (int_index, mut int) in dirty.into_iter().enumerate() {
+            while int != 0 {
+                let index = int.trailing_zeros();
+                debug_assert!(index as usize + int_index as usize * 32 <= u8::MAX as usize);
+                self.write_to_file(index as u8 + int_index as u8 * 32, dir);
+                int &= !(1 << index);
             }
         }
     }
@@ -889,7 +972,8 @@ impl ContentSources {
         }
 
         Self {
-            by_first_byte
+            by_first_byte,
+            dirty: [0; 8],
         }
     }
 
@@ -986,7 +1070,8 @@ impl ContentSources {
         }
 
         Ok(Self {
-            by_first_byte
+            by_first_byte,
+            dirty: [0; 8]
         })
     }
 }

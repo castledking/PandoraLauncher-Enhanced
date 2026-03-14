@@ -43,14 +43,6 @@ impl Page for InstancePage {
         let name = instance.name.clone();
         let backend_handle = self.backend_handle.clone();
 
-        /*
-         * Instance already running
-         * Starting it again may cause malfunction or corrupt your saved worlds.
-         * We cannot take responsibility for any issues if you choose to start another game.
-         * Would you like to continue anyway?
-         * (Cancel) (Start anyway)
-         */
-
         let button = match instance.status {
             InstanceStatus::NotRunning => {
                 Button::new("start_instance").success().icon(PandoraIcon::Play).label(ts!("instance.start.label")).on_click(

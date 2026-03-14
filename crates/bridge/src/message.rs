@@ -120,6 +120,11 @@ pub enum MessageToBackend {
         child_filename: Arc<str>,
         enabled: bool,
     },
+    DownloadContentChildren {
+        id: InstanceID,
+        content_id: InstanceContentID,
+        modal_action: ModalAction,
+    },
     DeleteContent {
         id: InstanceID,
         content_ids: Vec<InstanceContentID>,

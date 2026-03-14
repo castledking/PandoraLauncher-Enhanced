@@ -2,10 +2,10 @@ use std::{borrow::Cow, io::{BufRead, Read}, sync::Arc, time::{Duration, Instant,
 
 use auth::{credentials::AccountCredentials, models::{MinecraftAccessToken}, secret::PlatformSecretStorage};
 use bridge::{
-    install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{ContentSummary, ContentType}, keep_alive::KeepAlive, message::{AccountCapesResult, AccountSkinResult, BackendConfigWithPassword, LogFiles, MessageToBackend, MessageToFrontend}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, serial::AtomicOptionSerial
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, instance::{ContentSummary, ContentType}, keep_alive::KeepAlive, message::{AccountCapesResult, AccountSkinResult, BackendConfigWithPassword, LogFiles, MessageToBackend, MessageToFrontend}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath, serial::AtomicOptionSerial
 };
 use futures::TryFutureExt;
-use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, curseforge::{CurseforgeGetModFilesRequest, CurseforgeModLoaderType}, minecraft_profile::MinecraftProfileResponse, modrinth::ModrinthLoader, version::{LaunchArgument, LaunchArgumentValue}};
+use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeModLoaderType}, minecraft_profile::MinecraftProfileResponse, modrinth::{ModrinthLoader, ModrinthSideRequirement}, version::{LaunchArgument, LaunchArgumentValue}};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tokio::{io::AsyncBufReadExt, sync::{Semaphore, TryAcquireError}};
@@ -13,7 +13,7 @@ use ustr::Ustr;
 use uuid::Uuid;
 
 use crate::{
-    BackendState, CachedMinecraftProfile, FolderChanges, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, instance::{ContentFolder, Instance}, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}, skin_manager::SkinManager
+    BackendState, CachedMinecraftProfile, FolderChanges, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, instance::{ContentFolder, Instance}, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, CurseforgeGetFilesMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}, skin_manager::SkinManager
 };
 
 impl BackendState {
@@ -358,6 +358,121 @@ impl BackendState {
                             self.send.send_error("Unable to save aux meta");
                         }
                     }
+                }
+            },
+            MessageToBackend::DownloadContentChildren { id, content_id, modal_action } => {
+                let (summary, loader, minecraft_version) = {
+                    let mut instance_state = self.instance_state.write();
+                    let Some(instance) = instance_state.instances.get_mut(id) else {
+                        return;
+                    };
+                    let Some((summary, _)) = instance.try_get_content(content_id) else {
+                        return;
+                    };
+                    let summary = summary.clone();
+                    let configuration = instance.configuration.get();
+                    (summary, configuration.loader, configuration.minecraft_version)
+                };
+
+                if let ContentType::ModrinthModpack { downloads, .. } = &summary.content_summary.extra {
+                    let downloads = downloads.clone();
+
+                    let filtered_downloads = downloads.iter().filter(|dl| {
+                        if let Some(env) = dl.env {
+                            if env.client == ModrinthSideRequirement::Unsupported {
+                                return false;
+                            }
+                        }
+                        true
+                    });
+
+                    let content_install = ContentInstall {
+                        target: bridge::install::InstallTarget::Library,
+                        loader_hint: loader,
+                        version_hint: Some(minecraft_version.into()),
+                        files: filtered_downloads.clone().filter_map(|file| {
+                            let path = SafePath::new(&file.path)?;
+                            Some(ContentInstallFile {
+                                replace_old: None,
+                                path: ContentInstallPath::Safe(path),
+                                download: ContentDownload::Url {
+                                    url: file.downloads[0].clone(),
+                                    sha1: file.hashes.sha1.clone(),
+                                    size: file.file_size,
+                                },
+                                content_source: schema::content::ContentSource::ModrinthUnknown,
+                            })
+                        }).collect(),
+                    };
+
+                    self.install_content(content_install, modal_action.clone()).await;
+                } else if let ContentType::CurseforgeModpack { files, summaries, .. } = &summary.content_summary.extra {
+                    let mut file_ids = Vec::new();
+
+                    for (index, file) in files.iter().enumerate() {
+                        if !matches!(summaries.get(index), Some((_, Some(_)))) {
+                            file_ids.push(file.file_id);
+                        }
+                    }
+
+                    if !file_ids.is_empty() {
+                        let files_result = self.meta.fetch(&CurseforgeGetFilesMetadataItem(&CurseforgeGetFilesRequest {
+                            file_ids,
+                        })).await;
+
+                        if let Ok(files) = files_result {
+                            let mut files_to_install = Vec::new();
+
+                            for file in files.data.iter() {
+                                let sha1 = file.hashes.iter()
+                                    .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                                let Some(sha1) = sha1 else {
+                                    continue;
+                                };
+
+                                let mut hash = [0u8; 20];
+                                let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                                    log::warn!("File {} has invalid sha1: {}", file.file_name, sha1);
+                                    continue;
+                                };
+
+                                self.mod_metadata_manager.set_cached_curseforge_info(file.id, CachedCurseforgeFileInfo {
+                                    hash,
+                                    filename: file.file_name.clone(),
+                                    disabled_third_party_downloads: file.download_url.is_none()
+                                });
+                                if let Some(download_url) = &file.download_url {
+                                    files_to_install.push(ContentInstallFile {
+                                        replace_old: None,
+                                        path: ContentInstallPath::Automatic,
+                                        download: ContentDownload::Url {
+                                            url: download_url.clone(),
+                                            sha1: sha1.clone(),
+                                            size: file.file_length as usize,
+                                        },
+                                        content_source: ContentSource::CurseforgeProject { project_id: file.mod_id }
+                                    });
+                                }
+                            }
+
+                            if !files_to_install.is_empty() {
+                                let content_install = ContentInstall {
+                                    target: bridge::install::InstallTarget::Library,
+                                    loader_hint: loader,
+                                    version_hint: Some(minecraft_version.into()),
+                                    files: files_to_install.into(),
+                                };
+
+                                self.install_content(content_install, modal_action.clone()).await;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let mut changes = FolderChanges::no_changes();
+                    changes.dirty_path(summary.path);
+                    instance.mark_content_dirty(self, ContentFolder::Mods, changes, true);
                 }
             },
             MessageToBackend::DownloadAllMetadata => {

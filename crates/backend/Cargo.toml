@@ -60,6 +60,7 @@ rusqlite.workspace = true
 fs_extra.workspace = true
 walkdir.workspace = true
 url.workspace = true
+crc32fast.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 junction = "1.3.0"

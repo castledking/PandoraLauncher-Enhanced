@@ -3,11 +3,11 @@ use std::{hash::{DefaultHasher, Hash, Hasher}, sync::{
 }};
 
 use bridge::{
-    handle::BackendHandle, instance::{ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID, UNKNOWN_CONTENT_SUMMARY}, message::MessageToBackend
+    handle::BackendHandle, instance::{ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID, UNKNOWN_CONTENT_SUMMARY}, message::MessageToBackend, modal_action::ModalAction
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, list::{ListDelegate, ListItem, ListState}, switch::Switch, v_flex
+    ActiveTheme, Disableable, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, list::{ListDelegate, ListItem, ListState}, switch::Switch, v_flex
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
@@ -369,43 +369,62 @@ impl ContentListDelegate {
         let element_id = hasher.finish();
 
         let enabled = child.enabled;
-        let visually_enabled = enabled && child.parent_enabled;
+        let visually_enabled = enabled && child.parent_enabled && !child.disabled_third_party_downloads;
 
         let mut item_content = h_flex()
             .gap_1()
             .pl_4()
             .child(
                 Switch::new(("toggle", element_id))
-                    .checked(enabled)
-                    .on_click({
-                        let id = self.id;
-                        let content_id = child.parent;
-                        let child_id = child.summary.id.clone();
-                        let child_name = child.summary.name.clone();
-                        let path = child.path.clone();
-                        let backend_handle = self.backend_handle.clone();
-                        move |checked, _, _| {
-                            backend_handle.send(MessageToBackend::SetContentChildEnabled {
-                                id,
-                                content_id,
-                                child_id: child_id.clone(),
-                                child_name: child_name.clone(),
-                                child_filename: path.clone(),
-                                enabled: *checked,
-                            });
-                        }
+                    .checked(enabled && !child.disabled_third_party_downloads)
+                    .when_else(child.is_missing || child.disabled_third_party_downloads, |this| {
+                        this.disabled(true)
+                    }, |this| {
+                        this.on_click({
+                            let id = self.id;
+                            let content_id = child.parent;
+                            let child_id = child.summary.id.clone();
+                            let child_name = child.summary.name.clone();
+                            let path = child.path.clone();
+                            let backend_handle = self.backend_handle.clone();
+                            move |checked, _, _| {
+                                backend_handle.send(MessageToBackend::SetContentChildEnabled {
+                                    id,
+                                    content_id,
+                                    child_id: child_id.clone(),
+                                    child_name: child_name.clone(),
+                                    child_filename: path.clone(),
+                                    enabled: *checked,
+                                });
+                            }
+                        })
                     })
                     .px_2()
             )
             .child(icon.size_16().min_w_16().min_h_16().grayscale(!visually_enabled))
-            .when(!visually_enabled, |this| this.line_through())
-            .child(desc1)
-            .when_some(desc2, |div, desc2| div.child(desc2));
+            .child(desc1.when(!visually_enabled, |this| this.line_through()))
+            .when_some(desc2, |div, desc2| div.child(desc2.when(!visually_enabled, |this| this.line_through())));
 
         if child.disabled_third_party_downloads {
             item_content = item_content.child(ErrorAlert::new("Blocked".into(), "The mod author has blocked downloads from third-party launchers".into()).w(Length::Auto));
         } else if child.is_missing {
-            item_content = item_content.child(Button::new("download").label("Download").success());
+            item_content = item_content.child(Button::new("download").label("Download").success().on_click({
+                let backend_handle = self.backend_handle.clone();
+                let id = self.id;
+                let content_id = child.parent;
+                move |_, window, cx| {
+                    let modal_action = ModalAction::default();
+
+                    backend_handle.send(MessageToBackend::DownloadContentChildren {
+                        id,
+                        content_id,
+                        modal_action: modal_action.clone()
+                    });
+
+                    crate::modals::generic::show_modal(window, cx, "Downloading children".into(),
+                        "Error downloading children".into(), modal_action);
+                }
+            }));
         }
 
         ListItem::new(("item", element_id)).p_1().child(item_content)
@@ -473,7 +492,7 @@ impl ContentListDelegate {
                     let filename: Arc<str> = if let Some(cached_info) = &cached_info {
                         cached_info.filename.clone()
                     } else {
-                        format!("{}-{}", download.project_id, download.file_id).into()
+                        format!("File ID: {}", download.file_id).into()
                     };
 
                     let enabled = if let Some(id) = &summary.id && modification.disabled_children.disabled_ids.contains(id) {
@@ -699,9 +718,10 @@ fn create_descriptions(name: Option<Arc<str>>, version: Arc<str>, authors: Arc<s
                 }));
 
             let description1 = v_flex()
-                .w_2_5()
+                .min_w_2_5()
                 .gap_2()
-                .text_ellipsis()
+                .whitespace_nowrap()
+                .overflow_x_hidden()
                 .line_height(relative(1.0))
                 .child(SharedString::from(filename))
                 .child(styled_text);
@@ -709,16 +729,18 @@ fn create_descriptions(name: Option<Arc<str>>, version: Arc<str>, authors: Arc<s
         }
 
         let description1 = v_flex()
-            .w_1_5()
-            .text_ellipsis()
+            .min_w_1_5()
+            .whitespace_nowrap()
+            .overflow_x_hidden()
             .child(SharedString::from(filename))
             .child(SharedString::from(version));
         return (description1, None);
     }
 
     let description1 = v_flex()
-        .w_1_5()
-        .text_ellipsis()
+        .min_w_1_5()
+        .whitespace_nowrap()
+        .overflow_x_hidden()
         .child(SharedString::from(name.clone().unwrap_or(filename.clone())))
         .child(SharedString::from(version));
 

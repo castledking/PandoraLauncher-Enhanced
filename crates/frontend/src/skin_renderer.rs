@@ -332,7 +332,7 @@ impl BodyPartDef {
 
             let dot0 = rn.dot(light0).clamp(0.0, 1.0);
             let dot1 = rn.dot(light1).clamp(0.0, 1.0);
-            let accum = ((dot0 + dot1).min(1.0) * 0.5 + 0.5).clamp(0.0, 1.0);
+            let accum = ((dot0 + dot1).min(1.0) * 0.4 + 0.6).clamp(0.0, 1.0);
             let shade = (accum * 255.0) as u8;
 
             // Transform vertices

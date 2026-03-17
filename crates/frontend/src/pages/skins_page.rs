@@ -358,7 +358,7 @@ impl Render for SkinsPage {
                                 .when(active, |this| {
                                     this.child(Icon::new(PandoraIcon::Flag).absolute().right(padding).bottom(padding))
                                 })
-                                .child(ShrinkingText::new("Minecraft Experience".into()))
+                                .child(ShrinkingText::new(cape.alias.clone().into()))
                                 .on_click({
                                     let cape_url = cape.url.clone();
                                     let uuid = cape.id;

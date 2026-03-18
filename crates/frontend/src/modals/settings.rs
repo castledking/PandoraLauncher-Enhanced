@@ -233,6 +233,14 @@ impl Settings {
 
     fn save_proxy_config(&mut self, cx: &mut Context<Self>) {
         let config = self.get_proxy_config(cx);
+
+        if let Some(backend_config) = &mut self.backend_config {
+            if !self.proxy_password_changed && backend_config.proxy == config {
+                return;
+            }
+            backend_config.proxy = config.clone();
+        }
+
         let password = if self.proxy_password_changed {
             Some(self.proxy_password_input.read(cx).value().to_string())
         } else {

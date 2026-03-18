@@ -611,7 +611,7 @@ impl Instance {
 
         summaries.sort_by(|a, b| {
             a.content_summary.id.cmp(&b.content_summary.id)
-                .then_with(|| lexical_sort::natural_lexical_cmp(&a.filename, &b.filename).reverse())
+                .then_with(|| lexical_sort::natural_lexical_cmp(&a.filename, &b.filename))
         });
 
         summaries
@@ -662,7 +662,7 @@ impl Instance {
 
         summaries.sort_by(|a, b| {
             a.content_summary.id.cmp(&b.content_summary.id)
-                .then_with(|| a.filename.cmp(&b.filename).reverse())
+                .then_with(|| lexical_sort::natural_lexical_cmp(&a.filename, &b.filename))
         });
 
         summaries

@@ -5,7 +5,7 @@ use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, instance::{ContentSummary, ContentType}, keep_alive::KeepAlive, message::{AccountCapesResult, AccountSkinResult, BackendConfigWithPassword, EmbeddedOrRaw, LogFiles, MessageToBackend, MessageToFrontend}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath, serial::AtomicOptionSerial
 };
 use futures::TryFutureExt;
-use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeModLoaderType}, minecraft_profile::MinecraftProfileResponse, modrinth::{ModrinthLoader, ModrinthSideRequirement}, version::{LaunchArgument, LaunchArgumentValue}};
+use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeModLoaderType}, minecraft_profile::{MinecraftProfileResponse, SkinVariant}, modrinth::{ModrinthLoader, ModrinthSideRequirement}, version::{LaunchArgument, LaunchArgumentValue}};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tokio::{io::AsyncBufReadExt, sync::{Semaphore, TryAcquireError}};
@@ -1560,9 +1560,9 @@ impl BackendState {
                     };
 
                     if let Some(skin) = account.active_skin() {
-                        SkinManager::frontend_request(&backend, skin.url.clone(), result);
+                        SkinManager::frontend_request(&backend, skin.url.clone(), skin.variant, result);
                     } else {
-                        _ = result.send(AccountSkinResult::Success { skin: None });
+                        _ = result.send(AccountSkinResult::Success { skin: None, variant: SkinVariant::Classic });
                     }
                 });
             },
@@ -1573,7 +1573,7 @@ impl BackendState {
                 };
 
                 let variant_str = match variant {
-                    schema::minecraft_profile::SkinVariant::Slim => "slim",
+                    SkinVariant::Slim => "slim",
                     _ => "classic",
                 };
 

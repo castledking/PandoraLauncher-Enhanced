@@ -411,10 +411,12 @@ pub enum EmbeddedOrRaw {
     Raw(Arc<[u8]>),
 }
 
+
 #[derive(Debug, Clone)]
 pub enum AccountSkinResult {
     Success {
         skin: Option<Arc<[u8]>>,
+        variant: SkinVariant,
     },
     NeedsLogin,
     UnableToLoadSkin,

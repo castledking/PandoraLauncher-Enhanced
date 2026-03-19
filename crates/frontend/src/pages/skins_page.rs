@@ -60,10 +60,10 @@ impl SkinsPage {
         !self.has_pending_login()
     }
 
-    fn select_skin(&mut self, skin: Arc<[u8]>, cx: &mut Context<Self>) {
+    fn select_skin(&mut self, skin: Arc<[u8]>, variant: SkinVariant, cx: &mut Context<Self>) {
         self.selected_skin = skin.clone();
         self.player_model_widget.update(cx, |widget, cx| {
-            widget.set_skin(cx, skin);
+            widget.set_skin(cx, skin, variant);
         });
     }
 
@@ -100,10 +100,12 @@ impl SkinsPage {
 
             let _ = page.update(cx, move |page, cx| {
                 // Handle skin result
+                let mut new_skin = None;
                 if let Ok(skin_result) = skin_result {
-                    if let AccountSkinResult::Success { skin } = &skin_result {
+                    if let AccountSkinResult::Success { skin, variant } = &skin_result {
                         if let Some(skin) = skin.clone() {
-                            page.selected_skin = skin;
+                            page.selected_skin = skin.clone();
+                            new_skin = Some((skin, *variant));
                         }
                     }
                     page.account_skins.insert(uuid, skin_result);
@@ -129,7 +131,11 @@ impl SkinsPage {
 
                 // Update model widget
                 page.player_model_widget.update(cx, |widget, cx| {
-                    widget.set_skin_and_cape(cx, page.selected_skin.clone(), None);
+                    if let Some((skin, variant)) = new_skin {
+                        widget.set_skin_and_cape(cx, skin, variant, None);
+                    } else {
+                        widget.set_cape(cx, None);
+                    }
                 });
                 page.applying_to_account = None;
                 page.request_account_skin = None;
@@ -185,6 +191,7 @@ impl Render for SkinsPage {
             .items_start();
 
         let mut active_skin = None;
+        let mut active_skin_variant = None;
         let controls;
 
         if let Some(account) = &self.data.accounts.read(cx).selected_account {
@@ -193,8 +200,9 @@ impl Render for SkinsPage {
             if account.offline {
                 controls = ts!("skins.no_offline").into_any_element();
             } else if self.applying_to_account == Some(uuid) {
-                if let Some(AccountSkinResult::Success { skin }) = self.account_skins.get(&uuid) {
+                if let Some(AccountSkinResult::Success { skin, variant }) = self.account_skins.get(&uuid) {
                     active_skin = skin.clone();
+                    active_skin_variant = Some(*variant);
                 }
 
                 controls = h_flex()
@@ -211,11 +219,14 @@ impl Render for SkinsPage {
                     .into_any_element();
             } else {
                 match self.account_skins.get(&uuid) {
-                    Some(AccountSkinResult::Success { skin }) => {
+                    Some(AccountSkinResult::Success { skin, variant }) => {
                         active_skin = skin.clone();
+                        active_skin_variant = Some(*variant);
+                        let selected_variant = self.player_model_widget.read(cx).get_variant();
                         let can_apply_changes = if let Some(skin) = skin {
-                            !Arc::ptr_eq(skin, &self.selected_skin) ||
-                                self.active_cape != self.selected_cape
+                            !Arc::ptr_eq(skin, &self.selected_skin)
+                                || *variant != selected_variant
+                                || self.active_cape != self.selected_cape
                         } else {
                             self.active_cape != self.selected_cape
                         };
@@ -226,6 +237,7 @@ impl Render for SkinsPage {
                                 .disabled(!can_apply_changes)
                                 .on_click({
                                     let skin = skin.clone();
+                                    let variant = *variant;
                                     cx.listener(move |page, _, _, cx| {
                                         if let Some((cape_id, cape_url)) = &page.active_cape {
                                             page.select_cape(*cape_id, cape_url.clone());
@@ -234,7 +246,7 @@ impl Render for SkinsPage {
                                         }
 
                                         if let Some(skin) = skin.clone() {
-                                            page.select_skin(skin, cx);
+                                            page.select_skin(skin, variant, cx);
                                         }
                                         cx.notify();
                                     })
@@ -248,16 +260,10 @@ impl Render for SkinsPage {
                                     let skin = skin.clone();
                                     cx.listener(move |page, _, _, cx| {
                                         if let Some(skin) = &skin && !Arc::ptr_eq(&skin, &page.selected_skin) {
-                                            let is_slim = crate::skin_renderer::is_slim(&page.selected_skin).unwrap_or(false);
-                                            let variant = if is_slim {
-                                                SkinVariant::Slim
-                                            } else {
-                                                SkinVariant::Classic
-                                            };
                                             page.data.backend_handle.send(MessageToBackend::SetAccountSkin {
                                                 account: uuid,
                                                 skin: page.selected_skin.clone(),
-                                                variant
+                                                variant: selected_variant
                                             });
                                         }
                                         if page.active_cape != page.selected_cape {
@@ -533,7 +539,12 @@ impl Render for SkinsPage {
                     .on_click({
                         let skin = skin.clone();
                         cx.listener(move |page, _, _, cx| {
-                            page.select_skin(skin.clone(), cx);
+                            let variant = if active && let Some(active_skin_variant) = active_skin_variant {
+                                active_skin_variant
+                            } else {
+                                crate::skin_renderer::determine_skin_variant(&skin).unwrap_or(SkinVariant::Classic)
+                            };
+                            page.select_skin(skin.clone(), variant, cx);
                         })
                     }))
             })));

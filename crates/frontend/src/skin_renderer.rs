@@ -1,4 +1,5 @@
 use image::{GenericImageView, ImageFormat, Pixel, RgbaImage};
+use schema::minecraft_profile::SkinVariant;
 
 #[derive(Clone, Copy, Debug)]
 struct V3 {
@@ -848,16 +849,20 @@ fn collect_quads(
     projected_quads
 }
 
-pub fn is_slim(
-    skin_png_bytes: &[u8],
-) -> Option<bool> {
-    let skin = image::load_from_memory_with_format(skin_png_bytes, ImageFormat::Png).ok()?;
-    Some(skin.height() != 32 && skin.get_pixel(54, 20)[3] < 20)
+pub fn determine_skin_variant(skin_png: &[u8]) -> Option<SkinVariant> {
+    let skin = image::load_from_memory_with_format(skin_png, ImageFormat::Png).ok()?;
+    let is_legacy = skin.height() == 32;
+    if !is_legacy && skin.get_pixel(54, 20)[3] < 20 {
+        Some(SkinVariant::Slim)
+    } else {
+        Some(SkinVariant::Classic)
+    }
 }
 
 pub fn render_skin_3d(
     skin_png_bytes: &[u8],
     cape_png_bytes: Option<&[u8]>,
+    variant: SkinVariant,
     out_width: u32,
     out_height: u32,
     yaw_deg: f64,
@@ -874,7 +879,11 @@ pub fn render_skin_3d(
     if skin.height() != 64 && !is_legacy {
         return None;
     }
-    let is_slim = !is_legacy && skin.get_pixel(54, 20)[3] < 20;
+    let is_slim = match variant {
+        SkinVariant::Classic => false,
+        SkinVariant::Slim => true,
+        SkinVariant::Other => !is_legacy && skin.get_pixel(54, 20)[3] < 20,
+    };
 
     let mut projected_quads = collect_quads(is_legacy, is_slim, cape.is_some(), yaw_deg, pitch_deg, sway_progress);
 

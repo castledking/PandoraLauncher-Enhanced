@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, Size, Style, Task, px, size};
+use schema::minecraft_profile::SkinVariant;
 
 pub const DEFAULT_YAW: f64 = 22.5;
 pub const DEFAULT_PITCH: f64 = 10.5;
@@ -10,6 +11,7 @@ struct RenderedPlayerModel {
     image: Arc<RenderImage>,
     skin: Arc<[u8]>,
     cape: Option<Arc<[u8]>>,
+    variant: SkinVariant,
     yaw: f64,
     pitch: f64,
     animation: f64,
@@ -20,6 +22,7 @@ struct RenderedPlayerModel {
 pub struct PlayerModelState {
     pub skin: Arc<[u8]>,
     pub cape: Option<Arc<[u8]>>,
+    pub variant: SkinVariant,
     pub yaw: f64,
     pub pitch: f64,
     pub animation: f64,
@@ -28,10 +31,11 @@ pub struct PlayerModelState {
 }
 
 impl PlayerModelState {
-    pub fn new(cx: &mut App, skin: Arc<[u8]>) -> Entity<Self> {
+    pub fn new(cx: &mut App, skin: Arc<[u8]>, variant: SkinVariant) -> Entity<Self> {
         let entity = cx.new(|_| Self {
             skin,
             cape: None,
+            variant,
             yaw: DEFAULT_YAW,
             pitch: DEFAULT_PITCH,
             animation: DEFAULT_ANIMATION,
@@ -52,6 +56,7 @@ impl PlayerModelState {
         };
         if rendered.width != width || rendered.height != height || rendered.yaw != self.yaw
             || rendered.pitch != self.pitch || rendered.animation != self.animation
+            || rendered.variant != self.variant
             || !Arc::ptr_eq(&rendered.skin, &self.skin)
         {
                 return true;
@@ -159,11 +164,12 @@ impl Element for PlayerModel {
                 let yaw = state.yaw;
                 let pitch = state.pitch;
                 let animation = state.animation;
+                let variant = state.variant;
 
                 let (send, recv) = tokio::sync::oneshot::channel();
 
                 cx.background_executor().spawn(async move {
-                    send.send(crate::skin_renderer::render_skin_3d(&skin, cape.as_deref(), image_width, image_height, yaw, pitch, animation))
+                    send.send(crate::skin_renderer::render_skin_3d(&skin, cape.as_deref(), variant, image_width, image_height, yaw, pitch, animation))
                 }).detach();
 
                 let skin = state.skin.clone();
@@ -187,6 +193,7 @@ impl Element for PlayerModel {
                             image: render_image,
                             skin,
                             cape,
+                            variant,
                             yaw,
                             pitch,
                             animation,

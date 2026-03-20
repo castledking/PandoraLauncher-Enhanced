@@ -3,11 +3,11 @@ use std::sync::Arc;
 use bridge::{handle::BackendHandle, message::{EmbeddedOrRaw, MessageToBackend}};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, WindowExt, alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dialog::Dialog, h_flex, input::{Input, InputEvent, InputState}, select::{Select, SelectState}, skeleton::Skeleton, v_flex
+    ActiveTheme, Icon, Selectable, WindowExt, alert::Alert, button::{Button, ButtonGroup, ButtonVariants}, checkbox::Checkbox, dialog::Dialog, h_flex, input::{Input, InputEvent, InputState}, select::{Select, SelectState}, skeleton::Skeleton, v_flex
 };
 use schema::{loader::Loader, version_manifest::{MinecraftVersionManifest, MinecraftVersionType}};
 
-use crate::{entity::{instance::InstanceEntries, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState}}, icon::PandoraIcon, interface_config::InterfaceConfig, pages::instances_page::VersionList, ts};
+use crate::{entity::{instance::InstanceEntries, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState}}, icon::PandoraIcon, interface_config::InterfaceConfig, pages::instances_page::VersionList, png_render_cache, ts};
 
 struct CreateInstanceModalState {
     metadata: Entity<FrontendMetadata>,
@@ -281,7 +281,7 @@ impl CreateInstanceModalState {
             ))
             .child(crate::labelled(ts!("instance.version"), v_flex().gap_2().child(version_dropdown).child(show_snapshots_button)))
             .child(crate::labelled(ts!("instance.modloader"), loader_button_group))
-            .child(h_flex().child(Button::new("icon").icon(PandoraIcon::Plus).label(ts!("instance.select_icon")).on_click({
+            .child(h_flex().gap_2().child(Button::new("icon").icon(PandoraIcon::Plus).label(ts!("instance.select_icon")).on_click({
                 let entity = cx.entity();
                 move |_, window, cx| {
                     let entity = entity.clone();
@@ -291,7 +291,20 @@ impl CreateInstanceModalState {
                         });
                     }), window, cx);
                 }
-            })));
+            })).when_some(self.icon.clone(), |this, icon| {
+                let icon = match icon {
+                    EmbeddedOrRaw::Embedded(path) => {
+                        Icon::default().path(path).size_8().min_w_8().min_h_8().into_any_element()
+                    },
+                    EmbeddedOrRaw::Raw(data) => {
+                        let transform = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
+                        png_render_cache::render_with_transform(data, transform, cx)
+                            .rounded(cx.theme().radius).size_8().min_w_8().min_h_8().into_any_element()
+                    },
+                };
+
+                this.child(icon)
+            }));
 
         let name_is_invalid = self.name_invalid;
         modal

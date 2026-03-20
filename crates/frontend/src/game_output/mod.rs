@@ -1112,8 +1112,7 @@ impl Render for GameOutputRoot {
                 let mut state = root.scroll_handler.state.borrow_mut();
                 state.scrolling = GameOutputScrolling::Bottom;
                 cx.notify();
-            })))
-            .child(Button::new("upload").label(ts!("instance.logs.upload.label")));
+            })));
 
         v_flex()
             .size_full()

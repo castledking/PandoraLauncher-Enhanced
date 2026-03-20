@@ -35,6 +35,10 @@ impl SafePath {
         Self::from_relative_path(RelativePath::new(trimmed))
     }
 
+    pub fn join(&self, other: &SafePath) -> SafePath {
+        Self::from_relative_path(&self.0.join(&other.0)).unwrap()
+    }
+
     pub fn to_path(&self, base: &Path) -> PathBuf {
         self.0.to_path(base)
     }

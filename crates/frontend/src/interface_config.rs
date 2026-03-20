@@ -53,7 +53,13 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_main_window_on_launch: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quit_on_main_closed: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub show_snapshots_in_create_instance: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub hide_usernames: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub hide_server_addresses: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instances_view_mode: InstancesViewMode,
     /// Per-instance datapack world: key = dot_minecraft_folder path, value = world folder name.
@@ -88,7 +94,10 @@ impl Default for InterfaceConfig {
             modrinth_page_project_type: default_modrinth_project_type(),
             curseforge_page_class_id: default_curseforge_class_id(),
             hide_main_window_on_launch: Default::default(),
+            quit_on_main_closed: Default::default(),
             show_snapshots_in_create_instance: Default::default(),
+            hide_usernames: Default::default(),
+            hide_server_addresses: Default::default(),
             instances_view_mode: Default::default(),
             datapack_world_by_instance: Default::default(),
             instance_subpage: Default::default()

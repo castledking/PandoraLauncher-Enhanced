@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use bridge::handle::BackendHandle;
-use gpui::Entity;
+use gpui::{App, Entity};
 use parking_lot::RwLock;
 
 use crate::entity::{
@@ -36,4 +36,7 @@ pub struct DataEntities {
 pub struct PanicMessages {
     pub panic_message: Arc<RwLock<Option<String>>>,
     pub deadlock_message: Arc<RwLock<Option<String>>>,
+}
+
+impl DataEntities {
 }

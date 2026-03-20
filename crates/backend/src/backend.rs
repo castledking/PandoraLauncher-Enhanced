@@ -5,7 +5,7 @@ use std::{
 use auth::{
     authenticator::{Authenticator, MsaAuthorizationError, XboxAuthenticateError},
     credentials::{AccountCredentials, AUTH_STAGE_COUNT},
-    models::{MinecraftAccessToken, MinecraftProfileResponse, SkinState},
+    models::{CapeState, MinecraftAccessToken, MinecraftProfileCape, MinecraftProfileResponse, MinecraftProfileSkin, SkinState, SkinVariant},
     secret::{PlatformSecretStorage, SecretStorageError},
     serve_redirect::{self, ProcessAuthorizationError},
 };
@@ -73,6 +73,34 @@ fn build_http_clients(user_agent: &str, proxy_config: &ProxyConfig, proxy_passwo
     let redirecting_http_client = redirecting_builder.build().expect("Failed to build redirecting HTTP client");
 
     (http_client, redirecting_http_client)
+}
+
+fn auth_profile_from_schema(profile: schema::minecraft_profile::MinecraftProfileResponse) -> MinecraftProfileResponse {
+    MinecraftProfileResponse {
+        id: profile.id,
+        name: profile.name,
+        skins: profile.skins.into_iter().map(|skin| MinecraftProfileSkin {
+            id: None,
+            url: skin.url,
+            state: match skin.state {
+                schema::minecraft_profile::SkinState::Active => SkinState::Active,
+                schema::minecraft_profile::SkinState::Inactive => SkinState::Inactive,
+            },
+            variant: match skin.variant {
+                schema::minecraft_profile::SkinVariant::Classic => SkinVariant::Classic,
+                schema::minecraft_profile::SkinVariant::Slim => SkinVariant::Slim,
+                schema::minecraft_profile::SkinVariant::Other => SkinVariant::Other,
+            },
+        }).collect(),
+        capes: profile.capes.into_iter().map(|cape| MinecraftProfileCape {
+            id: cape.id,
+            url: cape.url,
+            state: match cape.state {
+                schema::minecraft_profile::SkinState::Active => CapeState::Active,
+                schema::minecraft_profile::SkinState::Inactive => CapeState::Inactive,
+            },
+        }).collect(),
+    }
 }
 
 pub fn start(launcher_dir: PathBuf, send: FrontendHandle, self_handle: BackendHandle, recv: BackendReceiver) {
@@ -630,7 +658,7 @@ impl BackendState {
                             login_tracker.set_count(AUTH_STAGE_COUNT as usize + 1);
                             login_tracker.notify();
 
-                            return Ok((profile, access_token));
+                            return Ok((auth_profile_from_schema(profile), access_token));
                         },
                         Err(error) => {
                             if !allow_backwards || error.is_connection_error() {

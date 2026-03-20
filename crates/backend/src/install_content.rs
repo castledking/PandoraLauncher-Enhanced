@@ -101,7 +101,7 @@ impl BackendState {
         for content_file in content.files.iter() {
             tasks.push(async {
                 match content_file.download {
-                    bridge::install::ContentDownload::Modrinth { ref project_id, ref version_id } => {
+                    bridge::install::ContentDownload::Modrinth { ref project_id, ref version_id, .. } => {
                         let version = if let Some(version_id) = version_id {
                             let version = self.meta.fetch(&ModrinthVersionMetadataItem(version_id.clone())).await?;
                             Some(version)
@@ -236,7 +236,7 @@ impl BackendState {
                             Err(ContentInstallError::UnableToFindVersion)
                         }
                     },
-                    bridge::install::ContentDownload::Curseforge { project_id } => {
+                    bridge::install::ContentDownload::Curseforge { project_id, .. } => {
                         let versions = self.meta.fetch(&CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
                             mod_id: project_id,
                             game_version: content.version_hint.clone().map(|v| v.into()),

@@ -115,3 +115,6 @@ walkdir = "2.5.0"
 urlencoding = "2.1.3"
 windows = { version = "0.62.2", features = ["Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_Security_Credentials"] }
 itertools = "0.14.0"
+crc32fast = "1.5.0"
+scopeguard = "1.2.0"
+hickory-resolver = { version = "0.25.2", features = ["system-config"] }

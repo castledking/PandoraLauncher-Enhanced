@@ -13,6 +13,7 @@ use bridge::{
 };
 use parking_lot::RwLock;
 use relative_path::RelativePath;
+use serde::{Deserialize, Serialize};
 use schema::{auxiliary::{AuxDisabledChildren, AuxiliaryContentMeta}, instance::InstanceConfiguration, loader::Loader};
 use strum::IntoEnumIterator;
 use thiserror::Error;
@@ -20,6 +21,14 @@ use thiserror::Error;
 use ustr::Ustr;
 
 use crate::{BackendStateFileWatching, BackendStateInstances, IoOrSerializationError, WatchTarget, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstanceStats {
+    pub total_playtime_secs: u64,
+    pub session_count: u64,
+    #[serde(default)]
+    pub last_played_unix_ms: Option<i64>,
+}
 
 #[derive(Debug)]
 pub struct Instance {

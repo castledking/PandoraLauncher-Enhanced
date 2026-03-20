@@ -1,22 +1,27 @@
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme as _, StyledExt, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::icon::PandoraIcon;
 
 #[derive(IntoElement)]
 pub struct ErrorAlert {
-    id: ElementId,
     title: SharedString,
     message: SharedString,
+    w: Length
 }
 
 impl ErrorAlert {
-    pub fn new(id: impl Into<ElementId>, title: SharedString, message: SharedString) -> Self {
+    pub fn new(title: SharedString, message: SharedString) -> Self {
         Self {
-            id: id.into(),
             title,
             message,
+            w: Length::Definite(DefiniteLength::Fraction(1.0)),
         }
+    }
+
+    pub fn w(mut self, length: Length) -> Self {
+        self.w = length;
+        self
     }
 }
 
@@ -33,8 +38,7 @@ impl RenderOnce for ErrorAlert {
         let border_color = danger;
 
         h_flex()
-            .id(self.id)
-            .w_full()
+            .w(self.w)
             .text_color(fg)
             .bg(bg)
             .px(padding_x)
@@ -56,7 +60,7 @@ impl RenderOnce for ErrorAlert {
                     .child(
                         v_flex()
                             .overflow_hidden()
-                            .child(div().w_full().text_base().truncate().font_semibold().child(self.title))
+                            .child(div().w_full().text_base().truncate().child(self.title))
                             .child(self.message),
                     ),
             )

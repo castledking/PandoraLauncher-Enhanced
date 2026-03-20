@@ -93,11 +93,21 @@ impl Render for ImportPage {
                     .w_full()
                     .disabled(imports.imports[OtherLauncher::Modrinth].is_none())
                     .on_click(cx.listener(|page, _, _, _| page.import_from = Some(OtherLauncher::Modrinth))))
+                .child(Button::new("curseforge")
+                    .label("Import from CurseForge")
+                    .w_full()
+                    .disabled(imports.imports[OtherLauncher::CurseForge].is_none())
+                    .on_click(cx.listener(|page, _, _, _| page.import_from = Some(OtherLauncher::CurseForge))))
                 .child(Button::new("mmc")
                     .label("Import from MultiMC")
                     .w_full()
                     .disabled(imports.imports[OtherLauncher::MultiMC].is_none())
                     .on_click(cx.listener(|page, _, _, _| page.import_from = Some(OtherLauncher::MultiMC))))
+                .child(Button::new("atlauncher")
+                    .label("Import from ATLauncher")
+                    .w_full()
+                    .disabled(imports.imports[OtherLauncher::ATLauncher].is_none())
+                    .on_click(cx.listener(|page, _, _, _| page.import_from = Some(OtherLauncher::ATLauncher))))
                 .child(Button::new("mrpack")
                     .label("Import Modrinth Pack (.mrpack)")
                     .w_full()
@@ -138,8 +148,10 @@ impl Render for ImportPage {
         if let Some(import_from) = self.import_from && let Some(import) = &imports.imports[import_from] {
             let label = match import_from {
                 OtherLauncher::Prism => "Import From Prism",
+                OtherLauncher::CurseForge => "Import From CurseForge",
                 OtherLauncher::Modrinth => "Import From Modrinth",
                 OtherLauncher::MultiMC => "Import From MultiMC",
+                OtherLauncher::ATLauncher => "Import From ATLauncher",
             };
             let import_accounts = self.import_accounts && import.can_import_accounts;
             content = content.child(v_flex()

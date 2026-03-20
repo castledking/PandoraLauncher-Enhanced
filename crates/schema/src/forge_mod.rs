@@ -16,7 +16,8 @@ pub struct ModsTomlMod {
     pub display_name: Option<Arc<str>>,
     pub logo_file: Option<Arc<str>>,
     pub version: Option<Arc<str>>,
-    pub authors: Option<Arc<str>>,
+    #[serde(default, deserialize_with = "crate::single_or_seq")]
+    pub authors: Vec<Person>,
 }
 
 #[derive(Deserialize, Debug)]

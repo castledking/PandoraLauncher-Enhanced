@@ -25,6 +25,7 @@ impl BackendAccountInfo {
             accounts.push(Account {
                 uuid: *uuid,
                 username: account.username.clone(),
+                offline: account.offline,
                 head: account.head.clone(),
             });
         }

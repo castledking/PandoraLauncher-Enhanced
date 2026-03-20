@@ -457,7 +457,6 @@ impl ContentListDelegate {
 
         if child.disabled_third_party_downloads {
             item_content = item_content.child(div().child(ErrorAlert::new(
-                "blocked",
                 "Blocked".into(),
                 "The mod author has blocked downloads from third-party launchers".into(),
             )));

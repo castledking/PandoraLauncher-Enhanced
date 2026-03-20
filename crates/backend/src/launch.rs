@@ -2078,8 +2078,6 @@ impl LaunchContext {
         let mut wrapping_command = Vec::new();
         #[cfg(target_os = "linux")]
         {
-
-
             if use_mangohud {
                 wrapping_command.push("mangohud".to_string());
             }

@@ -26,6 +26,8 @@ Categories=Games;Minecraft;Launcher;
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
 }
 
+// todo: use actual windows shell escaping instead of unix escaping
+
 #[cfg(target_os = "windows")]
 pub fn create_shortcut(mut path: PathBuf, name: &str, bin: &Path, args: &[&str]) {
     log::info!("Creating windows shortcut at {:?}", path);
@@ -36,8 +38,8 @@ pub fn create_shortcut(mut path: PathBuf, name: &str, bin: &Path, args: &[&str])
     let Ok(mut sl) = mslnk::ShellLink::new(bin) else {
         return;
     };
-    let args_str = shell_words::join(args);
-    sl.set_arguments(Some(args_str.into()));
+    let args_str = crate::join_windows_shell(args);
+    sl.set_arguments(Some(args_str));
     sl.set_name(Some(name.into()));
     _ = sl.create_lnk(path);
 
@@ -60,24 +62,24 @@ pub fn create_shortcut(mut path: PathBuf, name: &str, bin: &Path, args: &[&str])
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-   	<key>CFBundleExecutable</key>
-   	<string>run.sh</string>
-   	<key>CFBundleIdentifier</key>
-   	<string>com.moulberry.pandoralauncher.Shortcut</string>
-   	<key>CFBundleName</key>
-   	<string>{name}</string>
-   	<key>CFBundleDisplayName</key>
-   	<string>{name}</string>
-   	<key>CFBundlePackageType</key>
-   	<string>APPL</string>
-   	<key>CFBundleSignature</key>
-   	<string>????</string>
-   	<key>CFBundleSupportedPlatforms</key>
-   	<array>
-  		<string>MacOSX</string>
-   	</array>
-   	<key>CFBundleVersion</key>
-   	<string>0</string>
+    <key>CFBundleExecutable</key>
+    <string>run.sh</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.moulberry.pandoralauncher.Shortcut</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundleDisplayName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>CFBundleVersion</key>
+    <string>0</string>
 </dict>
 </plist>"#).as_bytes());
 

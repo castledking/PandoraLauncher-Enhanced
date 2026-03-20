@@ -358,11 +358,7 @@ impl ModMetadataManager {
             png_icon = load_icon(icon_file);
         }
 
-        let authors = if let Some(authors) = &first.authors {
-            format!("By {authors}").into()
-        } else {
-            "".into()
-        };
+        let authors = create_authors_string(&first.authors).unwrap_or_default().into();
 
         let mut version = format!("v{}", first.version.as_deref().unwrap_or("1"));
         if version.contains("${file.jarVersion}") {

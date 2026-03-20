@@ -477,7 +477,7 @@ impl CurseforgeSearchPage {
                         return div()
                             .pl_3()
                             .pt_3()
-                            .child(ErrorAlert::new("search_error", ts!("instance.content.requesting_from_modrinth_error"), search_error));
+                            .child(ErrorAlert::new(ts!("instance.content.requesting_from_modrinth_error"), search_error));
                     } else {
                         should_load_more = true;
                         return div()
@@ -584,7 +584,10 @@ impl CurseforgeSearchPage {
                                                 ContentInstallFile {
                                                     replace_old: None,
                                                     path: bridge::install::ContentInstallPath::Automatic,
-                                                    download: ContentDownload::Curseforge { project_id: hit.id },
+                                                    download: ContentDownload::Curseforge {
+                                                        project_id: hit.id,
+                                                        install_dependencies: false,
+                                                    },
                                                     content_source: ContentSource::CurseforgeProject {
                                                         project_id: hit.id
                                                     },

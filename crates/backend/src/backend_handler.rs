@@ -1022,7 +1022,7 @@ impl BackendState {
                     }
                 };
 
-                if modal_action.error.read().map_or(false, |g| g.is_some()) {
+                if modal_action.error.read().is_some() {
                     modal_action.set_finished();
                     self.send.send(MessageToFrontend::Refresh);
                     return;
@@ -2941,7 +2941,24 @@ impl BackendState {
                 tokio::task::spawn(crate::update::install_update(self.redirecting_http_client.clone(), self.directories.clone(), self.send.clone(), update, modal_action));
             },
             MessageToBackend::ImportFromOtherLauncher { launcher, import_accounts, import_instances, modal_action } => {
-                crate::launcher_import::import_from_other_launcher(self, launcher, import_accounts, import_instances, modal_action).await;
+                let Some(base_dirs) = directories::BaseDirs::new() else {
+                    modal_action.set_error_message("Unable to access platform directories".into());
+                    modal_action.set_finished();
+                    return;
+                };
+                let path = launcher.default_path(&base_dirs);
+                let Some(mut import_job) = crate::launcher_import::get_import_from_other_launcher_job(launcher, path) else {
+                    modal_action.set_error_message("Unable to find launcher files".into());
+                    modal_action.set_finished();
+                    return;
+                };
+                if !import_accounts {
+                    import_job.import_accounts = false;
+                }
+                if !import_instances {
+                    import_job.paths.clear();
+                }
+                crate::launcher_import::import_from_other_launcher(self, launcher, import_job, modal_action).await;
             }
         }
     }

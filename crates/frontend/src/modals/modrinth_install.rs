@@ -90,16 +90,17 @@ pub fn perform_datapack_install(
     let mut files = Vec::new();
     if install_dependencies {
         for dep in required_dependencies {
-            files.push(ContentInstallFile {
-                replace_old: None,
-                path: bridge::install::ContentInstallPath::Automatic,
-                download: ContentDownload::Modrinth {
-                    project_id: dep.project_id.clone().unwrap(),
-                    version_id: dep.version_id.clone(),
-                },
-                content_source: ContentSource::ModrinthProject {
-                    project: dep.project_id.clone().unwrap(),
-                },
+                files.push(ContentInstallFile {
+                    replace_old: None,
+                    path: bridge::install::ContentInstallPath::Automatic,
+                    download: ContentDownload::Modrinth {
+                        project_id: dep.project_id.clone().unwrap(),
+                        version_id: dep.version_id.clone(),
+                        install_dependencies: false,
+                    },
+                    content_source: ContentSource::ModrinthProject {
+                        project: dep.project_id.clone().unwrap(),
+                    },
             });
         }
     }
@@ -456,7 +457,6 @@ fn open_from_entity(
         FrontendMetadataResult::Error(message) => {
             window.open_dialog(cx, move |modal, _, _| {
                 modal.title(title.clone()).child(ErrorAlert::new(
-                    "error",
                     "Error requesting from Modrinth".into(),
                     message.clone(),
                 ))
@@ -1153,6 +1153,7 @@ impl InstallDialog {
                                             download: ContentDownload::Modrinth {
                                                 project_id: dep.project_id.clone().unwrap(),
                                                 version_id: dep.version_id.clone(),
+                                                install_dependencies: false,
                                             },
                                             content_source: ContentSource::ModrinthProject {
                                                 project: dep.project_id.clone().unwrap(),

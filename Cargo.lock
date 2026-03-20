@@ -2547,6 +2547,7 @@ dependencies = [
  "image",
  "indexmap 2.13.0",
  "intrusive-collections",
+ "itertools 0.14.0",
  "lexical-sort",
  "log",
  "lru",

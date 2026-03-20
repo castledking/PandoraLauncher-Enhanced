@@ -2,19 +2,25 @@ use std::{io::{BufRead, Read}, sync::Arc, time::{Duration, SystemTime}};
 
 use auth::{credentials::AccountCredentials, models::{MinecraftAccessToken, MinecraftProfileResponse}, secret::PlatformSecretStorage};
 use bridge::{
-    install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{InstanceStatus, ContentType, ContentSummary}, message::{BackendConfigWithPassword, LogFiles, MessageToBackend, MessageToFrontend, MinecraftCapeInfo, MinecraftProfileInfo, MinecraftSkinInfo}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, serial::AtomicOptionSerial
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, instance::{InstanceStatus, ContentType, ContentSummary}, message::{BackendConfigWithPassword, LogFiles, MessageToBackend, MessageToFrontend, MinecraftCapeInfo, MinecraftProfileInfo, MinecraftSkinInfo}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath, serial::AtomicOptionSerial
 };
 use futures::TryFutureExt;
 use reqwest::StatusCode;
-use rustc_hash::{FxHashMap, FxHashSet};
-use schema::{auxiliary::AuxiliaryContentMeta, content::ContentSource, modrinth::ModrinthLoader, version::{LaunchArgument, LaunchArgumentValue}};
+use rustc_hash::FxHashSet;
+use schema::{
+    auxiliary::AuxiliaryContentMeta,
+    content::ContentSource,
+    curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeModLoaderType},
+    modrinth::ModrinthLoader,
+    version::{LaunchArgument, LaunchArgumentValue},
+};
 use serde::Deserialize;
 use strum::IntoEnumIterator;
 use tokio::{io::AsyncBufReadExt, sync::Semaphore};
 use ustr::Ustr;
 
 use crate::{
-    BackendState, LoginError, account::{BackendAccount, MinecraftLoginInfo}, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}
+    BackendState, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, instance::ContentFolder, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, CurseforgeGetFilesMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}
 };
 
 /// Extract stable texture key from skin URL (last path segment). Used for deduplication.
@@ -29,10 +35,9 @@ fn skin_dedup_key(url: &str) -> Option<String> {
 
 /// Detect skin variant (CLASSIC/SLIM) from image bytes.
 fn detect_skin_variant(bytes: &[u8]) -> &'static str {
-    use image::GenericImageView;
     if let Ok(img) = image::load_from_memory(bytes) {
         let rgba = img.to_rgba8();
-        let (w, h) = rgba.dimensions();
+        let (w, h) = (rgba.width(), rgba.height());
         if w != 64 {
             return "CLASSIC";
         }
@@ -61,7 +66,180 @@ fn detect_skin_variant(bytes: &[u8]) -> &'static str {
     }
 }
 
+fn validate_skin_image(bytes: &[u8]) -> Result<(), Arc<str>> {
+    let Ok(image) = image::load_from_memory(bytes) else {
+        return Err(Arc::from("Invalid image file"));
+    };
+    let (w, h) = (image.width(), image.height());
+    if (w == 64 && h == 64) || (w == 64 && h == 32) {
+        Ok(())
+    } else {
+        Err(Arc::from("Skins must be 64x64 or 64x32"))
+    }
+}
+
 impl BackendState {
+    async fn add_owned_skin_impl(
+        &self,
+        skin_data: Arc<[u8]>,
+        requested_variant: Arc<str>,
+        source_url: Option<Arc<str>>,
+        modal_action: ModalAction,
+    ) {
+        if let Err(err) = validate_skin_image(&skin_data) {
+            self.send.send_error(err);
+            modal_action.set_finished();
+            return;
+        }
+
+        let selected_uuid = {
+            let mut account_info = self.account_info.write();
+            let info = account_info.get();
+            info.selected_account
+        };
+
+        let Some(selected_uuid) = selected_uuid else {
+            self.send.send_error(Arc::from("No account selected"));
+            modal_action.set_finished();
+            return;
+        };
+
+        let secret_storage = match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+            Ok(ss) => ss,
+            Err(e) => {
+                self.send.send_error(Arc::from(format!("Secret storage error: {}", e)));
+                modal_action.set_finished();
+                return;
+            }
+        };
+
+        let credentials = match secret_storage.read_credentials(selected_uuid).await {
+            Ok(Some(creds)) => creds,
+            Ok(None) => {
+                self.send.send_error(Arc::from("No credentials found. Please log in again."));
+                modal_action.set_finished();
+                return;
+            }
+            Err(e) => {
+                self.send.send_error(Arc::from(format!("Error reading credentials: {}", e)));
+                modal_action.set_finished();
+                return;
+            }
+        };
+
+        let minecraft_token = {
+            let now = chrono::Utc::now();
+            if let Some(access) = &credentials.access_token && now < access.expiry {
+                Some(auth::models::MinecraftAccessToken(Arc::clone(&access.token)))
+            } else {
+                None
+            }
+        };
+
+        let Some(minecraft_token) = minecraft_token else {
+            self.send.send_error(Arc::from("No Minecraft access token. Please log in again."));
+            modal_action.set_finished();
+            return;
+        };
+
+        let profile_response = self.http_client
+            .get("https://api.minecraftservices.com/minecraft/profile")
+            .bearer_auth(minecraft_token.secret())
+            .send()
+            .await;
+
+        let profile = match profile_response {
+            Ok(resp) if resp.status() == StatusCode::OK => {
+                match serde_json::from_slice::<MinecraftProfileResponse>(&resp.bytes().await.unwrap_or_default()) {
+                    Ok(profile) => profile,
+                    Err(err) => {
+                        self.send.send_error(Arc::from(format!("Failed to read profile: {}", err)));
+                        modal_action.set_finished();
+                        return;
+                    }
+                }
+            }
+            Ok(resp) => {
+                self.send.send_error(Arc::from(format!("Failed to fetch profile: {}", resp.status())));
+                modal_action.set_finished();
+                return;
+            }
+            Err(err) => {
+                self.send.send_error(Arc::from(format!("Failed to fetch profile: {}", err)));
+                modal_action.set_finished();
+                return;
+            }
+        };
+
+        let account_dir_name = profile.name.to_string();
+        let account_skins_dir = self.directories.owned_skins_dir.join(&account_dir_name);
+        let owned_skins_json = account_skins_dir.join("owned_skins.json");
+        let _ = tokio::fs::create_dir_all(&account_skins_dir).await;
+
+        let mut owned_skins: crate::backend::OwnedSkins = if owned_skins_json.exists() {
+            match tokio::fs::read_to_string(&owned_skins_json).await {
+                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                Err(_) => crate::backend::OwnedSkins::default(),
+            }
+        } else {
+            crate::backend::OwnedSkins::default()
+        };
+
+        let texture_key = source_url.as_deref().and_then(texture_key_from_url);
+        let source_url_string = source_url.as_ref().map(|url| url.to_string());
+        let existing_index = source_url_string.as_ref().and_then(|url| {
+            owned_skins.skins.iter().position(|skin| {
+                skin.url.as_deref() == Some(url.as_str())
+                    || skin.texture_key.as_deref() == texture_key.as_deref()
+            })
+        });
+
+        let variant = if requested_variant.eq_ignore_ascii_case("AUTO") {
+            detect_skin_variant(&skin_data).to_string()
+        } else {
+            requested_variant.to_ascii_uppercase()
+        };
+
+        let file_name = if let Some(index) = existing_index {
+            owned_skins.skins[index].variant = variant.clone();
+            owned_skins.skins[index].url = source_url_string.clone();
+            owned_skins.skins[index].texture_key = texture_key.clone();
+            owned_skins.skins[index].file_name.clone()
+        } else {
+            let skin_id = uuid::Uuid::new_v4().to_string();
+            let file_name = format!("{}.png", skin_id);
+            owned_skins.skins.push(crate::backend::OwnedSkin {
+                id: skin_id.clone(),
+                file_name: file_name.clone(),
+                variant: variant.clone(),
+                skin_id,
+                url: source_url_string.clone(),
+                texture_key: texture_key.clone(),
+            });
+            file_name
+        };
+
+        let file_path = account_skins_dir.join(&file_name);
+        if let Err(err) = tokio::fs::write(&file_path, &skin_data).await {
+            self.send.send_error(Arc::from(format!("Failed to save skin file: {}", err)));
+            modal_action.set_finished();
+            return;
+        }
+
+        owned_skins.skins.retain(|owned| account_skins_dir.join(&owned.file_name).exists());
+        if let Ok(json) = serde_json::to_string_pretty(&owned_skins) {
+            let _ = tokio::fs::write(&owned_skins_json, json).await;
+        }
+
+        self.process_profile_and_send(profile).await;
+        self.send.send(MessageToFrontend::AddNotification {
+            notification_type: bridge::message::BridgeNotificationType::Success,
+            message: Arc::from("Skin added to owned skins."),
+        });
+        self.send.send(MessageToFrontend::CloseModal);
+        modal_action.set_finished();
+    }
+
     /// Process a Minecraft profile (owned skins, downloads, head cache) and send MinecraftProfileResult to the frontend.
     pub(crate) async fn process_profile_and_send(&self, profile: MinecraftProfileResponse) {
         let account_dir_name = profile.name.to_string();
@@ -619,6 +797,14 @@ impl BackendState {
                             let (result, handle) = meta.fetch_with_keepalive(&ModrinthProjectVersionsMetadataItem(project_versions), force_reload).await;
                             (result.map(MetadataResult::ModrinthProjectVersionsResult), handle)
                         },
+                        bridge::meta::MetadataRequest::CurseforgeSearch(ref search) => {
+                            let (result, handle) = meta.fetch_with_keepalive(&CurseforgeSearchMetadataItem(search), force_reload).await;
+                            (result.map(MetadataResult::CurseforgeSearchResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeGetModFiles(ref request) => {
+                            let (result, handle) = meta.fetch_with_keepalive(&CurseforgeGetModFilesMetadataItem(request), force_reload).await;
+                            (result.map(MetadataResult::CurseforgeGetModFilesResult), handle)
+                        },
                     };
                     let result = result.map_err(|err| format!("{}", err).into());
                     send.send(MessageToFrontend::MetadataResult {
@@ -1013,6 +1199,121 @@ impl BackendState {
                         instance_state.reload_immediately.insert((id, folder));
                     }
                 }
+            },
+            MessageToBackend::DownloadContentChildren { id, content_id, modal_action } => {
+                let (summary, loader, minecraft_version, folder) = {
+                    let mut instance_state = self.instance_state.write();
+                    let Some(instance) = instance_state.instances.get_mut(id) else {
+                        modal_action.set_finished();
+                        return;
+                    };
+                    let Some((summary, folder)) = instance.try_get_content(content_id) else {
+                        modal_action.set_finished();
+                        return;
+                    };
+                    let summary = summary.clone();
+                    let configuration = instance.configuration.get();
+                    (summary, configuration.loader, configuration.minecraft_version, folder)
+                };
+                let version_hint: Arc<str> = minecraft_version.as_str().into();
+
+                if let ContentType::ModrinthModpack { downloads, summaries, .. } = &summary.content_summary.extra {
+                    let files: Vec<_> = downloads.iter().enumerate().filter_map(|(index, file)| {
+                        let summary_missing = summaries.get(index).map(|s| s.is_none()).unwrap_or(true);
+                        if !summary_missing {
+                            return None;
+                        }
+                        let path = SafePath::new(&file.path)?;
+                        Some(ContentInstallFile {
+                            replace_old: None,
+                            path: ContentInstallPath::Safe(path),
+                            download: ContentDownload::Url {
+                                url: file.downloads[0].clone(),
+                                sha1: file.hashes.sha1.clone(),
+                                size: file.file_size,
+                            },
+                            content_source: schema::content::ContentSource::ModrinthUnknown,
+                        })
+                    }).collect();
+
+                    if !files.is_empty() {
+                        self.install_content(ContentInstall {
+                            target: InstallTarget::Library,
+                            loader_hint: loader,
+                            version_hint: Some(version_hint.clone()),
+                            datapack_world: None,
+                            files: files.into(),
+                        }, modal_action.clone()).await;
+                    }
+                } else if let ContentType::CurseforgeModpack { files, summaries, .. } = &summary.content_summary.extra {
+                    let mut file_ids = Vec::new();
+
+                    for (index, file) in files.iter().enumerate() {
+                        if !matches!(summaries.get(index), Some((_, Some(_)))) {
+                            file_ids.push(file.file_id);
+                        }
+                    }
+
+                    if !file_ids.is_empty() {
+                        if let Ok(files) = self.meta.fetch(&CurseforgeGetFilesMetadataItem(&CurseforgeGetFilesRequest {
+                            file_ids,
+                        })).await {
+                            let mut files_to_install = Vec::new();
+
+                            for file in files.data.iter() {
+                                let sha1 = file.hashes.iter()
+                                    .find(|hash| hash.algo == 1)
+                                    .map(|hash| &hash.value);
+                                let Some(sha1) = sha1 else {
+                                    continue;
+                                };
+
+                                let mut hash = [0u8; 20];
+                                let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                                    log::warn!("File {} has invalid sha1: {}", file.file_name, sha1);
+                                    continue;
+                                };
+
+                                self.mod_metadata_manager.set_cached_curseforge_info(file.id, CachedCurseforgeFileInfo {
+                                    hash,
+                                    filename: file.file_name.clone(),
+                                    disabled_third_party_downloads: file.download_url.is_none(),
+                                });
+
+                                let Some(download_url) = &file.download_url else {
+                                    continue;
+                                };
+
+                                files_to_install.push(ContentInstallFile {
+                                    replace_old: None,
+                                    path: ContentInstallPath::Automatic,
+                                    download: ContentDownload::Url {
+                                        url: download_url.clone(),
+                                        sha1: sha1.clone(),
+                                        size: file.file_length as usize,
+                                    },
+                                    content_source: ContentSource::CurseforgeProject { project_id: file.mod_id },
+                                });
+                            }
+
+                            if !files_to_install.is_empty() {
+                                self.install_content(ContentInstall {
+                                    target: InstallTarget::Library,
+                                    loader_hint: loader,
+                                    version_hint: Some(version_hint.clone()),
+                                    datapack_world: None,
+                                    files: files_to_install.into(),
+                                }, modal_action.clone()).await;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.content_state[folder].mark_dirty(None);
+                }
+                tokio::task::spawn(self.clone().load_instance_content(id, folder));
+                modal_action.set_finished();
             },
             MessageToBackend::DownloadAllMetadata => {
                 self.download_all_metadata().await;
@@ -1440,6 +1741,37 @@ impl BackendState {
             MessageToBackend::UploadSkin { skin_data, skin_variant, modal_action } => {
                 self.upload_skin_impl(skin_data, skin_variant, modal_action).await;
             },
+            MessageToBackend::AddOwnedSkin { skin_data, skin_variant, modal_action } => {
+                self.add_owned_skin_impl(skin_data, skin_variant, None, modal_action).await;
+            },
+            MessageToBackend::AddOwnedSkinFromUrl { skin_url, skin_variant, modal_action } => {
+                match self.redirecting_http_client.get(skin_url.as_ref()).send().await {
+                    Ok(resp) if resp.status() == StatusCode::OK => {
+                        match resp.bytes().await {
+                            Ok(bytes) => {
+                                self.add_owned_skin_impl(
+                                    Arc::from(bytes.to_vec().into_boxed_slice()),
+                                    skin_variant,
+                                    Some(skin_url),
+                                    modal_action,
+                                ).await;
+                            }
+                            Err(err) => {
+                                self.send.send_error(Arc::from(format!("Failed to read skin bytes: {}", err)));
+                                modal_action.set_finished();
+                            }
+                        }
+                    }
+                    Ok(resp) => {
+                        self.send.send_error(Arc::from(format!("Failed to download skin: {}", resp.status())));
+                        modal_action.set_finished();
+                    }
+                    Err(err) => {
+                        self.send.send_error(Arc::from(format!("Failed to download skin: {}", err)));
+                        modal_action.set_finished();
+                    }
+                }
+            },
             MessageToBackend::SetSkinFromPath { path, skin_variant, modal_action } => {
                 match std::fs::read(std::path::Path::new(path.as_ref())) {
                     Ok(bytes) => {
@@ -1492,7 +1824,6 @@ impl BackendState {
                         let client = self.http_client.clone();
                         let send = self.send.clone();
                         let backend = self.clone();
-                        let directories = self.directories.clone();
                         tokio::spawn(async move {
                             let cape_result = match &cape_id {
                                 Some(id) => {
@@ -1723,6 +2054,12 @@ impl BackendState {
                                                 params: neoforge_mod_params.clone()
                                             }).await
                                         },
+                                        ContentType::CurseforgeModpack { .. } => {
+                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
+                                                sha1: hex::encode(summary.content_summary.hash).into(),
+                                                params: mod_params.clone()
+                                            }).await
+                                        },
                                         ContentType::JavaModule => {
                                             meta.fetch(&ModrinthVersionUpdateMetadataItem {
                                                 sha1: hex::encode(summary.content_summary.hash).into(),
@@ -1756,7 +2093,7 @@ impl BackendState {
                                     if let ContentSource::ModrinthProject { ref project } = source {
                                         if &result.0.project_id != project {
                                             log::error!("Refusing to update {:?}, mismatched project ids: expected {}, got {}",
-                                                summary.content_summary.hash, &result.0.project_id, &project);
+                                                summary.content_summary.hash, project, &result.0.project_id);
                                             return Ok(ContentUpdateAction::ErrorNotFound);
                                         }
                                     }
@@ -1782,6 +2119,70 @@ impl BackendState {
                                         })
                                     }
                                 },
+                                ContentSource::CurseforgeProject { project_id } => {
+                                    let permit = semaphore.acquire().await.unwrap();
+
+                                    let mod_loader_type = match summary.content_summary.extra {
+                                        ContentType::Fabric => {
+                                            Some(CurseforgeModLoaderType::Fabric as u32)
+                                        },
+                                        ContentType::Forge | ContentType::LegacyForge => {
+                                            Some(CurseforgeModLoaderType::Forge as u32)
+                                        },
+                                        ContentType::NeoForge => {
+                                            Some(CurseforgeModLoaderType::NeoForge as u32)
+                                        },
+                                        _ => None
+                                    };
+
+                                    let result = self.meta.fetch(&CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
+                                        mod_id: project_id,
+                                        game_version: Some(version),
+                                        mod_loader_type,
+                                        page_size: Some(1)
+                                    })).await;
+
+                                    drop(permit);
+
+                                    tracker.add_count(1);
+                                    tracker.notify();
+
+                                    if let Err(MetaLoadError::NonOK(404)) = result {
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    }
+
+                                    let result = result?;
+
+                                    let Some(file) = result.data.first() else {
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    };
+
+                                    if file.mod_id != project_id {
+                                        log::error!("Refusing to update {:?}, mismatched project ids: expected {}, got {}",
+                                            summary.content_summary.hash, project_id, file.mod_id);
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    }
+
+                                    let sha1 = file.hashes.iter()
+                                        .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                                    let Some(sha1) = sha1 else {
+                                        return Ok(ContentUpdateAction::ErrorInvalidHash);
+                                    };
+
+                                    let mut latest_hash = [0u8; 20];
+                                    let Ok(_) = hex::decode_to_slice(&**sha1, &mut latest_hash) else {
+                                        return Ok(ContentUpdateAction::ErrorInvalidHash);
+                                    };
+
+                                    if latest_hash == summary.content_summary.hash {
+                                        Ok(ContentUpdateAction::AlreadyUpToDate)
+                                    } else {
+                                        Ok(ContentUpdateAction::Curseforge {
+                                            file: file.clone(),
+                                            project_id,
+                                        })
+                                    }
+                                }
                             }
                         }.map_ok(|action| UpdateResult {
                             mod_summary: summary.content_summary.clone(),
@@ -1884,6 +2285,43 @@ impl BackendState {
                                         size: file.size,
                                     },
                                     content_source: ContentSource::ModrinthProject { project: project_id },
+                                }].into(),
+                            }
+                        },
+                        ContentUpdateAction::Curseforge { file, project_id } => {
+                            let mut path = mod_summary.path.with_file_name(&*file.file_name);
+                            if !mod_summary.enabled {
+                                path.add_extension("disabled");
+                            }
+                            debug_assert!(path.is_absolute());
+
+                            let sha1 = file.hashes.iter()
+                                .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                            let Some(sha1) = sha1 else {
+                                self.send.send_error("Can't update mod in instance, missing sha1 hash");
+                                modal_action.set_finished();
+                                return;
+                            };
+                            let Some(url) = file.download_url.clone() else {
+                                self.send.send_error("Can't update mod in instance, author has blocked third party downloads");
+                                modal_action.set_finished();
+                                return;
+                            };
+
+                            ContentInstall {
+                                target: InstallTarget::Instance(id),
+                                loader_hint: loader,
+                                version_hint: Some(minecraft_version.into()),
+                                datapack_world: None,
+                                files: [ContentInstallFile {
+                                    replace_old: Some(mod_summary.path.clone()),
+                                    path: bridge::install::ContentInstallPath::Raw(path.into()),
+                                    download: ContentDownload::Url {
+                                        url,
+                                        sha1: sha1.clone(),
+                                        size: file.file_length as usize,
+                                    },
+                                    content_source: ContentSource::CurseforgeProject { project_id },
                                 }].into(),
                             }
                         },
@@ -2497,113 +2935,6 @@ impl BackendState {
                         instance.name.as_str()
                     ];
                     crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args);
-                }
-            },
-            MessageToBackend::RelocateInstance { id, path } => {
-                if path.exists() {
-                    self.send.send_warning("Cannot relocate instance: path already exists");
-                    return;
-                }
-
-                let mut is_normal_instance_folder = false;
-
-                if let Ok(path) = path.strip_prefix(&self.directories.instances_dir) && crate::is_single_component_path(path) {
-                    is_normal_instance_folder = true;
-
-                    let instance_root = if let Some(instance) = self.instance_state.read().instances.get(id) {
-                        instance.root_path.clone()
-                    } else {
-                        return;
-                    };
-
-                    #[cfg(unix)]
-                    let is_real_folder = !instance_root.is_symlink();
-                    #[cfg(windows)]
-                    let is_real_folder = !instance_root.is_symlink() && !junction::exists(&instance_root).unwrap_or(false);
-
-                    if is_real_folder && let Some(name) = path.to_str() {
-                        self.rename_instance(id, name).await;
-                        return;
-                    }
-                };
-
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    if cfg!(windows) {
-                        self.file_watching.write().unwatch_subdirectories_of_instance(id);
-                        instance.mark_all_dirty();
-                    }
-
-                    #[cfg(windows)]
-                    if let Ok(target) = junction::get_target(&instance.root_path) {
-                        if let Err(err) = std::fs::rename(&target, &path) {
-                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
-                            self.send.send_error(format!("Unable to move instance files: {err}"));
-                            return;
-                        }
-
-                        _ = junction::delete(&instance.root_path);
-
-                        if !is_normal_instance_folder {
-                            if let Err(err) = junction::create(&path, &instance.root_path) {
-                                log::error!("Error while creating junction to moved instance: {err:?}");
-                                self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
-                                return;
-                            }
-                        }
-                    };
-
-                    if let Ok(target) = std::fs::read_link(&instance.root_path) {
-                        if let Err(err) = std::fs::rename(&target, &path) {
-                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
-                            self.send.send_error(format!("Unable to move instance files: {err}"));
-                            return;
-                        }
-
-                        _ = std::fs::remove_file(&instance.root_path);
-
-                        if !is_normal_instance_folder {
-                            #[cfg(unix)]
-                            if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
-                                log::error!("Error while linking to moved instance: {err:?}");
-                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
-                                return;
-                            }
-                            #[cfg(windows)]
-                            if let Err(err) = std::os::windows::fs::symlink_dir(&path, &instance.root_path) {
-                                log::error!("Error while linking to moved instance: {err:?}");
-                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
-                                return;
-                            }
-                            #[cfg(not(any(unix, windows)))]
-                            compile_error!("Unsupported platform");
-                        }
-
-                        return;
-                    }
-
-                    if let Err(err) = std::fs::rename(&instance.root_path, &path) {
-                        log::error!("Unable to move instance files: {err:?}");
-                        self.send.send_error(format!("Unable to move instance files: {err}"));
-                        return;
-                    }
-
-                    if !is_normal_instance_folder {
-                        #[cfg(unix)]
-                        if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
-                            log::error!("Error while linking to moved instance: {err:?}");
-                            self.send.send_error(format!("Error while linking to moved instance: {err}"));
-                            return;
-                        }
-                        #[cfg(windows)]
-                        if let Err(err) = junction::create(&path, &instance.root_path) {
-                            log::error!("Error while creating junction to moved instance: {err:?}");
-                            self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
-                            return;
-                        }
-                        #[cfg(not(any(unix, windows)))]
-                        compile_error!("Unsupported platform");
-                    }
-
                 }
             },
             MessageToBackend::InstallUpdate { update, modal_action } => {

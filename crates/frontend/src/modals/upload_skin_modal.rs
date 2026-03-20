@@ -5,7 +5,7 @@ use bridge::{
     message::MessageToBackend,
     modal_action::ModalAction,
 };
-use gpui::{InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, prelude::*, *};
+use gpui::{InteractiveElement, ParentElement, SharedString, Styled, Window, prelude::*, *};
 use gpui_component::{
     ActiveTheme,
     button::{Button, ButtonVariants},
@@ -13,18 +13,16 @@ use gpui_component::{
     h_flex,
     input::{Input, InputState},
     v_flex,
-    IconName, Selectable, Disableable, WindowExt,
+    Disableable, IconName, WindowExt,
 };
 use image::ImageEncoder;
 
 use crate::{component::skin_renderer::SkinRenderer, icon::PandoraIcon};
 
 fn detect_skin_variant(bytes: &[u8]) -> &'static str {
-    use image::GenericImageView;
-    
     if let Ok(img) = image::load_from_memory(bytes) {
         let rgba = img.to_rgba8();
-        let (w, h) = rgba.dimensions();
+        let (w, h) = (rgba.width(), rgba.height());
         if w != 64 {
             return "CLASSIC";
         }
@@ -95,6 +93,14 @@ impl UploadSkinModal {
         match self.variant_mode.as_ref() {
             "AUTO" => self.detected_variant.clone(),
             other => other.into(),
+        }
+    }
+
+    fn submit_variant(&self) -> Arc<str> {
+        if self.selected_file_data.is_none() && self.variant_mode.as_ref() == "AUTO" {
+            "AUTO".into()
+        } else {
+            self.effective_variant()
         }
     }
 
@@ -263,9 +269,9 @@ impl UploadSkinModal {
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             let url = this.custom_skin_url.read(cx).value();
                                             if !url.is_empty() {
-                                                this.backend_handle.send(MessageToBackend::SetSkin {
+                                                this.backend_handle.send(MessageToBackend::AddOwnedSkinFromUrl {
                                                     skin_url: url.into(),
-                                                    skin_variant: this.effective_variant(),
+                                                    skin_variant: this.submit_variant(),
                                                     modal_action: ModalAction::default(),
                                                 });
                                             }
@@ -364,9 +370,9 @@ impl UploadSkinModal {
                             .disabled(self.selected_file_data.is_none() || self.upload_error.is_some())
                             .on_click(cx.listener(|this, _, _, _| {
                                 if let Some(data) = &this.selected_file_data {
-                                    this.backend_handle.send(MessageToBackend::UploadSkin {
+                                    this.backend_handle.send(MessageToBackend::AddOwnedSkin {
                                         skin_data: data.clone(),
-                                        skin_variant: this.effective_variant(),
+                                        skin_variant: this.submit_variant(),
                                         modal_action: ModalAction::default(),
                                     });
                                 }

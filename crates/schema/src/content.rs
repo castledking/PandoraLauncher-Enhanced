@@ -10,5 +10,8 @@ pub enum ContentSource {
     ModrinthUnknown,
     ModrinthProject {
         project: Arc<str>
+    },
+    CurseforgeProject {
+        project_id: u32,
     }
 }

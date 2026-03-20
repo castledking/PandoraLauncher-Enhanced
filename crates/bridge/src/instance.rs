@@ -1,7 +1,13 @@
 use std::{path::Path, sync::Arc};
 
 use indexmap::IndexMap;
-use schema::{auxiliary::AuxDisabledChildren, content::ContentSource, loader::Loader, modification::ModrinthModpackFileDownload};
+use schema::{
+    auxiliary::AuxDisabledChildren,
+    content::ContentSource,
+    curseforge::{CachedCurseforgeFileInfo, CurseforgeModpackFile, CurseforgeModpackMinecraft},
+    loader::Loader,
+    modification::ModrinthModpackFileDownload,
+};
 use ustr::Ustr;
 
 use crate::safe_path::SafePath;
@@ -105,6 +111,12 @@ pub enum ContentType {
         overrides: Arc<[(SafePath, Arc<[u8]>)]>,
         dependencies: IndexMap<Arc<str>, Arc<str>>,
     },
+    CurseforgeModpack {
+        files: Arc<[CurseforgeModpackFile]>,
+        summaries: Arc<[(Option<Arc<ContentSummary>>, Option<CachedCurseforgeFileInfo>)]>,
+        overrides: Arc<[(SafePath, Arc<[u8]>)]>,
+        minecraft: CurseforgeModpackMinecraft,
+    },
     ResourcePack,
 }
 
@@ -116,6 +128,7 @@ pub enum ContentUpdateStatus {
     ErrorInvalidHash,
     AlreadyUpToDate,
     Modrinth,
+    Curseforge
 }
 
 impl ContentUpdateStatus {

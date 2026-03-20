@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Range, rc::Rc, sync::{atomic::AtomicBool, Arc}, time::Duration};
+use std::{cell::RefCell, collections::BTreeSet, ops::Range, rc::Rc, sync::{atomic::AtomicBool, Arc}, time::Duration};
 
 use bridge::{
     instance::{ContentType, ContentUpdateContext, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID},
@@ -7,6 +7,7 @@ use bridge::{
     modal_action::ModalAction,
     serial::AtomicOptionSerial,
 };
+use enumset::EnumSet;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Selectable, Sizable, StyledExt, WindowExt,
@@ -22,7 +23,7 @@ use gpui_component::{
     tooltip::Tooltip,
     v_flex,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use schema::{content::ContentSource, loader::Loader, modrinth::{
     ModrinthHit, ModrinthProjectType, ModrinthSearchRequest, ModrinthSearchResult, ModrinthSideRequirement
 }};
@@ -88,13 +89,14 @@ pub struct ModrinthSearchPage {
     install_for: Option<InstanceID>,
     filter_version: Option<Ustr>,
     loading: Option<Subscription>,
+    pending_reload: bool,
     pending_clear: bool,
     total_hits: usize,
     search_state: Entity<InputState>,
     _search_input_subscription: Subscription,
     _delayed_clear_task: Task<()>,
-    filter_loaders: FxHashSet<Loader>,
-    filter_categories: FxHashSet<&'static str>,
+    filter_loaders: EnumSet<Loader>,
+    filter_categories: BTreeSet<&'static str>,
     show_categories: Arc<AtomicBool>,
     can_install_latest: bool,
     installed_mods_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
@@ -217,13 +219,14 @@ impl ModrinthSearchPage {
             install_for,
             filter_version,
             loading: None,
+            pending_reload: false,
             pending_clear: false,
             total_hits: 1,
             search_state,
             _search_input_subscription,
             _delayed_clear_task: Task::ready(()),
-            filter_loaders: FxHashSet::default(),
-            filter_categories: FxHashSet::default(),
+            filter_loaders: Default::default(),
+            filter_categories: Default::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
             can_install_latest,
             installed_mods_by_project,
@@ -411,6 +414,7 @@ impl ModrinthSearchPage {
                             }
                         }
                         ContentSource::Manual => {}
+                        ContentSource::CurseforgeProject { .. } => {}
                     }
                 }
 
@@ -496,7 +500,7 @@ impl ModrinthSearchPage {
         self.reload(cx);
     }
 
-    fn set_filter_loaders(&mut self, loaders: FxHashSet<Loader>, _window: &mut Window, cx: &mut Context<Self>) {
+    fn set_filter_loaders(&mut self, loaders: EnumSet<Loader>, _window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_loaders == loaders {
             return;
         }
@@ -504,7 +508,7 @@ impl ModrinthSearchPage {
         self.reload(cx);
     }
 
-    fn set_filter_categories(&mut self, categories: FxHashSet<&'static str>, _window: &mut Window, cx: &mut Context<Self>) {
+    fn set_filter_categories(&mut self, categories: BTreeSet<&'static str>, _window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_categories == categories {
             return;
         }
@@ -513,6 +517,11 @@ impl ModrinthSearchPage {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        if self.loading.is_some() {
+            self.pending_reload = true;
+            return;
+        }
+
         self.pending_clear = true;
         self.loading = None;
 
@@ -535,6 +544,7 @@ impl ModrinthSearchPage {
         if self.loading.is_some() {
             return;
         }
+        self.pending_reload = false;
         self.search_error = None;
 
         let query = if self.last_search.is_empty() {
@@ -545,7 +555,7 @@ impl ModrinthSearchPage {
 
         let config = InterfaceConfig::get(cx);
         let filter_project_type = config.modrinth_page_project_type;
-        let modrinth_filter_version = config.modrinth_filter_version;
+        let modrinth_filter_version = config.content_filter_version;
 
         let project_type = match filter_project_type {
             ModrinthProjectType::Mod | ModrinthProjectType::Other => "mod",
@@ -575,7 +585,7 @@ impl ModrinthSearchPage {
             facets.push_str(",[");
 
             let mut first = true;
-            for loader in &self.filter_loaders {
+            for loader in self.filter_loaders.iter() {
                 if first {
                     first = false;
                 } else {
@@ -625,7 +635,9 @@ impl ModrinthSearchPage {
                     match result {
                         FrontendMetadataResult::Loading => {},
                         FrontendMetadataResult::Loaded(result) => {
-                            page.apply_search_data(result);
+                            if !page.pending_reload {
+                                page.apply_search_data(result);
+                            }
                             page.loading = None;
                             cx.notify();
                         },
@@ -634,6 +646,9 @@ impl ModrinthSearchPage {
                             page.loading = None;
                             cx.notify();
                         },
+                    }
+                    if page.pending_reload {
+                        page.reload(cx);
                     }
                 });
                 self.loading = Some(subscription);
@@ -1332,14 +1347,14 @@ impl Render for ModrinthSearchPage {
                 Tooltip::new(ts!("instance.content.install.always_latest")).build(window, cx)
             };
 
-            let install_latest = !InterfaceConfig::get(cx).modrinth_install_normally;
+            let install_latest = InterfaceConfig::get(cx).content_install_latest;
             top_bar = top_bar.child(Checkbox::new("install-latest")
                 .label(ts!("instance.content.install.latest"))
                 .tooltip(tooltip)
                 .checked(install_latest)
                 .on_click({
                     move |value, _, cx| {
-                        InterfaceConfig::get_mut(cx).modrinth_install_normally = !*value;
+                        InterfaceConfig::get_mut(cx).content_install_latest = *value;
                     }
                 })
             );
@@ -1387,9 +1402,9 @@ impl Render for ModrinthSearchPage {
                 .layout(Axis::Vertical)
                 .outline()
                 .multiple(true)
-                .child(Button::new("fabric").label(ts!("modrinth.category.fabric")).selected(self.filter_loaders.contains(&Loader::Fabric)))
-                .child(Button::new("forge").label(ts!("modrinth.category.forge")).selected(self.filter_loaders.contains(&Loader::Forge)))
-                .child(Button::new("neoforge").label(ts!("modrinth.category.neoforge")).selected(self.filter_loaders.contains(&Loader::NeoForge)))
+                .child(Button::new("fabric").label(ts!("modrinth.category.fabric")).selected(self.filter_loaders.contains(Loader::Fabric)))
+                .child(Button::new("forge").label(ts!("modrinth.category.forge")).selected(self.filter_loaders.contains(Loader::Forge)))
+                .child(Button::new("neoforge").label(ts!("modrinth.category.neoforge")).selected(self.filter_loaders.contains(Loader::NeoForge)))
                 .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
                     page.set_filter_loaders(clicked.iter().filter_map(|index| match index {
                         0 => Some(Loader::Fabric),
@@ -1437,7 +1452,7 @@ impl Render for ModrinthSearchPage {
                                 .when_some(icon_for(id), |this, icon| {
                                     this.child(Icon::empty().path(icon))
                                 })
-                                .child(Label::new(ts_short!(format!("modrinth.category.{}", id)))))
+                                .child(ts_short!(format!("modrinth.category.{}", id))))
                             .selected(self.filter_categories.contains(id))
                     }))
                     .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
@@ -1457,10 +1472,10 @@ impl Render for ModrinthSearchPage {
             let title = format!("{}: {}", ts!("instance.version"), filter_version);
             Some(Button::new("filter_version").label(title)
                 .outline()
-                .selected(InterfaceConfig::get(cx).modrinth_filter_version)
+                .selected(InterfaceConfig::get(cx).content_filter_version)
                 .on_click(cx.listener(|page, _, _, cx| {
                     let cfg = InterfaceConfig::get_mut(cx);
-                    cfg.modrinth_filter_version = !cfg.modrinth_filter_version;
+                    cfg.content_filter_version = !cfg.content_filter_version;
                     page.reload(cx);
                 })))
         } else {
@@ -1471,7 +1486,7 @@ impl Render for ModrinthSearchPage {
             .h_full()
             .overflow_y_scrollbar()
             .w_auto()
-            .min_w(px(170.0))
+            .min_w(px(200.0))
             .p_3()
             .gap_3()
             .child(type_button_group)

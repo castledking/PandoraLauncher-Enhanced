@@ -17,7 +17,7 @@ use gpui_component::{
     notification::{Notification, NotificationType},
     v_flex,
 };
-use schema::{content::ContentSource, loader::Loader, modrinth::ModrinthProjectType};
+use schema::{content::ContentSource, curseforge::CurseforgeClassId, loader::Loader, modrinth::ModrinthProjectType};
 use ustr::Ustr;
 
 use crate::{component::content_list::ContentListDelegate, entity::instance::InstanceEntry, interface_config::InterfaceConfig, root, ts, ui::PageType};
@@ -135,7 +135,16 @@ impl Render for InstanceResourcePacksSubpage {
                     root::switch_page(page, path, window, cx);
                 }
             }))
-            .child(Button::new("addfile").label("Add from file").success().compact().small().on_click({
+            .child(Button::new("addcf").label(ts!("instance.content.install.from_curseforge")).success().compact().small().on_click({
+                let instance_name = self.instance_name.clone();
+                move |_, window, cx| {
+                    let page = crate::ui::PageType::Curseforge { installing_for: Some(instance_name.clone()) };
+                    InterfaceConfig::get_mut(cx).curseforge_page_class_id = CurseforgeClassId::Resourcepack;
+                    let path = &[PageType::Instances, PageType::InstancePage { name: instance_name.clone() }];
+                    root::switch_page(page, path, window, cx);
+                }
+            }))
+            .child(Button::new("addfile").label(ts!("instance.content.install.from_file")).success().compact().small().on_click({
                 cx.listener(move |this, _, window, cx| {
                     let receiver = cx.prompt_for_paths(PathPromptOptions {
                         files: true,

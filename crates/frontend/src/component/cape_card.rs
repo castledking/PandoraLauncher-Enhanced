@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 pub fn render_cape_card(
     cape_id: Arc<str>,
-    is_active: bool,
+    is_selected: bool,
+    is_equipped: bool,
     _front_image: Option<Arc<RenderImage>>,
     back_image: Option<Arc<RenderImage>>,
     label: &'static str,
@@ -16,7 +17,7 @@ pub fn render_cape_card(
         .bg(gpui::rgba(0x2d2d35ff))
         .rounded_lg()
         .border_2()
-        .border_color(if is_active {
+        .border_color(if is_selected {
             gpui::rgba(0x00ff00ff)
         } else {
             gpui::rgba(0x00000000)
@@ -59,7 +60,7 @@ pub fn render_cape_card(
                     )
                 })
         })
-        .when(is_active, |this| {
+        .when(is_equipped || is_selected, |this| {
             this.child(
                 div()
                     .absolute()
@@ -70,7 +71,7 @@ pub fn render_cape_card(
                     .text_xs()
                     .px_1()
                     .rounded_sm()
-                    .child("Equipped"),
+                    .child(if is_equipped { "Equipped" } else { "Selected" }),
             )
         })
 }

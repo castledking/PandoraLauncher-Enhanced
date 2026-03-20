@@ -44,6 +44,9 @@ pub enum ContentDownload {
         project_id: Arc<str>,
         version_id: Option<Arc<str>>,
     },
+    Curseforge {
+        project_id: u32,
+    },
     Url {
         url: Arc<str>,
         sha1: Arc<str>,

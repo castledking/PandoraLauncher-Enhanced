@@ -2,7 +2,7 @@ use std::{collections::HashMap, io::Write, path::Path, sync::Arc, time::Duration
 
 use gpui::{App, SharedString, Task};
 use rand::RngCore;
-use schema::modrinth::ModrinthProjectType;
+use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType};
 use serde::{Deserialize, Serialize};
 
 use crate::{pages::instance::instance_page::InstanceSubpageType, ts, ui::PageType};
@@ -19,7 +19,11 @@ fn default_modrinth_filter_version() -> bool {
     true
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+fn default_content_filter_version() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub active_theme: SharedString,
@@ -35,12 +39,17 @@ pub struct InterfaceConfig {
     pub quick_delete_mods: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub quick_delete_instance: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub content_install_latest: bool,
     pub modrinth_install_normally: bool,
     #[serde(default = "default_modrinth_filter_version", deserialize_with = "schema::try_deserialize")]
     pub modrinth_filter_version: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(default = "default_content_filter_version", deserialize_with = "schema::try_deserialize")]
+    pub content_filter_version: bool,
+    #[serde(default = "default_modrinth_project_type", deserialize_with = "schema::try_deserialize")]
     pub modrinth_page_project_type: ModrinthProjectType,
+    #[serde(default = "default_curseforge_class_id", deserialize_with = "schema::try_deserialize")]
+    pub curseforge_page_class_id: CurseforgeClassId,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_main_window_on_launch: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -52,6 +61,39 @@ pub struct InterfaceConfig {
     pub datapack_world_by_instance: HashMap<String, String>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_subpage: InstanceSubpageType,
+}
+
+fn default_modrinth_project_type() -> ModrinthProjectType {
+    ModrinthProjectType::Mod
+}
+
+fn default_curseforge_class_id() -> CurseforgeClassId {
+    CurseforgeClassId::Mod
+}
+
+impl Default for InterfaceConfig {
+    fn default() -> Self {
+        Self {
+            active_theme: Default::default(),
+            main_window_bounds: Default::default(),
+            sidebar_width: Default::default(),
+            main_page: Default::default(),
+            page_path: Default::default(),
+            quick_delete_mods: Default::default(),
+            quick_delete_instance: Default::default(),
+            content_install_latest: true,
+            modrinth_install_normally: Default::default(),
+            modrinth_filter_version: default_modrinth_filter_version(),
+            content_filter_version: default_content_filter_version(),
+            modrinth_page_project_type: default_modrinth_project_type(),
+            curseforge_page_class_id: default_curseforge_class_id(),
+            hide_main_window_on_launch: Default::default(),
+            show_snapshots_in_create_instance: Default::default(),
+            instances_view_mode: Default::default(),
+            datapack_world_by_instance: Default::default(),
+            instance_subpage: Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

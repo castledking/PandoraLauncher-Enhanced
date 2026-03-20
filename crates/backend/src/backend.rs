@@ -17,7 +17,15 @@ use indexmap::IndexSet;
 use parking_lot::RwLock;
 use reqwest::{StatusCode, redirect::Policy};
 use rustc_hash::{FxHashMap, FxHashSet};
-use schema::{auxiliary::AuxiliaryContentMeta, backend_config::{BackendConfig, SyncTargets, ProxyConfig}, instance::InstanceConfiguration, loader::Loader, modrinth::ModrinthSideRequirement};
+use schema::{
+    auxiliary::AuxiliaryContentMeta,
+    backend_config::{BackendConfig, ProxyConfig, SyncTargets},
+    content::ContentSource,
+    curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest},
+    instance::InstanceConfiguration,
+    loader::Loader,
+    modrinth::ModrinthSideRequirement,
+};
 use sha1::{Digest, Sha1};
 use strum::IntoEnumIterator;
 use tokio::sync::{mpsc::Receiver, OnceCell};
@@ -26,7 +34,14 @@ use uuid::Uuid;
 use ustr::Ustr;
 
 use crate::{
-    account::{BackendAccountInfo, MinecraftLoginInfo}, directories::LauncherDirectories, id_slab::IdSlab, instance::{Instance, ContentFolder}, launch::Launcher, metadata::{items::MinecraftVersionManifestMetadataItem, manager::MetadataManager}, mod_metadata::ModMetadataManager, persistent::Persistent
+    account::{BackendAccountInfo, MinecraftLoginInfo},
+    directories::LauncherDirectories,
+    id_slab::IdSlab,
+    instance::{ContentFolder, Instance},
+    launch::Launcher,
+    metadata::{items::{CurseforgeGetFilesMetadataItem, MinecraftVersionManifestMetadataItem}, manager::MetadataManager},
+    mod_metadata::ModMetadataManager,
+    persistent::Persistent,
 };
 
 fn build_http_clients(user_agent: &str, proxy_config: &ProxyConfig, proxy_password: Option<&str>) -> (reqwest::Client, reqwest::Client) {
@@ -438,6 +453,7 @@ impl BackendState {
 
     async fn handle_tick(&mut self) {
         self.meta.expire().await;
+        self.mod_metadata_manager.write_changes();
 
         let mut instance_state = self.instance_state.write();
         for instance in instance_state.instances.iter_mut() {
@@ -760,6 +776,7 @@ impl BackendState {
         struct HashedDownload {
             sha1: Arc<str>,
             path: Arc<str>,
+            add_content_folder_to_path: bool,
         }
 
         struct ModpackInstall {
@@ -839,8 +856,91 @@ impl BackendState {
                         HashedDownload {
                             sha1: download.hashes.sha1.clone(),
                             path: download.path.clone(),
+                            add_content_folder_to_path: false,
                         }
                     }).collect(),
+                    aux_path: crate::pandora_aux_path_for_content(&summary),
+                    overrides: overrides.clone(),
+                });
+            } else if let ContentType::CurseforgeModpack { files, summaries, overrides, .. } = &summary.content_summary.extra {
+                let mut file_ids = Vec::new();
+                let mut hashed_downloads = Vec::new();
+
+                for (index, file) in files.iter().enumerate() {
+                    let Some((_, Some(file_info))) = summaries.get(index) else {
+                        file_ids.push(file.file_id);
+                        continue;
+                    };
+
+                    let file_hash_as_str = hex::encode(file_info.hash);
+                    hashed_downloads.push(HashedDownload {
+                        sha1: file_hash_as_str.into(),
+                        path: file_info.filename.clone(),
+                        add_content_folder_to_path: true,
+                    });
+                }
+
+                if !file_ids.is_empty() {
+                    if let Ok(files) = self.meta.fetch(&CurseforgeGetFilesMetadataItem(&CurseforgeGetFilesRequest {
+                        file_ids,
+                    })).await {
+                        let mut files_to_install = Vec::new();
+
+                        for file in files.data.iter() {
+                            let sha1 = file.hashes.iter()
+                                .find(|hash| hash.algo == 1)
+                                .map(|hash| &hash.value);
+                            let Some(sha1) = sha1 else {
+                                continue;
+                            };
+
+                            let mut hash = [0u8; 20];
+                            let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                                log::warn!("File {} has invalid sha1: {}", file.file_name, sha1);
+                                continue;
+                            };
+
+                            self.mod_metadata_manager.set_cached_curseforge_info(file.id, CachedCurseforgeFileInfo {
+                                hash,
+                                filename: file.file_name.clone(),
+                                disabled_third_party_downloads: file.download_url.is_none(),
+                            });
+
+                            let Some(download_url) = &file.download_url else {
+                                continue;
+                            };
+
+                            hashed_downloads.push(HashedDownload {
+                                sha1: sha1.clone(),
+                                path: file.file_name.clone(),
+                                add_content_folder_to_path: true,
+                            });
+                            files_to_install.push(ContentInstallFile {
+                                replace_old: None,
+                                path: ContentInstallPath::Automatic,
+                                download: ContentDownload::Url {
+                                    url: download_url.clone(),
+                                    sha1: sha1.clone(),
+                                    size: file.file_length as usize,
+                                },
+                                content_source: ContentSource::CurseforgeProject { project_id: file.mod_id },
+                            });
+                        }
+
+                        if !files_to_install.is_empty() {
+                            self.install_content(ContentInstall {
+                                target: bridge::install::InstallTarget::Library,
+                                loader_hint: loader,
+                                version_hint: Some(minecraft_version.into()),
+                                datapack_world: None,
+                                files: files_to_install.into(),
+                            }, modal_action.clone()).await;
+                        }
+                    }
+                }
+
+                modpack_installs.push(ModpackInstall {
+                    hashed_downloads,
                     aux_path: crate::pandora_aux_path_for_content(&summary),
                     overrides: overrides.clone(),
                 });
@@ -893,17 +993,53 @@ impl BackendState {
             }
 
             for file in modpack_install.hashed_downloads {
+                if let Some(aux) = &aux {
+                    if let Some(metadata) = self.mod_metadata_manager.get_cached_by_sha1(&*file.sha1) {
+                        if let Some(id) = &metadata.id && aux.disabled_children.disabled_ids.contains(id) {
+                            continue;
+                        }
+                        if let Some(name) = &metadata.name && aux.disabled_children.disabled_names.contains(name) {
+                            continue;
+                        }
+                    }
+                    if aux.disabled_children.disabled_filenames.contains(&file.path)
+                        || aux.disabled_children.deleted_filenames.contains(&file.path)
+                    {
+                        continue;
+                    }
+                }
+
                 let mut expected_hash = [0u8; 20];
                 let Ok(_) = hex::decode_to_slice(&*file.sha1, &mut expected_hash) else {
                     continue;
                 };
-                let Some(dest_path) = SafePath::new(&file.path) else {
+                let Some(mut dest_path) = SafePath::new(&file.path) else {
                     continue;
                 };
 
                 let path = crate::create_content_library_path(content_library_dir, expected_hash, dest_path.extension());
 
-                if file.path.starts_with("mods/") && file.path.ends_with(".jar") {
+                if file.add_content_folder_to_path {
+                    let Some(summary) = self.mod_metadata_manager.get_path(&path) else {
+                        continue;
+                    };
+                    match summary.extra {
+                        ContentType::Fabric
+                        | ContentType::Forge
+                        | ContentType::LegacyForge
+                        | ContentType::NeoForge
+                        | ContentType::JavaModule
+                        | ContentType::ModrinthModpack { .. }
+                        | ContentType::CurseforgeModpack { .. } => {
+                            dest_path = SafePath::new(&format!("mods/{}", dest_path.as_str())).unwrap();
+                        }
+                        ContentType::ResourcePack => {
+                            dest_path = SafePath::new(&format!("resourcepacks/{}", dest_path.as_str())).unwrap();
+                        }
+                    }
+                }
+
+                if dest_path.starts_with("mods") && dest_path.extension() == Some("jar") {
                     if let Some(filename) = dest_path.file_name() {
                         let filename = format!("pandora.{filename}");
                         let hidden_dest_path = mod_dir.join(filename);

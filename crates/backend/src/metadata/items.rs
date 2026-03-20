@@ -4,7 +4,25 @@ use std::{
 
 use reqwest::RequestBuilder;
 use schema::{
-    assets_index::AssetsIndex, fabric_launch::FabricLaunch, fabric_loader_manifest::{FABRIC_LOADER_MANIFEST_URL, FabricLoaderManifest}, forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment}, java_runtime_component::JavaRuntimeComponentManifest, java_runtimes::{JAVA_RUNTIMES_URL, JavaRuntimes}, maven::MavenMetadataXml, modrinth::{MODRINTH_SEARCH_URL, ModrinthLoader, ModrinthProjectVersion, ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthSearchRequest, ModrinthSearchResult, ModrinthVersionFileUpdateResult}, version::MinecraftVersion, version_manifest::{MOJANG_VERSION_MANIFEST_URL, MinecraftVersionLink, MinecraftVersionManifest}
+    assets_index::AssetsIndex,
+    curseforge::{
+        CURSEFORGE_SEARCH_URL, CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest,
+        CurseforgeGetModFilesResult, CurseforgeSearchRequest, CurseforgeSearchResult,
+        MINECRAFT_GAME_ID,
+    },
+    fabric_launch::FabricLaunch,
+    fabric_loader_manifest::{FABRIC_LOADER_MANIFEST_URL, FabricLoaderManifest},
+    forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment},
+    java_runtime_component::JavaRuntimeComponentManifest,
+    java_runtimes::{JAVA_RUNTIMES_URL, JavaRuntimes},
+    maven::MavenMetadataXml,
+    modrinth::{
+        MODRINTH_SEARCH_URL, ModrinthLoader, ModrinthProjectVersion,
+        ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthSearchRequest,
+        ModrinthSearchResult, ModrinthVersionFileUpdateResult,
+    },
+    version::MinecraftVersion,
+    version_manifest::{MOJANG_VERSION_MANIFEST_URL, MinecraftVersionLink, MinecraftVersionManifest},
 };
 use serde::Serialize;
 use ustr::Ustr;
@@ -477,5 +495,93 @@ impl MetadataItem for ForgeInstallerMavenMetadataItem {
         });
 
         Ok(ForgeMavenManifest(versions.into_iter().rev().collect()))
+    }
+}
+#[derive(Debug)]
+pub struct CurseforgeSearchMetadataItem<'a>(pub &'a CurseforgeSearchRequest);
+
+impl<'a> MetadataItem for CurseforgeSearchMetadataItem<'a> {
+    type T = CurseforgeSearchResult;
+
+    fn request(&self, client: &reqwest::Client) -> RequestBuilder {
+        client.get(CURSEFORGE_SEARCH_URL)
+            .query(self.0)
+            .query(&[("gameId", MINECRAFT_GAME_ID), ("sortField", 2)])
+            .query(&[("sortOrder", "desc")])
+            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS")
+    }
+
+    fn expires(&self) -> bool {
+        true
+    }
+
+    fn state(&self, states: &mut MetadataManagerStates) -> MetaLoadStateWrapper<Self::T> {
+        states.curseforge_search.entry(self.0.clone()).or_default().clone()
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {
+        Ok(serde_json::from_slice(bytes)?)
+    }
+}
+
+#[derive(Debug)]
+pub struct CurseforgeGetModFilesMetadataItem<'a>(pub &'a CurseforgeGetModFilesRequest);
+
+impl<'a> MetadataItem for CurseforgeGetModFilesMetadataItem<'a> {
+    type T = CurseforgeGetModFilesResult;
+
+    fn request(&self, client: &reqwest::Client) -> RequestBuilder {
+        let mut req = client.get(format!("https://api.curseforge.com/v1/mods/{}/files", self.0.mod_id))
+            .query(&[("gameId", MINECRAFT_GAME_ID)])
+            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS");
+
+        if let Some(mod_loader_type) = self.0.mod_loader_type {
+            req = req.query(&[("modLoaderType", mod_loader_type)]);
+        }
+        if let Some(page_size) = self.0.page_size {
+            req = req.query(&[("pageSize", page_size)]);
+        }
+        if let Some(game_version) = self.0.game_version {
+            req = req.query(&[("gameVersion", &game_version)]);
+        }
+
+        req
+    }
+
+    fn expires(&self) -> bool {
+        true
+    }
+
+    fn state(&self, states: &mut MetadataManagerStates) -> MetaLoadStateWrapper<Self::T> {
+        states.curseforge_get_mod_files.entry(self.0.clone()).or_default().clone()
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {
+        Ok(serde_json::from_slice(bytes)?)
+    }
+}
+
+#[derive(Debug)]
+pub struct CurseforgeGetFilesMetadataItem<'a>(pub &'a CurseforgeGetFilesRequest);
+
+impl<'a> MetadataItem for CurseforgeGetFilesMetadataItem<'a> {
+    type T = CurseforgeGetModFilesResult;
+
+    fn request(&self, client: &reqwest::Client) -> RequestBuilder {
+        client.post("https://api.curseforge.com/v1/mods/files")
+            .json(self.0)
+            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS")
+    }
+
+    fn expires(&self) -> bool {
+        true
+    }
+
+    fn state(&self, states: &mut MetadataManagerStates) -> MetaLoadStateWrapper<Self::T> {
+        states.curseforge_get_files.entry(self.0.clone()).or_default().clone()
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {
+        Ok(serde_json::from_slice(bytes)?)
     }
 }

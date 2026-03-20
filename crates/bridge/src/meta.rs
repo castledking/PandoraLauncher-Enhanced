@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use schema::{fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest}, modrinth::{ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthSearchRequest, ModrinthSearchResult}, version_manifest::MinecraftVersionManifest};
+use schema::{curseforge::{CurseforgeGetModFilesRequest, CurseforgeGetModFilesResult, CurseforgeSearchRequest, CurseforgeSearchResult}, fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest}, modrinth::{ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthSearchRequest, ModrinthSearchResult}, version_manifest::MinecraftVersionManifest};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MetadataRequest {
@@ -10,6 +10,8 @@ pub enum MetadataRequest {
     NeoforgeMavenManifest,
     ModrinthSearch(ModrinthSearchRequest),
     ModrinthProjectVersions(ModrinthProjectVersionsRequest),
+    CurseforgeSearch(CurseforgeSearchRequest),
+    CurseforgeGetModFiles(CurseforgeGetModFilesRequest),
 }
 
 #[derive(Debug)]
@@ -20,4 +22,6 @@ pub enum MetadataResult {
     NeoforgeMavenManifest(Arc<NeoforgeMavenManifest>),
     ModrinthSearchResult(Arc<ModrinthSearchResult>),
     ModrinthProjectVersionsResult(Arc<ModrinthProjectVersionsResult>),
+    CurseforgeSearchResult(Arc<CurseforgeSearchResult>),
+    CurseforgeGetModFilesResult(Arc<CurseforgeGetModFilesResult>),
 }

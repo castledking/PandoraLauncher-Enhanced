@@ -5,12 +5,12 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::{Button, ButtonVariants}, h_flex, tab::{Tab, TabBar}, v_flex
+    WindowExt, button::{Button, ButtonGroup, ButtonVariants}, h_flex, tab::{Tab, TabBar}, v_flex
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entity::{DataEntities, instance::InstanceEntry}, icon::PandoraIcon, interface_config::InterfaceConfig, pages::{instance::{logs_subpage::InstanceLogsSubpage, mods_subpage::InstanceModsSubpage, quickplay_subpage::InstanceQuickplaySubpage, resource_packs_subpage::InstanceResourcePacksSubpage, settings_subpage::InstanceSettingsSubpage}, page::{Page, page_layout}}, root, ts, ui::PageType
+    entity::{DataEntities, instance::InstanceEntry}, icon::PandoraIcon, interface_config::InterfaceConfig, pages::{instance::{logs_subpage::InstanceLogsSubpage, mods_subpage::InstanceModsSubpage, quickplay_subpage::InstanceQuickplaySubpage, resource_packs_subpage::InstanceResourcePacksSubpage, settings_subpage::InstanceSettingsSubpage}, page::{Page, page_layout}}, root, ts
 };
 
 pub struct InstancePage {
@@ -49,18 +49,77 @@ impl Page for InstancePage {
                     move |_, window, cx| {
                         root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
                     },
-                )
+                ).into_any_element()
             },
             InstanceStatus::Launching => {
-                Button::new("launching").warning().icon(PandoraIcon::Loader).label(ts!("instance.start.starting"))
+                Button::new("launching").warning().icon(PandoraIcon::Loader).label(ts!("instance.start.starting")).into_any_element()
             },
-            InstanceStatus::Running => Button::new("kill_instance")
-                .danger()
-                .icon(PandoraIcon::Close)
-                .label(ts!("instance.kill"))
-                .on_click(move |_, _, _| {
-                    backend_handle.send(MessageToBackend::KillInstance { id });
-                }),
+            InstanceStatus::Running => ButtonGroup::new("running")
+                .child(
+                    Button::new("kill_instance")
+                        .danger()
+                        .icon(PandoraIcon::Close)
+                        .label(ts!("instance.kill"))
+                        .on_click({
+                            let backend_handle = backend_handle.clone();
+                            move |_, _, _| {
+                                backend_handle.send(MessageToBackend::KillInstance { id });
+                            }
+                        }),
+                )
+                .child(
+                    Button::new("start_again")
+                        .success()
+                        .icon(PandoraIcon::Play)
+                        .label(ts!("instance.start.label"))
+                        .on_click(move |_, window, cx| {
+                            let name = name.clone();
+                            let backend_handle = backend_handle.clone();
+                            window.open_dialog(cx, move |dialog, _, _| {
+                                dialog
+                                    .title("Instance already running")
+                                    .overlay_closable(false)
+                                    .flex()
+                                    .line_height(rems(1.2))
+                                    .child("Starting it again may cause malfunction or corrupt your saved worlds.")
+                                    .child(div().h_2())
+                                    .child("We cannot take responsibility for any issues if you choose to start another game. Would you like to continue anyway?")
+                                    .footer(
+                                        h_flex()
+                                            .gap_2()
+                                            .w_full()
+                                            .child(
+                                                Button::new("cancel")
+                                                    .label("Cancel")
+                                                    .on_click(|_, window, cx| {
+                                                        window.close_dialog(cx);
+                                                    })
+                                                    .flex_grow(),
+                                            )
+                                            .child(
+                                                Button::new("ok")
+                                                    .success()
+                                                    .label("Start anyway")
+                                                    .on_click({
+                                                        let name = name.clone();
+                                                        let backend_handle = backend_handle.clone();
+                                                        move |_, window, cx| {
+                                                            window.close_dialog(cx);
+                                                            root::start_instance(
+                                                                id,
+                                                                name.clone(),
+                                                                None,
+                                                                &backend_handle,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }),
+                                            ),
+                                    )
+                            });
+                        }),
+                ).into_any_element(),
         };
 
         let open_dot_minecraft_button = Button::new("open_dot_minecraft")

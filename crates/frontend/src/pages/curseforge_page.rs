@@ -1,0 +1,1141 @@
+use std::{collections::BTreeSet, ops::Range, sync::{Arc, atomic::AtomicBool}, time::Duration};
+
+use bridge::{install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{ContentUpdateStatus, InstanceContentID, InstanceID}, message::{AtomicBridgeDataLoadState, MessageToBackend}, meta::MetadataRequest, modal_action::ModalAction, serial::AtomicOptionSerial};
+use enumset::EnumSet;
+use gpui::{prelude::*, *};
+use gpui_component::{
+    ActiveTheme, Selectable, Sizable, WindowExt, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, tooltip::Tooltip, v_flex
+};
+use rustc_hash::{FxHashMap, FxHashSet};
+use schema::{content::ContentSource, curseforge::{CurseforgeClassId, CurseforgeHit, CurseforgeSearchRequest, CurseforgeSearchResult}, loader::Loader};
+use ustr::Ustr;
+
+use crate::{
+    component::error_alert::ErrorAlert, entity::{
+        DataEntities, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
+    }, icon::PandoraIcon, interface_config::InterfaceConfig, pages::page::Page, ts
+};
+
+pub struct CurseforgeSearchPage {
+    data: DataEntities,
+    hits: Vec<CurseforgeHit>,
+    install_for: Option<InstanceID>,
+    filter_version: Option<Ustr>,
+    loading: Option<Subscription>,
+    pending_reload: bool,
+    pending_clear: bool,
+    total_hits: u64,
+    search_state: Entity<InputState>,
+    _search_input_subscription: Subscription,
+    _delayed_clear_task: Task<()>,
+    filter_loaders: EnumSet<Loader>,
+    filter_categories: BTreeSet<u32>,
+    show_categories: Arc<AtomicBool>,
+    can_install_latest: bool,
+    installed_mods_by_project: FxHashMap<u32, Vec<InstalledContent>>,
+    installed_resourcepacks_by_project: FxHashMap<u32, Vec<InstalledContent>>,
+    installed_shaders_by_filename_prefix: FxHashSet<Arc<str>>,
+    last_search: Arc<str>,
+    scroll_handle: UniformListScrollHandle,
+    search_error: Option<SharedString>,
+    image_cache: Entity<RetainAllImageCache>,
+    mods_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>,
+    resource_packs_load_state: Option<(Arc<AtomicBridgeDataLoadState>, AtomicOptionSerial)>,
+    _instance_mods_subscription: Option<Subscription>,
+    _instance_resourcepacks_subscription: Option<Subscription>,
+    _shader_refresh_task: Option<Task<()>>,
+}
+
+pub struct InstalledContent {
+    pub content_id: InstanceContentID,
+    pub status: ContentUpdateStatus,
+}
+
+impl CurseforgeSearchPage {
+    pub fn new(install_for: Option<InstanceID>, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut project_type = InterfaceConfig::get(cx).curseforge_page_class_id;
+        if project_type == CurseforgeClassId::Other {
+            project_type = CurseforgeClassId::Mod;
+            InterfaceConfig::get_mut(cx).curseforge_page_class_id = CurseforgeClassId::Mod;
+        }
+
+        let search_state = cx.new(|cx| {
+            let placeholder = match project_type {
+                CurseforgeClassId::Mod => ts!("instance.content.search.mod"),
+                CurseforgeClassId::Modpack => ts!("instance.content.search.modpack"),
+                CurseforgeClassId::Resourcepack => ts!("instance.content.search.resourcepack"),
+                CurseforgeClassId::Shader => ts!("instance.content.search.shader"),
+                _ => ts!("instance.content.search.file"),
+            };
+            InputState::new(window, cx).placeholder(placeholder).clean_on_escape()
+        });
+
+        let mut can_install_latest = false;
+        let installed_mods_by_project: FxHashMap<u32, Vec<InstalledContent>> = FxHashMap::default();
+        let installed_resourcepacks_by_project: FxHashMap<u32, Vec<InstalledContent>> = FxHashMap::default();
+        let installed_shaders_by_filename_prefix: FxHashSet<Arc<str>> = FxHashSet::default();
+        let mut filter_version = None;
+
+        let mut mods_load_state = None;
+        let mut resource_packs_load_state = None;
+        let mut _instance_mods_subscription = None;
+        let mut _instance_resourcepacks_subscription = None;
+        let mut _shader_refresh_task = None;
+        if let Some(install_for) = install_for {
+            if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
+                let instance = entry.read(cx);
+                can_install_latest = true;
+                filter_version = Some(instance.configuration.minecraft_version);
+                mods_load_state = Some((instance.mods_state.clone(), AtomicOptionSerial::default()));
+                resource_packs_load_state = Some((instance.resource_packs_state.clone(), AtomicOptionSerial::default()));
+                let mods = instance.mods.clone();
+                let resource_packs = instance.resource_packs.clone();
+
+                _instance_mods_subscription = Some(cx.observe(&mods, |page, _, cx| {
+                    page.refresh_installed_content_from_instance(cx);
+                    cx.notify();
+                }));
+
+                _instance_resourcepacks_subscription = Some(cx.observe(&resource_packs, |page, _, cx| {
+                    page.refresh_installed_content_from_instance(cx);
+                    cx.notify();
+                }));
+
+                _shader_refresh_task = Some(cx.spawn(async move |page, cx| {
+                    loop {
+                        cx.background_executor().timer(Duration::from_secs(2)).await;
+                        let _ = page.update(cx, |page, cx| {
+                            page.refresh_installed_content_from_instance(cx);
+                            cx.notify();
+                        });
+                    }
+                }));
+            }
+        }
+
+        let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
+
+        let mut page = Self {
+            data: data.clone(),
+            hits: Vec::new(),
+            install_for,
+            filter_version,
+            loading: None,
+            pending_reload: false,
+            pending_clear: false,
+            total_hits: 1,
+            search_state,
+            _search_input_subscription,
+            _delayed_clear_task: Task::ready(()),
+            filter_loaders: Default::default(),
+            filter_categories: Default::default(),
+            show_categories: Arc::new(AtomicBool::new(false)),
+            can_install_latest,
+            installed_mods_by_project,
+            installed_resourcepacks_by_project,
+            installed_shaders_by_filename_prefix,
+            last_search: Arc::from(""),
+            scroll_handle: UniformListScrollHandle::new(),
+            search_error: None,
+            image_cache: RetainAllImageCache::new(cx),
+            mods_load_state,
+            resource_packs_load_state,
+            _instance_mods_subscription,
+            _instance_resourcepacks_subscription,
+            _shader_refresh_task,
+        };
+        page.refresh_installed_content_from_instance(cx);
+        page.load_more(cx);
+        page
+    }
+
+    fn refresh_installed_content_from_instance(&mut self, cx: &App) {
+        self.installed_mods_by_project.clear();
+        self.installed_resourcepacks_by_project.clear();
+        self.installed_shaders_by_filename_prefix.clear();
+
+        let Some(install_for) = self.install_for else {
+            return;
+        };
+        let Some(entry) = self.data.instances.read(cx).entries.get(&install_for) else {
+            return;
+        };
+
+        let instance = entry.read(cx);
+        let loader = instance.configuration.loader;
+        let minecraft_version = instance.configuration.minecraft_version;
+
+        for summary in instance.mods.read(cx).iter() {
+            let ContentSource::CurseforgeProject { project_id } = summary.content_source else {
+                continue;
+            };
+
+            self.installed_mods_by_project.entry(project_id).or_default().push(InstalledContent {
+                content_id: summary.id,
+                status: summary.update.status_if_matches(loader, minecraft_version),
+            });
+        }
+
+        for summary in instance.resource_packs.read(cx).iter() {
+            let ContentSource::CurseforgeProject { project_id } = summary.content_source else {
+                continue;
+            };
+
+            self.installed_resourcepacks_by_project.entry(project_id).or_default().push(InstalledContent {
+                content_id: summary.id,
+                status: summary.update.status_if_matches(loader, minecraft_version),
+            });
+        }
+
+        let shaderpacks_path = instance.dot_minecraft_folder.join("shaderpacks");
+        if let Ok(entries) = std::fs::read_dir(shaderpacks_path) {
+            for entry in entries.flatten() {
+                let filename = entry.file_name();
+                let filename = filename.to_string_lossy();
+                let shader_name = filename.trim_end_matches(".zip").trim_end_matches(".disabled");
+                if !shader_name.is_empty() {
+                    self.installed_shaders_by_filename_prefix.insert(shader_name.to_lowercase().into());
+                }
+            }
+        }
+    }
+
+    fn get_primary_action(&self, hit: &CurseforgeHit, cx: &App) -> (PrimaryAction, Option<NubAction>) {
+        let project_type = InterfaceConfig::get(cx).curseforge_page_class_id;
+        let install_latest = self.can_install_latest
+            && InterfaceConfig::get(cx).content_install_latest
+            && matches!(project_type, CurseforgeClassId::Mod | CurseforgeClassId::Resourcepack);
+
+        let installed = match project_type {
+            CurseforgeClassId::Mod | CurseforgeClassId::Modpack => self.installed_mods_by_project.get(&hit.id),
+            CurseforgeClassId::Resourcepack => self.installed_resourcepacks_by_project.get(&hit.id),
+            _ => None,
+        };
+
+        if let Some(installed) = installed && !installed.is_empty() {
+            if !install_latest {
+                return (PrimaryAction::Installed, None);
+            }
+
+            let mut nub_action = NubAction::CheckForUpdates;
+            for installed_content in installed {
+                match installed_content.status {
+                    ContentUpdateStatus::Unknown => {}
+                    ContentUpdateStatus::AlreadyUpToDate => {
+                        if !matches!(nub_action, NubAction::Update(..)) {
+                            nub_action = NubAction::UpToDate;
+                        }
+                    }
+                    ContentUpdateStatus::Curseforge => {
+                        if let NubAction::Update(ids) = &mut nub_action {
+                            ids.push(installed_content.content_id);
+                        } else {
+                            nub_action = NubAction::Update(vec![installed_content.content_id]);
+                        }
+                    }
+                    _ => {
+                        if nub_action == NubAction::CheckForUpdates {
+                            nub_action = NubAction::ErrorCheckingForUpdates;
+                        }
+                    }
+                }
+            }
+
+            return (PrimaryAction::Installed, Some(nub_action));
+        }
+
+        if project_type == CurseforgeClassId::Shader && shader_hit_looks_installed(hit, &self.installed_shaders_by_filename_prefix) {
+            let nub_action = if install_latest {
+                Some(NubAction::UpToDate)
+            } else {
+                None
+            };
+            return (PrimaryAction::Installed, nub_action);
+        }
+
+        if install_latest {
+            (PrimaryAction::InstallLatest, None)
+        } else {
+            (PrimaryAction::Install, None)
+        }
+    }
+
+    fn on_search_input_event(
+        &mut self,
+        state: &Entity<InputState>,
+        event: &InputEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let InputEvent::Change = event else {
+            return;
+        };
+
+        let search = state.read(cx).text().to_string();
+        let search = search.trim();
+
+        if &*self.last_search == search {
+            return;
+        }
+
+        let search: Arc<str> = Arc::from(search);
+        self.last_search = search.clone();
+        self.reload(cx);
+    }
+
+    fn set_project_type(&mut self, project_type: CurseforgeClassId, window: &mut Window, cx: &mut Context<Self>) {
+        if InterfaceConfig::get(cx).curseforge_page_class_id == project_type {
+            return;
+        }
+        InterfaceConfig::get_mut(cx).curseforge_page_class_id = project_type;
+        self.filter_categories.clear();
+        self.search_state.update(cx, |state, cx| {
+            let placeholder = match project_type {
+                CurseforgeClassId::Mod => ts!("instance.content.search.mod"),
+                CurseforgeClassId::Modpack => ts!("instance.content.search.modpack"),
+                CurseforgeClassId::Resourcepack => ts!("instance.content.search.resourcepack"),
+                CurseforgeClassId::Shader => ts!("instance.content.search.shader"),
+                _ => ts!("instance.content.search.file"),
+            };
+            state.set_placeholder(placeholder, window, cx)
+        });
+        self.reload(cx);
+    }
+
+    fn set_filter_loaders(&mut self, loaders: EnumSet<Loader>, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter_loaders == loaders {
+            return;
+        }
+        self.filter_loaders = loaders;
+        self.reload(cx);
+    }
+
+    fn set_filter_categories(&mut self, categories: BTreeSet<u32>, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter_categories == categories {
+            return;
+        }
+        self.filter_categories = categories;
+        self.reload(cx);
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        if self.loading.is_some() {
+            self.pending_reload = true;
+            return;
+        }
+
+        self.pending_clear = true;
+        self._delayed_clear_task = cx.spawn(async |page, cx| {
+            cx.background_executor().timer(Duration::from_millis(300)).await;
+            let _ = page.update(cx, |page, cx| {
+                if page.pending_clear {
+                    page.pending_clear = false;
+                    page.hits.clear();
+                    page.total_hits = 1;
+                    cx.notify();
+                }
+            });
+        });
+
+        self.load_more(cx);
+    }
+
+    fn load_more(&mut self, cx: &mut Context<Self>) {
+        if self.loading.is_some() {
+            return;
+        }
+        self.pending_reload = false;
+        self.search_error = None;
+
+        let query = if self.last_search.is_empty() {
+            None
+        } else {
+            Some(self.last_search.clone())
+        };
+
+        let config = InterfaceConfig::get(cx);
+        let class_id = config.curseforge_page_class_id;
+        let modrinth_filter_version = config.content_filter_version;
+
+        let offset = if self.pending_clear { 0 } else { self.hits.len() };
+
+        let is_mod = class_id == CurseforgeClassId::Mod || class_id == CurseforgeClassId::Modpack;
+        let applies_version_filter = matches!(
+            class_id,
+            CurseforgeClassId::Mod | CurseforgeClassId::Modpack | CurseforgeClassId::Shader
+        );
+        let filter_by_instance = self.install_for.is_some() && modrinth_filter_version;
+        let game_version = if filter_by_instance && applies_version_filter && let Some(filter_version) = self.filter_version {
+            Some(filter_version)
+        } else {
+            None
+        };
+
+        let mod_loader_types = if !self.filter_loaders.is_empty() && is_mod {
+            let mut string = "[\"".to_string();
+            for (i, loader) in self.filter_loaders.iter().enumerate() {
+                if i > 0 {
+                    string.push_str("\",\"");
+                }
+                string.push_str(loader.name());
+            }
+            string.push_str("\"]");
+            let string: Arc<str> = string.into();
+            Some(string)
+        } else {
+            None
+        };
+
+        let category_ids = if !self.filter_categories.is_empty() {
+            let mut string = "[\"".to_string();
+            for (i, category_id) in self.filter_categories.iter().enumerate() {
+                if i > 0 {
+                    string.push_str("\",\"");
+                }
+                use std::fmt::Write;
+                _ = write!(&mut string, "{}", *category_id);
+            }
+            string.push_str("\"]");
+            let string: Arc<str> = string.into();
+            Some(string)
+        } else {
+            None
+        };
+
+        let request = CurseforgeSearchRequest {
+            search_filter: query,
+            class_id: class_id as u32,
+            category_ids,
+            game_version,
+            mod_loader_types,
+            index: offset as u32,
+            page_size: 20
+        };
+
+        let data = FrontendMetadata::request(&self.data.metadata, MetadataRequest::CurseforgeSearch(request), cx);
+
+        let result: FrontendMetadataResult<CurseforgeSearchResult> = data.read(cx).result();
+        match result {
+            FrontendMetadataResult::Loading => {
+                let subscription = cx.observe(&data, |page, data, cx| {
+                    let result: FrontendMetadataResult<CurseforgeSearchResult> = data.read(cx).result();
+                    match result {
+                        FrontendMetadataResult::Loading => {
+                            return;
+                        },
+                        FrontendMetadataResult::Loaded(result) => {
+                            if !page.pending_reload {
+                                page.apply_search_data(result);
+                            }
+                            page.loading = None;
+                            cx.notify();
+                        },
+                        FrontendMetadataResult::Error(shared_string) => {
+                            page.search_error = Some(shared_string);
+                            page.loading = None;
+                            cx.notify();
+                        },
+                    }
+                    if page.pending_reload {
+                        page.reload(cx);
+                    }
+                });
+                self.loading = Some(subscription);
+            },
+            FrontendMetadataResult::Loaded(result) => {
+                self.apply_search_data(result);
+            },
+            FrontendMetadataResult::Error(shared_string) => {
+                self.search_error = Some(shared_string);
+            },
+        }
+    }
+
+    fn apply_search_data(&mut self, search_result: &CurseforgeSearchResult) {
+        if self.pending_clear {
+            self.pending_clear = false;
+            self.hits.clear();
+            self.total_hits = 1;
+            self._delayed_clear_task = Task::ready(());
+        }
+
+        self.hits.extend(search_result.data.iter().map(|hit| {
+            let mut hit = hit.clone();
+            hit.summary = hit.summary.replace("\n", " ").into();
+            hit
+        }));
+        self.total_hits = search_result.pagination.total_count;
+    }
+
+    fn render_items(&mut self, visible_range: Range<usize>, _window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
+        let theme = cx.theme();
+        let mut should_load_more = false;
+        let items = visible_range
+            .map(|index| {
+                let Some(hit) = self.hits.get(index) else {
+                    if let Some(search_error) = self.search_error.clone() {
+                        return div()
+                            .pl_3()
+                            .pt_3()
+                            .child(ErrorAlert::new("search_error", ts!("instance.content.requesting_from_modrinth_error"), search_error));
+                    } else {
+                        should_load_more = true;
+                        return div()
+                            .pl_3()
+                            .pt_3()
+                            .child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded_lg());
+                    }
+                };
+
+
+                let image = if let Some(logo) = &hit.logo && !logo.thumbnail_url.is_empty() {
+                    gpui::img(SharedUri::from(logo.thumbnail_url.clone()))
+                        .with_fallback(|| Skeleton::new().rounded_lg().size_16().into_any_element())
+                } else {
+                    gpui::img(ImageSource::Resource(Resource::Embedded(
+                        "images/default_mod.png".into(),
+                    )))
+                };
+
+                let author = if hit.authors.len() == 1 {
+                    let author = &*hit.authors[0].name;
+                    ts!("instance.content.by", name = author)
+                } else if hit.authors.is_empty() {
+                    ts!("instance.content.by", name = "Unknown")
+                } else {
+                    let mut authors_string = String::new();
+                    for (i, author) in hit.authors.iter().enumerate() {
+                        if i > 0 {
+                            authors_string.push_str(", ");
+                        }
+                        authors_string.push_str(&author.name);
+                    }
+                    ts!("instance.content.by", name = authors_string)
+                };
+
+                let name = SharedString::new(hit.name.clone());
+                let description = SharedString::new(hit.summary.clone());
+
+                let author_line = div().text_color(cx.theme().muted_foreground).text_sm().pb_px().child(author);
+
+                let muted = cx.theme().muted_foreground;
+                let mut is_categories_empty = true;
+                let categories = hit.categories.iter().filter_map(|category| {
+                    if category.is_class {
+                        return None;
+                    }
+                    is_categories_empty = false;
+                    Some(SharedString::new(category.name.clone()).into_any_element())
+                });
+                let categories = itertools::Itertools::intersperse_with(categories,
+                    || div().flex_shrink_0().w_px().h_1_2().bg(muted).into_any_element());
+
+                let downloads = h_flex()
+                    .gap_0p5()
+                    .child(PandoraIcon::Download)
+                    .child(format_downloads(hit.download_count));
+
+                let (primary_action, nub_action) = self.get_primary_action(hit, cx);
+
+                let install_button = Button::new(("install", index))
+                    .label(primary_action.text())
+                    .icon(primary_action.icon())
+                    .with_variant(primary_action.button_variant())
+                    .on_click({
+                        let data = self.data.clone();
+                        let hit = hit.clone();
+                        let install_for = self.install_for.clone();
+
+                        move |_, window, cx| {
+                            cx.stop_propagation();
+
+                            if hit.class_id.is_some() && hit.class_id != Some(0) {
+                                match primary_action {
+                                    PrimaryAction::Install | PrimaryAction::Reinstall => {
+                                        crate::modals::curseforge_install::open(
+                                            hit.clone(),
+                                            install_for,
+                                            &data,
+                                            window,
+                                            cx
+                                        );
+                                    },
+                                    PrimaryAction::InstallLatest => {
+                                        let Some(install_for) = install_for else {
+                                            window.push_notification((NotificationType::Error, "Unable to find instance"), cx);
+                                            return;
+                                        };
+
+                                        let Some(entry) = data.instances.read(cx).entries.get(&install_for) else {
+                                            window.push_notification((NotificationType::Error, "Unable to find instance"), cx);
+                                            return;
+                                        };
+
+                                        let instance = entry.read(cx);
+                                        let loader = instance.configuration.loader;
+                                        let minecraft_version = instance.configuration.minecraft_version;
+
+                                        let content_install = ContentInstall {
+                                            target: InstallTarget::Instance(instance.id),
+                                            loader_hint: loader,
+                                            version_hint: Some(minecraft_version.into()),
+                                            datapack_world: None,
+                                            files: [
+                                                ContentInstallFile {
+                                                    replace_old: None,
+                                                    path: bridge::install::ContentInstallPath::Automatic,
+                                                    download: ContentDownload::Curseforge { project_id: hit.id },
+                                                    content_source: ContentSource::CurseforgeProject {
+                                                        project_id: hit.id
+                                                    },
+                                                }
+                                            ].into(),
+                                        };
+
+                                        crate::root::start_install(content_install, &data.backend_handle, window, cx);
+                                    },
+                                    PrimaryAction::Installed => {},
+                                }
+                            } else {
+                                window.push_notification(
+                                    (
+                                        NotificationType::Error,
+                                        ts!("instance.content.install.unknown_type"),
+                                    ),
+                                    cx,
+                                );
+                            }
+                        }
+                    });
+
+                let nub_button = nub_action.as_ref().map(|nub| {
+                    let data = self.data.clone();
+                    let install_for = self.install_for;
+                    let nub = nub.clone();
+
+                    Button::new(("nub", index))
+                        .icon(nub.icon())
+                        .with_variant(nub.button_variant())
+                        .compact()
+                        .small()
+                        .on_click(move |_, window, cx| {
+                            match &nub {
+                                NubAction::CheckForUpdates => {
+                                    let modal_action = ModalAction::default();
+                                    data.backend_handle.send(MessageToBackend::UpdateCheck {
+                                        instance: install_for.unwrap(),
+                                        modal_action: modal_action.clone(),
+                                    });
+                                    crate::modals::generic::show_notification(
+                                        window,
+                                        cx,
+                                        ts!("instance.content.update.check.error"),
+                                        modal_action,
+                                    );
+                                }
+                                NubAction::ErrorCheckingForUpdates => {}
+                                NubAction::UpToDate => {}
+                                NubAction::Update(ids) => {
+                                    for id in ids {
+                                        let modal_action = ModalAction::default();
+                                        data.backend_handle.send(MessageToBackend::UpdateContent {
+                                            instance: install_for.unwrap(),
+                                            content_id: *id,
+                                            modal_action: modal_action.clone(),
+                                        });
+                                        crate::modals::generic::show_notification(
+                                            window,
+                                            cx,
+                                            ts!("instance.content.update.error"),
+                                            modal_action,
+                                        );
+                                    }
+                                }
+                            }
+                        })
+                });
+
+                let open_page_button = Button::new(("open", index))
+                    .label(ts!("instance.content.open_page"))
+                    .icon(PandoraIcon::Globe)
+                    .info()
+                    .on_click({
+                        let slug = hit.slug.clone();
+                        let class_id = hit.class_id.map(CurseforgeClassId::from_u32).unwrap_or(CurseforgeClassId::Other);
+                        move |_, _, cx| {
+                            let path = match class_id {
+                                CurseforgeClassId::Mod => "mc-mods",
+                                CurseforgeClassId::Modpack => "modpacks",
+                                CurseforgeClassId::Resourcepack => "texture-packs",
+                                CurseforgeClassId::Shader => "shaders",
+                                _ => "mc-mods",
+                            };
+                            cx.open_url(&format!("https://www.curseforge.com/minecraft/{}/{}", path, slug));
+                        }
+                    });
+
+                let left_slot_w = px(40.0);
+                let button_w = px(118.0);
+                let first_row = h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(div().min_w(left_slot_w).w(left_slot_w).flex_shrink())
+                    .child(div().w(button_w).min_w(button_w).flex_shrink().child(install_button));
+                let second_row_left = if let Some(nub) = nub_button {
+                    div().min_w(left_slot_w).w(left_slot_w).flex_shrink().child(
+                        h_flex().items_center().justify_center().size_full().child(nub),
+                    )
+                } else {
+                    div().min_w(left_slot_w).w(left_slot_w).flex_shrink()
+                };
+                let second_row = h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(second_row_left)
+                    .child(div().w(button_w).min_w(button_w).flex_shrink().child(open_page_button));
+                let buttons = v_flex().gap_2().child(first_row).child(second_row);
+
+                let item = h_flex()
+                    .rounded_lg()
+                    .px_4()
+                    .py_2()
+                    .gap_4()
+                    .h_32()
+                    .bg(theme.background)
+                    .border_color(theme.border)
+                    .border_1()
+                    .size_full()
+                    .child(image.rounded_lg().size_16().min_w_16().min_h_16())
+                    .child(
+                        v_flex()
+                            .h(px(104.0))
+                            .flex_grow()
+                            .gap_1()
+                            .overflow_hidden()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_end()
+                                    .line_clamp(1)
+                                    .text_lg()
+                                    .child(name)
+                                    .child(author_line),
+                            )
+                            .child(
+                                div()
+                                    .flex_auto()
+                                    .line_height(px(20.0))
+                                    .line_clamp(2)
+                                    .child(description),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2p5()
+                                    .children(categories),
+                            ),
+                    )
+                    .child(v_flex().items_end().gap_2().child(downloads).child(buttons));
+
+                div().pl_3().pt_3().child(item)
+            })
+            .collect();
+
+        if should_load_more {
+            self.load_more(cx);
+        }
+
+        items
+    }
+
+}
+
+#[derive(PartialEq, Eq)]
+pub enum PrimaryAction {
+    Install,
+    Reinstall,
+    InstallLatest,
+    Installed,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum NubAction {
+    CheckForUpdates,
+    ErrorCheckingForUpdates,
+    UpToDate,
+    Update(Vec<InstanceContentID>),
+}
+
+impl NubAction {
+    fn icon(&self) -> PandoraIcon {
+        match self {
+            NubAction::CheckForUpdates => PandoraIcon::RefreshCcw,
+            NubAction::ErrorCheckingForUpdates => PandoraIcon::TriangleAlert,
+            NubAction::UpToDate => PandoraIcon::Check,
+            NubAction::Update(..) => PandoraIcon::Download,
+        }
+    }
+
+    fn button_variant(&self) -> ButtonVariant {
+        match self {
+            NubAction::CheckForUpdates => ButtonVariant::Warning,
+            NubAction::ErrorCheckingForUpdates => ButtonVariant::Danger,
+            NubAction::UpToDate => ButtonVariant::Secondary,
+            NubAction::Update(..) => ButtonVariant::Success,
+        }
+    }
+}
+
+impl PrimaryAction {
+    pub fn text(&self) -> SharedString {
+        match self {
+            PrimaryAction::Install => ts!("instance.content.install.label"),
+            PrimaryAction::Reinstall => ts!("instance.content.install.reinstall"),
+            PrimaryAction::InstallLatest => ts!("instance.content.install.label"),
+            PrimaryAction::Installed => ts!("instance.content.installed"),
+        }
+    }
+
+    pub fn icon(&self) -> PandoraIcon {
+        match self {
+            PrimaryAction::Install => PandoraIcon::Download,
+            PrimaryAction::Reinstall => PandoraIcon::Download,
+            PrimaryAction::InstallLatest => PandoraIcon::Download,
+            PrimaryAction::Installed => PandoraIcon::Check,
+        }
+    }
+
+    pub fn button_variant(&self) -> ButtonVariant {
+        match self {
+            PrimaryAction::Install => ButtonVariant::Success,
+            PrimaryAction::Reinstall => ButtonVariant::Success,
+            PrimaryAction::InstallLatest => ButtonVariant::Success,
+            PrimaryAction::Installed => ButtonVariant::Secondary,
+        }
+    }
+}
+
+impl Page for CurseforgeSearchPage {
+    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+
+    fn scrollable(&self, _cx: &App) -> bool {
+        false
+    }
+}
+
+impl Render for CurseforgeSearchPage {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let can_load_more = self.total_hits > self.hits.len() as u64;
+        let scroll_handle = self.scroll_handle.clone();
+
+        let item_count = self.hits.len() + if can_load_more || self.search_error.is_some() { 1 } else { 0 };
+
+        if let Some((mods_state, load_serial)) = &self.mods_load_state
+            && let Some(install_for) = self.install_for
+        {
+            let state = mods_state.load(std::sync::atomic::Ordering::SeqCst);
+            if state.should_send_load_request() {
+                self.data.backend_handle.send_with_serial(MessageToBackend::RequestLoadMods { id: install_for }, load_serial);
+            }
+        }
+
+        if let Some((resource_packs_state, load_serial)) = &self.resource_packs_load_state
+            && let Some(install_for) = self.install_for
+        {
+            let state = resource_packs_state.load(std::sync::atomic::Ordering::SeqCst);
+            if state.should_send_load_request() {
+                self.data.backend_handle.send_with_serial(
+                    MessageToBackend::RequestLoadResourcePacks { id: install_for },
+                    load_serial,
+                );
+            }
+        }
+
+        let list = h_flex()
+            .image_cache(self.image_cache.clone())
+            .size_full()
+            .overflow_y_hidden()
+            .child(
+                uniform_list(
+                    "uniform-list",
+                    item_count,
+                    cx.processor(Self::render_items),
+                )
+                .size_full()
+                .track_scroll(&scroll_handle),
+            )
+            .child(
+                div()
+                    .w_3()
+                    .h_full()
+                    .py_3()
+                    .child(Scrollbar::vertical(&scroll_handle)),
+            );
+
+        let mut top_bar = h_flex()
+            .w_full()
+            .gap_3()
+            .child(Input::new(&self.search_state));
+
+
+        if self.can_install_latest {
+            let tooltip = |window: &mut Window, cx: &mut App| {
+                Tooltip::new(ts!("instance.content.install.always_latest")).build(window, cx)
+            };
+
+            let install_latest = InterfaceConfig::get(cx).content_install_latest;
+            top_bar = top_bar.child(Checkbox::new("install-latest")
+                .label(ts!("instance.content.install.latest"))
+                .tooltip(tooltip)
+                .checked(install_latest)
+                .on_click({
+                    move |value, _, cx| {
+                        InterfaceConfig::get_mut(cx).content_install_latest = *value;
+                    }
+                })
+            );
+        }
+
+        let theme = cx.theme();
+        let content = v_flex()
+            .size_full()
+            .gap_3()
+            .p_3()
+            .pl_0()
+            .child(top_bar)
+            .child(div().size_full().rounded_lg().border_1().border_color(theme.border).child(list));
+
+        let config = InterfaceConfig::get(cx);
+        let filter_project_type = config.curseforge_page_class_id;
+
+        let type_button_group = ButtonGroup::new("type")
+            .layout(Axis::Vertical)
+            .outline()
+            .child(Button::new("mods").label(ts!("instance.content.mods")).selected(filter_project_type == CurseforgeClassId::Mod))
+            .child(
+                Button::new("modpacks")
+                    .label(ts!("instance.content.modpacks"))
+                    .selected(filter_project_type == CurseforgeClassId::Modpack),
+            )
+            .child(
+                Button::new("resourcepacks")
+                    .label(ts!("instance.content.resourcepacks"))
+                    .selected(filter_project_type == CurseforgeClassId::Resourcepack),
+            )
+            .child(Button::new("shaders").label(ts!("instance.content.shaders")).selected(filter_project_type == CurseforgeClassId::Shader))
+            .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
+                0 => page.set_project_type(CurseforgeClassId::Mod, window, cx),
+                1 => page.set_project_type(CurseforgeClassId::Modpack, window, cx),
+                2 => page.set_project_type(CurseforgeClassId::Resourcepack, window, cx),
+                3 => page.set_project_type(CurseforgeClassId::Shader, window, cx),
+                _ => {},
+            }));
+
+        let loader_button_group = if filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack {
+            Some(ButtonGroup::new("loader_group")
+                .layout(Axis::Vertical)
+                .outline()
+                .multiple(true)
+                .child(Button::new("fabric").label(ts!("modrinth.category.fabric")).selected(self.filter_loaders.contains(Loader::Fabric)))
+                .child(Button::new("forge").label(ts!("modrinth.category.forge")).selected(self.filter_loaders.contains(Loader::Forge)))
+                .child(Button::new("neoforge").label(ts!("modrinth.category.neoforge")).selected(self.filter_loaders.contains(Loader::NeoForge)))
+                .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
+                    page.set_filter_loaders(clicked.iter().filter_map(|index| match index {
+                        0 => Some(Loader::Fabric),
+                        1 => Some(Loader::Forge),
+                        2 => Some(Loader::NeoForge),
+                        _ => None
+                    }).collect(), window, cx);
+                })))
+        } else {
+            None
+        };
+
+        let categories = match filter_project_type {
+            CurseforgeClassId::Mod => FILTER_MOD_CATEGORIES,
+            CurseforgeClassId::Modpack => FILTER_MODPACK_CATEGORIES,
+            CurseforgeClassId::Resourcepack => FILTER_RESOURCEPACK_CATEGORIES,
+            CurseforgeClassId::Shader => FILTER_SHADERPACK_CATEGORIES,
+            _ => &[],
+        };
+
+        let is_shown = self.show_categories.load(std::sync::atomic::Ordering::Relaxed);
+        let show_categories = self.show_categories.clone();
+
+        let category = v_flex()
+            .gap_1()
+            .child(
+                Button::new("toggle-categories")
+                    .label(ts!("instance.content.categories"))
+                    .icon(if is_shown { PandoraIcon::ChevronDown } else { PandoraIcon::ChevronRight })
+                    .when(!is_shown, |this| this.outline())
+                    .on_click(move |_, _, _| {
+                        show_categories.store(!is_shown, std::sync::atomic::Ordering::Relaxed);
+                    })
+            )
+            .child(
+                ButtonGroup::new("category_group")
+                    .layout(Axis::Vertical)
+                    .outline()
+                    .multiple(true)
+                    .children(categories.iter().map(|(name, id)| {
+                        Button::new(("category", *id))
+                            .child(
+                                h_flex().w_full().justify_start().gap_2()
+                                .child(SharedString::new(*name)))
+                            .selected(self.filter_categories.contains(id))
+                    }))
+                    .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
+                        page.set_filter_categories(clicked.iter()
+                            .filter_map(|index| categories.get(*index).map(|(_, id)| *id))
+                            .collect(), window, cx);
+                    }))
+                    .when(!is_shown, |this| this.invisible().h_0())
+            )
+            .into_any_element();
+
+        let is_mod = filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack;
+        let filter_version_toggle = if is_mod && let Some(filter_version) = self.filter_version {
+            let title = format!("{}: {}", ts!("instance.version"), filter_version);
+            Some(Button::new("filter_version").label(title)
+                .outline()
+                .selected(InterfaceConfig::get(cx).content_filter_version)
+                .on_click(cx.listener(|page, _, _, cx| {
+                    let cfg = InterfaceConfig::get_mut(cx);
+                    cfg.content_filter_version = !cfg.content_filter_version;
+                    page.reload(cx);
+                })))
+        } else {
+            None
+        };
+
+        let parameters = v_flex()
+            .h_full()
+            .overflow_y_scrollbar()
+            .w_auto()
+            .min_w(px(200.0))
+            .p_3()
+            .gap_3()
+            .child(type_button_group)
+            .when_some(loader_button_group, |this, group| this.child(group))
+            .when_some(filter_version_toggle, |this, button| this.child(button))
+            .child(category);
+
+        h_flex().flex_1().min_h_0().size_full().child(parameters).child(content)
+    }
+}
+
+fn shader_hit_looks_installed(hit: &CurseforgeHit, installed_shaders_by_filename_prefix: &FxHashSet<Arc<str>>) -> bool {
+    let title_words: Vec<String> = hit
+        .name
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    for filename_prefix in installed_shaders_by_filename_prefix {
+        if filename_prefix.as_ref() == hit.name.to_lowercase() {
+            return true;
+        }
+
+        let filename_words: Vec<String> = filename_prefix
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        for title_word in &title_words {
+            for filename_word in &filename_words {
+                if title_word.len() > 2
+                    && filename_word.len() > 2
+                    && (title_word == filename_word
+                        || filename_word.contains(title_word)
+                        || title_word.contains(filename_word))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+pub fn format_downloads(downloads: u64) -> SharedString {
+    if downloads >= 1_000_000_000 {
+        ts!("instance.content.downloads", num = format!("{}B", (downloads / 10_000_000) as f64 / 100.0))
+    } else if downloads >= 1_000_000 {
+        ts!("instance.content.downloads", num = format!("{}M", (downloads / 10_000) as f64 / 100.0))
+    } else if downloads >= 10_000 {
+        ts!("instance.content.downloads", num = format!("{}K", (downloads / 10) as f64 / 100.0))
+    } else {
+        ts!("instance.content.downloads", num = downloads)
+    }
+}
+
+const FILTER_MOD_CATEGORIES: &[(&'static str, u32)] = &[
+    ("Addons", 426),
+    ("Adventure & RPG", 422),
+    ("API and Library", 421),
+    ("Equipment", 434),
+    ("Bug Fixes", 6821),
+    ("Cosmetic", 424),
+    ("Education", 5299),
+    ("Food", 436),
+    ("Magic", 419),
+    ("Map & Information", 423),
+    ("Performance", 6814),
+    ("Redstone", 4558),
+    ("Server Utility", 435),
+    ("Storage", 420),
+    ("Technology", 412),
+    ("Utility & QoL", 5191),
+    ("World Gen", 406),
+];
+
+const FILTER_MODPACK_CATEGORIES: &[(&'static str, u32)] = &[
+    ("Adventure & RPG", 4475),
+    ("Combat / PvP", 4483),
+    ("Expert", 9243),
+    ("Exploration", 4476),
+    ("Extra Large", 4482),
+    ("FTB Official Pack", 4487),
+    ("Hardcore", 4479),
+    ("Horror", 7418),
+    ("Magic", 4473),
+    ("Map Based", 4480),
+    ("Mini Game", 4477),
+    ("Multiplayer", 4484),
+    ("Quests", 4478),
+    ("Sci-Fi", 4474),
+    ("Skyblock", 4736),
+    ("Small / Light", 4481),
+    ("Tech", 4472),
+    ("Vanilla+", 5128),
+];
+
+const FILTER_RESOURCEPACK_CATEGORIES: &[(&'static str, u32)] = &[
+    ("16x", 393),
+    ("32x", 394),
+    ("64x", 395),
+    ("128x", 396),
+    ("256x", 397),
+    ("512x and Higher", 398),
+    ("Animated", 404),
+    ("Data Packs", 5193),
+    ("Font Packs", 5244),
+    ("Medieval", 402),
+    ("Mod Support", 4465),
+    ("Modern", 401),
+    ("Photo Realistic", 400),
+    ("Steampunk", 399),
+    ("Traditional", 403),
+];
+
+const FILTER_SHADERPACK_CATEGORIES: &[(&'static str, u32)] = &[
+    ("Fantasy", 6554),
+    ("Realistic", 6553),
+    ("Vanilla", 6555),
+];

@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::{
     component::{menu::{MenuGroup, MenuGroupItem}, page_path::PagePath, title_bar::TitleBar}, entity::{
         DataEntities, instance::{InstanceAddedEvent, InstanceEntries, InstanceModifiedEvent, InstanceMovedToTopEvent, InstanceRemovedEvent}
-    }, icon::PandoraIcon, interface_config::InterfaceConfig, modals, pages::{import::ImportPage, instance::instance_page::{InstancePage, InstanceSubpageType}, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, page::Page, skins_page::SkinsPage, syncing_page::SyncingPage}, png_render_cache, ts
+    }, icon::PandoraIcon, interface_config::InterfaceConfig, modals, pages::{curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::{InstancePage, InstanceSubpageType}, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, page::Page, skins_page::SkinsPage, syncing_page::SyncingPage}, png_render_cache, ts
 };
 
 pub struct LauncherUI {
@@ -35,6 +35,9 @@ pub enum PageType {
     Modrinth {
         installing_for: Option<SharedString>,
     },
+    Curseforge {
+        installing_for: Option<SharedString>,
+    },
     Import,
     Syncing,
     Skins,
@@ -54,6 +57,13 @@ impl PageType {
                     ts!("modrinth.name")
                 }
             },
+            PageType::Curseforge { installing_for } => {
+                if installing_for.is_some() {
+                    ts!("instance.content.install.from_curseforge")
+                } else {
+                    ts!("curseforge.name")
+                }
+            },
             PageType::Import => "Import".into(),
             PageType::Syncing => ts!("instance.sync.label"),
             PageType::Skins => "Skins".into(),
@@ -65,6 +75,9 @@ impl PageType {
         match serialized {
             SerializedPageType::Instances => PageType::Instances,
             SerializedPageType::Modrinth { installing_for } => PageType::Modrinth {
+                installing_for: installing_for.clone(),
+            },
+            SerializedPageType::Curseforge { installing_for } => PageType::Curseforge {
                 installing_for: installing_for.clone(),
             },
             SerializedPageType::Import => PageType::Import,
@@ -89,6 +102,9 @@ pub enum SerializedPageType {
     Modrinth {
         installing_for: Option<SharedString>,
     },
+    Curseforge {
+        installing_for: Option<SharedString>,
+    },
     Import,
     Syncing,
     Skins,
@@ -99,6 +115,7 @@ pub enum SerializedPageType {
 pub enum LauncherPage {
     Instances(Entity<InstancesPage>),
     Modrinth(Entity<ModrinthSearchPage>),
+    Curseforge(Entity<CurseforgeSearchPage>),
     Import(Entity<ImportPage>),
     Syncing(Entity<SyncingPage>),
     Skins(Entity<SkinsPage>),
@@ -110,6 +127,7 @@ impl LauncherPage {
         match self {
             LauncherPage::Instances(entity) => entity.into_any_element(),
             LauncherPage::Modrinth(entity) => entity.into_any_element(),
+            LauncherPage::Curseforge(entity) => entity.into_any_element(),
             LauncherPage::Import(entity) => entity.into_any_element(),
             LauncherPage::Syncing(entity) => entity.into_any_element(),
             LauncherPage::Skins(entity) => entity.into_any_element(),
@@ -121,6 +139,7 @@ impl LauncherPage {
         match self {
             LauncherPage::Instances(_) => PageType::Instances,
             LauncherPage::Modrinth(_) => PageType::Modrinth { installing_for: None },
+            LauncherPage::Curseforge(_) => PageType::Curseforge { installing_for: None },
             LauncherPage::Import(_) => PageType::Import,
             LauncherPage::Syncing(_) => PageType::Syncing,
             LauncherPage::Skins(_) => PageType::Skins,
@@ -241,6 +260,14 @@ impl LauncherUI {
                 });
                  Ok(LauncherPage::Modrinth(page))
             },
+            PageType::Curseforge { installing_for } => {
+                let installing_for = installing_for.as_ref().and_then(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
+
+                let page = cx.new(|cx| {
+                    CurseforgeSearchPage::new(installing_for, data, window, cx)
+                });
+                Ok(LauncherPage::Curseforge(page))
+            },
             PageType::Import => {
                  Ok(LauncherPage::Import(cx.new(|cx| ImportPage::new(data, window, cx))))
             },
@@ -303,6 +330,11 @@ impl Render for LauncherUI {
                 .active(page_type == PageType::Modrinth { installing_for: None })
                 .on_click(cx.listener(|launcher, _, window, cx| {
                     launcher.switch_page(PageType::Modrinth { installing_for: None }, &[], window, cx);
+                })))
+            .child(MenuGroupItem::new(ts!("curseforge.name"))
+                .active(matches!(page_type, PageType::Curseforge { installing_for: None }))
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Curseforge { installing_for: None }, &[], window, cx);
                 })));
 
         let files_group = MenuGroup::new("Files")

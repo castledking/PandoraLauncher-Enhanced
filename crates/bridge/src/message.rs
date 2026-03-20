@@ -147,6 +147,11 @@ pub enum MessageToBackend {
         enabled: bool,
         delete: bool,
     },
+    DownloadContentChildren {
+        id: InstanceID,
+        content_id: InstanceContentID,
+        modal_action: ModalAction,
+    },
     DeleteContent {
         id: InstanceID,
         content_ids: Vec<InstanceContentID>,
@@ -234,6 +239,16 @@ pub enum MessageToBackend {
     },
     UploadSkin {
         skin_data: Arc<[u8]>,
+        skin_variant: Arc<str>,
+        modal_action: ModalAction,
+    },
+    AddOwnedSkin {
+        skin_data: Arc<[u8]>,
+        skin_variant: Arc<str>,
+        modal_action: ModalAction,
+    },
+    AddOwnedSkinFromUrl {
+        skin_url: Arc<str>,
         skin_variant: Arc<str>,
         modal_action: ModalAction,
     },

@@ -1,5 +1,7 @@
 use std::{
-    io::{BufRead, Cursor, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, sync::Arc
+    io::{BufRead, Cursor, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    sync::{atomic::{AtomicBool, Ordering}, Arc},
 };
 
 use bridge::{instance::{ContentUpdateStatus, ContentType, ContentSummary}, safe_path::SafePath};
@@ -9,7 +11,16 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rc_zip_sync::EntryHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
-use schema::{content::ContentSource, fabric_mod::{FabricModJson, Icon, Person}, forge_mod::{JarJarMetadata, McModInfo, ModsToml}, loader::Loader, modrinth::{ModrinthFile, ModrinthSideRequirement}, mrpack::ModrinthIndexJson, resourcepack::PackMcmeta};
+use schema::{
+    content::ContentSource,
+    curseforge::{CachedCurseforgeFileInfo, CurseforgeFile, CurseforgeModpackManifestJson},
+    fabric_mod::{FabricModJson, Icon, Person},
+    forge_mod::{JarJarMetadata, McModInfo, ModsToml},
+    loader::Loader,
+    modrinth::{ModrinthFile, ModrinthSideRequirement},
+    mrpack::ModrinthIndexJson,
+    resourcepack::PackMcmeta,
+};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DeserializeAs};
 use sha1::{Digest, Sha1};
@@ -25,6 +36,10 @@ pub enum ContentUpdateAction {
         file: ModrinthFile,
         project_id: Arc<str>,
     },
+    Curseforge {
+        file: CurseforgeFile,
+        project_id: u32,
+    }
 }
 
 impl ContentUpdateAction {
@@ -35,6 +50,7 @@ impl ContentUpdateAction {
             ContentUpdateAction::AlreadyUpToDate => ContentUpdateStatus::AlreadyUpToDate,
             ContentUpdateAction::ManualInstall => ContentUpdateStatus::ManualInstall,
             ContentUpdateAction::Modrinth { .. } => ContentUpdateStatus::Modrinth,
+            ContentUpdateAction::Curseforge { .. } => ContentUpdateStatus::Curseforge,
         }
     }
 }
@@ -49,9 +65,13 @@ pub struct ContentUpdateKey {
 pub struct ModMetadataManager {
     content_library_dir: Arc<Path>,
     sources_dir: PathBuf,
+    curseforge_file_cache_path: PathBuf,
     by_hash: RwLock<FxHashMap<[u8; 20], Option<Arc<ContentSummary>>>>,
     content_sources: RwLock<ContentSources>,
     parents_by_missing_child: RwLock<FxHashMap<[u8; 20], Vec<[u8; 20]>>>,
+    cached_curseforge_info: RwLock<FxHashMap<u32, CachedCurseforgeFileInfo>>,
+    cached_curseforge_info_dirty: AtomicBool,
+    parents_by_missing_curseforge_id: RwLock<FxHashMap<u32, Vec<[u8; 20]>>>,
     pub updates: RwLock<FxHashMap<ContentUpdateKey, ContentUpdateAction>>,
 }
 
@@ -59,6 +79,7 @@ impl ModMetadataManager {
     pub fn load(content_meta_dir: Arc<Path>, content_library_dir: Arc<Path>) -> Self {
         let legacy_sources_json = content_meta_dir.join("sources.json");
         let sources_dir = content_meta_dir.join("sources");
+        let curseforge_file_cache_path = content_meta_dir.join("curseforge_file_cache.json");
 
         let content_sources = if sources_dir.is_dir() {
             ContentSources::load_all(&sources_dir).unwrap_or_default()
@@ -76,13 +97,18 @@ impl ModMetadataManager {
         } else {
             Default::default()
         };
+        let cached_curseforge_info = Self::load_curseforge_file_cache(&curseforge_file_cache_path);
 
         Self {
             content_library_dir,
             sources_dir,
+            curseforge_file_cache_path,
             by_hash: Default::default(),
             content_sources: RwLock::new(content_sources),
             parents_by_missing_child: Default::default(),
+            cached_curseforge_info: RwLock::new(cached_curseforge_info),
+            cached_curseforge_info_dirty: AtomicBool::new(false),
+            parents_by_missing_curseforge_id: Default::default(),
             updates: Default::default(),
         }
     }
@@ -104,6 +130,77 @@ impl ModMetadataManager {
         for changed in changed {
             content_sources.write_to_file(changed, &self.sources_dir);
         }
+    }
+
+    pub fn set_cached_curseforge_info(&self, file_id: u32, info: CachedCurseforgeFileInfo) {
+        let mut cache = self.cached_curseforge_info.write();
+        let changed = cache.get(&file_id).map_or(true, |old| {
+            old.hash != info.hash
+                || old.filename != info.filename
+                || old.disabled_third_party_downloads != info.disabled_third_party_downloads
+        });
+        cache.insert(file_id, info);
+        drop(cache);
+        if changed {
+            self.cached_curseforge_info_dirty.store(true, Ordering::Relaxed);
+        }
+
+        if let Some(parents) = self.parents_by_missing_curseforge_id.write().remove(&file_id) {
+            let mut by_hash = self.by_hash.write();
+            for parent in parents {
+                by_hash.remove(&parent);
+            }
+        }
+    }
+
+    pub fn write_changes(&self) {
+        if !self.cached_curseforge_info_dirty.swap(false, Ordering::Relaxed) {
+            return;
+        }
+
+        let snapshot = self.cached_curseforge_info.read().iter().map(|(&file_id, info)| {
+            PersistedCurseforgeFileCacheEntry {
+                file_id,
+                hash: hex::encode(info.hash),
+                filename: info.filename.to_string(),
+                disabled_third_party_downloads: info.disabled_third_party_downloads,
+            }
+        }).collect::<Vec<_>>();
+
+        let bytes = match serde_json::to_vec(&PersistedCurseforgeFileCache { entries: snapshot }) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                log::error!("Unable to serialize CurseForge file cache: {err}");
+                self.cached_curseforge_info_dirty.store(true, Ordering::Relaxed);
+                return;
+            }
+        };
+
+        if let Err(err) = crate::write_safe(&self.curseforge_file_cache_path, &bytes) {
+            log::error!("Unable to write CurseForge file cache: {err}");
+            self.cached_curseforge_info_dirty.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn load_curseforge_file_cache(path: &Path) -> FxHashMap<u32, CachedCurseforgeFileInfo> {
+        let Ok(cache) = crate::read_json::<PersistedCurseforgeFileCache>(path) else {
+            return FxHashMap::default();
+        };
+
+        let mut result = FxHashMap::default();
+        for entry in cache.entries {
+            let mut hash = [0_u8; 20];
+            let Ok(_) = hex::decode_to_slice(&entry.hash, &mut hash) else {
+                continue;
+            };
+
+            result.insert(entry.file_id, CachedCurseforgeFileInfo {
+                hash,
+                filename: entry.filename.into(),
+                disabled_third_party_downloads: entry.disabled_third_party_downloads,
+            });
+        }
+        result
     }
 
     pub fn get_path(self: &Arc<Self>, path: &Path) -> Option<Arc<ContentSummary>> {
@@ -183,6 +280,8 @@ impl ModMetadataManager {
             self.load_from_pack_mcmeta(hash, &archive, file)
         } else if allow_children && let Some(file) = archive.by_name("modrinth.index.json") {
             self.load_modrinth_modpack(hash, &archive, file)
+        } else if allow_children && let Some(file) = archive.by_name("manifest.json") {
+            self.load_curseforge_modpack(hash, &archive, file)
         } else {
             None
         }
@@ -441,6 +540,91 @@ impl ModMetadataManager {
         }))
     }
 
+    fn load_curseforge_modpack<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+        let manifest_json: CurseforgeModpackManifestJson = serde_json::from_slice(&file.bytes().ok()?).inspect_err(|e| {
+            log::error!("Error parsing manifest.json: {e}");
+        }).ok()?;
+
+        let mut overrides: IndexMap<SafePath, Arc<[u8]>> = IndexMap::new();
+        let overrides_prefix = manifest_json.overrides.as_deref().unwrap_or("overrides");
+
+        for entry in archive.entries() {
+            if entry.kind() != rc_zip_sync::rc_zip::EntryKind::File {
+                continue;
+            }
+
+            let Some(path) = SafePath::new(&entry.name) else {
+                continue;
+            };
+            let Some(path) = path.strip_prefix(overrides_prefix) else {
+                continue;
+            };
+
+            let Ok(data) = entry.bytes() else {
+                continue;
+            };
+            overrides.insert(path, data.into());
+        }
+
+        let summaries = manifest_json.files.par_iter().map(|file| {
+            let Some(cached_info) = self.cached_curseforge_info.read().get(&file.file_id).cloned() else {
+                self.parents_by_missing_curseforge_id.write().entry(file.file_id).or_default().push(hash);
+                return (None, None);
+            };
+
+            if let Some(cached) = self.by_hash.read().get(&cached_info.hash).cloned().flatten() {
+                return (Some(cached), Some(cached_info));
+            }
+
+            let Some(path) = SafePath::new(&cached_info.filename) else {
+                return (None, Some(cached_info));
+            };
+
+            let file_hash_as_str = hex::encode(cached_info.hash);
+            let mut file = self.content_library_dir.join(&file_hash_as_str[..2]);
+            file.push(&file_hash_as_str);
+            if let Some(extension) = path.extension() {
+                file.set_extension(extension);
+            }
+
+            if let Ok(mut file) = std::fs::File::open(file) {
+                let summary = self.load_mod_summary(cached_info.hash, &mut file, false);
+                self.put(cached_info.hash, summary.clone());
+                return (summary, Some(cached_info));
+            }
+
+            self.parents_by_missing_child.write().entry(cached_info.hash).or_default().push(hash);
+            (None, Some(cached_info))
+        });
+        let summaries: Vec<_> = summaries.collect();
+
+        let mut png_icon = None;
+        if let Some(icon) = archive.by_name("icon.png") {
+            png_icon = load_icon(icon);
+        }
+
+        let authors = if let Some(author) = manifest_json.author {
+            format!("By {}", author).into()
+        } else {
+            "".into()
+        };
+
+        Some(Arc::new(ContentSummary {
+            id: None,
+            hash,
+            name: manifest_json.name,
+            authors,
+            version_str: format!("v{}", manifest_json.version).into(),
+            png_icon,
+            extra: ContentType::CurseforgeModpack {
+                files: manifest_json.files,
+                summaries: summaries.into(),
+                overrides: overrides.into_iter().collect(),
+                minecraft: manifest_json.minecraft,
+            }
+        }))
+    }
+
     fn load_jarjar<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, _hash: [u8; 20], archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
@@ -672,11 +856,10 @@ impl ContentSources {
             Ok(existing) => {
                 let old_source = &mut values[existing].1;
                 let skip = match old_source {
-                    ContentSource::Manual => value == ContentSource::Manual,
-                    ContentSource::ModrinthUnknown => value == ContentSource::ModrinthUnknown,
                     ContentSource::ModrinthProject { project: _ } => {
                         old_source == &value || value == ContentSource::ModrinthUnknown
                     },
+                    _ => old_source == &value
                 };
                 if skip {
                     return false;
@@ -739,6 +922,11 @@ impl ContentSources {
                 data.push(project.len() as u8);
                 data.extend_from_slice(project.as_bytes());
             },
+            ContentSource::CurseforgeProject { project_id: project } => {
+                data.push(3_u8);
+                data.push(4_u8);
+                data.extend_from_slice(&project.to_le_bytes());
+            }
         }
     }
 
@@ -828,6 +1016,16 @@ impl ContentSources {
 
                         ContentSource::ModrinthProject { project: project_id.into() }
                     },
+                    3 => {
+                        debug_assert_eq!(type_and_size_buf[1], 4);
+                        let mut id_buf = [0_u8; 4];
+
+                        if cursor.read_exact(&mut id_buf).is_err() {
+                            break;
+                        }
+
+                        ContentSource::CurseforgeProject { project_id: u32::from_le_bytes(id_buf) }
+                    },
                     _ => {
                         cursor.consume(type_and_size_buf[1] as usize);
                         continue;
@@ -849,6 +1047,19 @@ impl ContentSources {
             by_first_byte
         })
     }
+}
+
+#[derive(Deserialize, Serialize, Default)]
+struct PersistedCurseforgeFileCache {
+    entries: Vec<PersistedCurseforgeFileCacheEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct PersistedCurseforgeFileCacheEntry {
+    file_id: u32,
+    hash: String,
+    filename: String,
+    disabled_third_party_downloads: bool,
 }
 
 #[serde_as]

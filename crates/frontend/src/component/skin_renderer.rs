@@ -1,7 +1,6 @@
 use gpui::{prelude::*, *};
 use gpui_component::StyledExt;
-use image::{Frame, RgbaImage};
-use parking_lot::Mutex;
+use image::{DynamicImage, Frame, RgbaImage};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -191,12 +190,24 @@ struct Triangle {
     normal: Vec3,
 }
 
-/// Cape texture format: Mojang 64x32/92x44 use (1,1,10,16). OptiFine 46x22 uses (22,0,20,32).
-fn generate_triangles(
-    part: &BodyPart,
-    is_64x32: bool,
-    cape_tex_size: Option<(u32, u32)>,
-) -> Vec<Triangle> {
+fn normalize_cape_texture(image: DynamicImage) -> RgbaImage {
+    let source = image.to_rgba8();
+
+    // OptiFine pastes donor/special capes onto a 64x32 canvas and keeps doubling
+    // until the source fits, preserving the expected 2:1 cape UV space.
+    let mut width = 64;
+    let mut height = 32;
+    while width < source.width() || height < source.height() {
+        width *= 2;
+        height *= 2;
+    }
+
+    let mut normalized = RgbaImage::new(width, height);
+    image::imageops::replace(&mut normalized, &source, 0, 0);
+    normalized
+}
+
+fn generate_triangles(part: &BodyPart, is_64x32: bool) -> Vec<Triangle> {
     let bloat = if part.is_overlay { 0.5 } else { 0.0 };
     let sw = part.size.x + bloat;
     let sh = part.size.y + bloat;
@@ -309,41 +320,26 @@ fn generate_triangles(
         });
     };
 
-    // Minecraft skin UV mapping. Cape: Mojang (1,1,10,16), OptiFine 46x22 (22,0,20,32).
+    // Minecraft skin UV mapping. Capes use the same cuboid UV layout as a 10x16x1 box,
+    // but the visible outer face is the cape's "back" texture and the inner face is the "front".
     // Front face (touching player back for cape)
     let front_u = if part.limb == Limb::Cape { u + d + w + d } else { u + d };
     add_face(p011, p111, p101, p001, front_u, v + d, w, h);
     // Back face (visible part for cape)
     let (back_u, back_v, back_w, back_h) = if part.limb == Limb::Cape {
-        match cape_tex_size {
-            Some((_, 22)) => (22.0, 0.0, 20.0, 32.0), // OptiFine 46x22
-            _ => (1.0, 1.0, 10.0, 16.0),              // Mojang 64x32
-        }
+        (u + d, v + d, w, h)
     } else {
         (u + d + w + d, v + d, w, h)
     };
     add_face(p110, p010, p000, p100, back_u, back_v, back_w, back_h);
     // Right face
-    let right_u = if part.limb == Limb::Cape { back_u + back_w - 1.0 } else { u };
-    let (right_v, right_dw, right_dh) = if part.limb == Limb::Cape { (back_v, 1.0, back_h) } else { (v + d, d, h) };
-    add_face(p111, p110, p100, p101, right_u, right_v, right_dw, right_dh);
+    add_face(p111, p110, p100, p101, u, v + d, d, h);
     // Left face
-    let left_u = if part.limb == Limb::Cape { back_u } else { u + d + w };
-    add_face(p010, p011, p001, p000, left_u, right_v, right_dw, right_dh);
+    add_face(p010, p011, p001, p000, u + d + w, v + d, d, h);
     // Top face
-    let (top_u, top_v, top_w, top_d) = if part.limb == Limb::Cape {
-        (back_u, back_v, back_w, 4.0)
-    } else {
-        (u + d, v, w, d)
-    };
-    add_face(p010, p110, p111, p011, top_u, top_v, top_w, top_d);
+    add_face(p010, p110, p111, p011, u + d, v, w, d);
     // Bottom face
-    let (bot_u, bot_v, bot_w, bot_d) = if part.limb == Limb::Cape {
-        (back_u, back_v + back_h - 4.0, back_w, 3.0)
-    } else {
-        (u + d + w, v, w, d)
-    };
-    add_face(p001, p101, p100, p000, bot_u, bot_v, bot_w, bot_d);
+    add_face(p001, p101, p100, p000, u + d + w, v, w, d);
 
     tris
 }
@@ -424,7 +420,7 @@ impl SkinRenderer {
             };
             if should_update {
                 if let Ok(img) = image::load_from_memory(new_bytes) {
-                    self.parsed_cape = Some(img.to_rgba8());
+                    self.parsed_cape = Some(normalize_cape_texture(img));
                 }
             }
         } else {
@@ -563,12 +559,7 @@ impl SkinRenderer {
                 tex
             };
 
-            let cape_tex_size = if use_cape_texture {
-                Some((tex_to_use.width(), tex_to_use.height()))
-            } else {
-                None
-            };
-            let tris = generate_triangles(&part, is_64x32, cape_tex_size);
+            let tris = generate_triangles(&part, is_64x32);
             for t in tris {
                 // Project normal
                 let mut norm = t.normal;

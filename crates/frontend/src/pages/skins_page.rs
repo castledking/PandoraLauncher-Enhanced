@@ -30,9 +30,6 @@ fn optifine_cape_url(username: &str) -> String {
     format!("https://optifine.net/capes/{}.png", username)
 }
 
-/// OptiFine cape editor / customization page (donors can change cape design here).
-const OPTIFINE_CAPE_EDITOR_URL: &str = "https://optifine.net/capeChange";
-
 enum SkinPageState {
     Loading,
     NotAuthenticated,
@@ -506,8 +503,57 @@ impl SkinsPage {
 }
 
 impl Page for SkinsPage {
-    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        gpui::Empty
+    fn controls(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let SkinPageState::Ready(profile) = &self.state else {
+            return gpui::Empty.into_any_element();
+        };
+
+        let active_skin_id = Self::active_skin_id(profile);
+        let active_cape_id = Self::active_cape_id(profile);
+        let can_apply_changes =
+            self.selected_skin_id != active_skin_id || self.selected_cape_id != active_cape_id;
+        let profile = profile.clone();
+        let account_name: String = (&*profile.name).to_string();
+        let skins_folder = self.launcher_dir.join("owned_skins").join(&account_name);
+
+        h_flex()
+            .gap_2()
+            .child(
+                Button::new("reset_skin_changes")
+                    .label("Reset")
+                    .disabled(!can_apply_changes)
+                    .on_click({
+                        let profile = profile.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            this.reset_pending_selection(&profile, cx);
+                            cx.notify();
+                        })
+                    }),
+            )
+            .child(
+                Button::new("apply_skin_changes")
+                    .label("Apply Changes")
+                    .success()
+                    .disabled(!can_apply_changes)
+                    .on_click({
+                        let profile = profile.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            this.apply_pending_selection(&profile);
+                            this.load_profile(cx);
+                            cx.notify();
+                        })
+                    }),
+            )
+            .child(
+                Button::new("open_skins_folder")
+                    .ml_2()
+                    .icon(IconName::FolderOpen)
+                    .label("Open skins folder")
+                    .on_click(move |_button, window, cx| {
+                        crate::open_folder(&skins_folder, window, cx);
+                    }),
+            )
+            .into_any_element()
     }
 
     fn scrollable(&self, _cx: &App) -> bool {
@@ -529,10 +575,7 @@ impl Render for SkinsPage {
             },
             SkinPageState::Ready(profile) => {
                 let optifine_cape_in_preview = self.optifine_cape_in_preview;
-                let active_skin_id = Self::active_skin_id(profile);
                 let active_cape_id = Self::active_cape_id(profile);
-                let can_apply_changes =
-                    self.selected_skin_id != active_skin_id || self.selected_cape_id != active_cape_id;
                 let left_panel = v_flex()
                     .w(px(320.0))
                     .flex_shrink_0()
@@ -570,14 +613,6 @@ impl Render for SkinsPage {
                                         this.last_rendered_optifine_username = None;
                                         this.update_skin_renderer(cx);
                                         cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("open_optifine_cape_editor")
-                                    .icon(IconName::ExternalLink)
-                                    .label("Open OptiFine cape editor")
-                                    .on_click(cx.listener(|_button, _event, _window, cx| {
-                                        cx.open_url(OPTIFINE_CAPE_EDITOR_URL);
                                     })),
                             ),
                     );
@@ -756,49 +791,9 @@ impl Render for SkinsPage {
                             .gap_2()
                             .child(
                                 div()
-                                    .flex_1()
                                     .text_xl()
                                     .font_weight(FontWeight::BOLD)
                                     .child(format!("{}'s Skins", profile.name)),
-                            )
-                            .child(
-                                Button::new("reset_skin_changes")
-                                    .label("Reset")
-                                    .disabled(!can_apply_changes)
-                                    .on_click({
-                                        let profile = profile.clone();
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.reset_pending_selection(&profile, cx);
-                                            cx.notify();
-                                        })
-                                    }),
-                            )
-                            .child(
-                                Button::new("apply_skin_changes")
-                                    .label("Apply Changes")
-                                    .success()
-                                    .disabled(!can_apply_changes)
-                                    .on_click({
-                                        let profile = profile.clone();
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.apply_pending_selection(&profile);
-                                            this.load_profile(cx);
-                                            cx.notify();
-                                        })
-                                    }),
-                            )
-                            .child(
-                                Button::new("open_skins_folder")
-                                    .ml_2()
-                                    .icon(IconName::FolderOpen)
-                                    .label("Open skins folder")
-                                    .on_click({
-                                        let account_name: String = (&*profile.name).to_string();
-                                        let skins_folder = self.launcher_dir.join("owned_skins").join(&account_name);
-                                        move |_button, window, cx| {
-                                            crate::open_folder(&skins_folder, window, cx);
-                                        }
-                                    }),
                             ),
                     )
                     .child(

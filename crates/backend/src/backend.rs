@@ -1386,8 +1386,11 @@ impl BackendState {
             }
 
             let new_instance_dir = self.directories.instances_dir.join(name);
-            if let Err(err) = std::fs::rename(&instance.root_path, new_instance_dir) {
+            if let Err(err) = std::fs::rename(&instance.root_path, &new_instance_dir) {
                 self.send.send_error(format!("Unable to rename instance folder: {}", err));
+            } else {
+                instance.on_root_renamed(&new_instance_dir);
+                self.send.send(instance.create_modify_message());
             }
         }
 

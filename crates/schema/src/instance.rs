@@ -31,6 +31,8 @@ pub struct InstanceConfiguration {
     pub instance_fallback_icon: Option<Ustr>,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub disable_file_syncing: bool,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "Vec::is_empty")]
+    pub created_shortcuts: Vec<Arc<str>>,
 }
 
 impl InstanceConfiguration {
@@ -48,6 +50,7 @@ impl InstanceConfiguration {
             system_libraries: None,
             instance_fallback_icon: None,
             disable_file_syncing: false,
+            created_shortcuts: Vec::new(),
         }
     }
 }

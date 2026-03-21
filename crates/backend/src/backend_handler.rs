@@ -3017,7 +3017,16 @@ impl BackendState {
                         "--run-instance",
                         instance.name.as_str()
                     ];
-                    crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args);
+                    if let Some(shortcut_path) =
+                        crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args)
+                    {
+                        let shortcut_path: Arc<str> = shortcut_path.to_string_lossy().to_string().into();
+                        instance.configuration.modify(|configuration| {
+                            if !configuration.created_shortcuts.iter().any(|existing| existing.as_ref() == shortcut_path.as_ref()) {
+                                configuration.created_shortcuts.push(shortcut_path);
+                            }
+                        });
+                    }
                 }
             },
             MessageToBackend::InstallUpdate { update, modal_action } => {

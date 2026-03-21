@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, io::Cursor, path::{Path, PathBuf}, sync::Arc, time::{Duration, SystemTime}
+    collections::{HashMap, HashSet}, io::Cursor, path::{Path, PathBuf}, sync::Arc, time::{Duration, SystemTime}
 };
 
 use auth::{
@@ -1343,7 +1343,43 @@ impl BackendState {
             return;
         }
 
+        let Ok(current_exe) = std::env::current_exe() else {
+            self.send.send_error("Unable to rename instance shortcuts: failed to locate current executable");
+            return;
+        };
+
         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            let old_name = instance.name.to_string();
+            let args = &["--run-instance", name];
+            let mut shortcut_candidates: HashSet<PathBuf> = instance
+                .configuration
+                .get()
+                .created_shortcuts
+                .iter()
+                .map(|shortcut_path| PathBuf::from(shortcut_path.as_ref()))
+                .collect();
+
+            if let Some(user_dirs) = directories::UserDirs::new()
+                && let Some(desktop_dir) = user_dirs.desktop_dir()
+            {
+                for filename in crate::shortcut::known_shortcut_filenames(&old_name) {
+                    shortcut_candidates.insert(desktop_dir.join(filename));
+                }
+            }
+
+            let updated_shortcuts: Vec<Arc<str>> = shortcut_candidates
+                .into_iter()
+                .filter(|shortcut_path| shortcut_path.exists())
+                .filter_map(|shortcut_path| {
+                    crate::shortcut::update_shortcut(shortcut_path, &old_name, name, &current_exe, args)
+                        .map(|updated| Arc::<str>::from(updated.to_string_lossy().to_string()))
+                })
+                .collect();
+
+            instance.configuration.modify(|configuration| {
+                configuration.created_shortcuts = updated_shortcuts;
+            });
+
             if cfg!(windows) {
                 self.file_watching.write().unwatch_subdirectories_of_instance(id);
                 instance.mark_all_dirty();

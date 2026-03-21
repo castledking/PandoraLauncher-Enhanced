@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet, hash::{DefaultHasher, Hash, Hasher}, io::Read, path::Path, process::Child, sync::{
+    collections::HashSet, hash::{DefaultHasher, Hash, Hasher}, io::Read, path::{Path, PathBuf}, process::{Child, Command}, sync::{
         Arc, atomic::Ordering
     }
 };
@@ -22,6 +22,11 @@ use ustr::Ustr;
 
 use crate::{BackendStateFileWatching, BackendStateInstances, IoOrSerializationError, WatchTarget, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent};
 
+#[derive(Debug, Serialize, Deserialize)]
+struct RunningInstanceState {
+    pid: u32,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstanceStats {
     pub total_playtime_secs: u64,
@@ -42,6 +47,7 @@ pub struct Instance {
     pub configuration: Persistent<InstanceConfiguration>,
 
     pub child: Option<Child>,
+    pub running_pid: Option<u32>,
 
     pub worlds_state: Arc<AtomicBridgeDataLoadState>,
     dirty_worlds: HashSet<Arc<Path>>,
@@ -177,6 +183,104 @@ impl From<IoOrSerializationError> for InstanceLoadError {
 }
 
 impl Instance {
+    fn running_state_path(path: &Path) -> PathBuf {
+        path.join(".pandora_running_instance.json")
+    }
+
+    fn process_exists(pid: u32) -> bool {
+        #[cfg(windows)]
+        {
+            let output = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                .output();
+            let Ok(output) = output else {
+                return false;
+            };
+            if !output.status.success() {
+                return false;
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            !stdout.trim().is_empty() && !stdout.contains("No tasks are running")
+        }
+
+        #[cfg(not(windows))]
+        {
+            Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        }
+    }
+
+    pub fn kill_pid(pid: u32) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            let status = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!("taskkill failed for PID {pid}")))
+            }
+        }
+
+        #[cfg(not(windows))]
+        {
+            let status = Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!("kill failed for PID {pid}")))
+            }
+        }
+    }
+
+    fn load_running_pid(path: &Path) -> Option<u32> {
+        let running_state_path = Self::running_state_path(path);
+        let Ok(data) = std::fs::read(&running_state_path) else {
+            return None;
+        };
+        let Ok(state) = serde_json::from_slice::<RunningInstanceState>(&data) else {
+            _ = std::fs::remove_file(running_state_path);
+            return None;
+        };
+        if Self::process_exists(state.pid) {
+            Some(state.pid)
+        } else {
+            _ = std::fs::remove_file(running_state_path);
+            None
+        }
+    }
+
+    pub fn set_running_pid(&mut self, pid: u32) {
+        self.running_pid = Some(pid);
+        let state = RunningInstanceState { pid };
+        if let Ok(bytes) = serde_json::to_vec(&state) {
+            _ = crate::write_safe(&Self::running_state_path(&self.root_path), &bytes);
+        }
+    }
+
+    pub fn clear_running_pid(&mut self) {
+        self.running_pid = None;
+        _ = std::fs::remove_file(Self::running_state_path(&self.root_path));
+    }
+
+    pub fn refresh_running_pid(&mut self) -> bool {
+        let Some(pid) = self.running_pid else {
+            return false;
+        };
+        if Self::process_exists(pid) {
+            false
+        } else {
+            self.clear_running_pid();
+            true
+        }
+    }
+
     pub fn on_root_renamed(&mut self, path: &Path) {
         log::info!("Instance {:?} has been moved to {:?}", self.root_path, path);
 
@@ -718,6 +822,7 @@ impl Instance {
             configuration: instance_info,
 
             child: None,
+            running_pid: Self::load_running_pid(path),
 
             worlds_state: Arc::new(AtomicBridgeDataLoadState::new(BridgeDataLoadState::Unloaded)),
             dirty_worlds: HashSet::new(),
@@ -778,7 +883,7 @@ impl Instance {
     }
 
     pub fn status(&self) -> InstanceStatus {
-        if self.child.is_some() {
+        if self.child.is_some() || self.running_pid.is_some() {
             InstanceStatus::Running
         } else {
             InstanceStatus::NotRunning

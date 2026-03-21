@@ -18,7 +18,7 @@ pub fn create_shortcut(mut path: PathBuf, name: &str, bin: &Path, args: &[&str])
 Type=Application
 Version=1.0
 Name={name}
-Exec=sh -c "{exec}"
+Exec={exec}
 Categories=Games;Minecraft;Launcher;
 "#).as_bytes());
 

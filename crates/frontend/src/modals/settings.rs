@@ -290,6 +290,11 @@ impl Settings {
                         .checked(interface_config.quick_delete_instance).on_click(|value, _, cx| {
                             InterfaceConfig::get_mut(cx).quick_delete_instance = *value;
                         }))
+                    .child(Checkbox::new("confirm-delete-skin")
+                        .label(ts!("settings.delete.skip_skin_delete_confirmation"))
+                        .checked(interface_config.quick_delete_skins).on_click(|value, _, cx| {
+                            InterfaceConfig::get_mut(cx).quick_delete_skins = *value;
+                        }))
                     )
             );
 

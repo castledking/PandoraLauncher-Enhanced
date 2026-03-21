@@ -47,7 +47,7 @@ impl Page for InstancePage {
             InstanceStatus::NotRunning => {
                 Button::new("start_instance").success().icon(PandoraIcon::Play).label(ts!("instance.start.label")).on_click(
                     move |_, window, cx| {
-                        root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                        root::start_instance(id, name.clone(), None, false, &backend_handle, window, cx);
                     },
                 ).into_any_element()
             },
@@ -109,6 +109,7 @@ impl Page for InstancePage {
                                                                 id,
                                                                 name.clone(),
                                                                 None,
+                                                                true,
                                                                 &backend_handle,
                                                                 window,
                                                                 cx,

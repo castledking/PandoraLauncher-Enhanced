@@ -1,6 +1,8 @@
-use gpui::{prelude::*, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window, *};
-use gpui_component::{button::Button, IconName, StyledExt};
+use gpui::{prelude::*, InteractiveElement, IntoElement, ParentElement, Styled, Window, *};
+use gpui_component::{Sizable, button::{Button, ButtonVariants}, h_flex};
 use std::sync::Arc;
+
+use crate::icon::PandoraIcon;
 
 pub fn render_skin_card(
     skin_id: Arc<str>,
@@ -12,20 +14,45 @@ pub fn render_skin_card(
     back_image: Option<Arc<RenderImage>>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
     on_reveal: Option<impl Fn(&mut Window, &mut App) + 'static>,
+    on_delete: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 ) -> impl IntoElement {
-    let reveal_button = on_reveal.map(|on_reveal| {
-        Button::new(format!("reveal-{}", skin_id))
-            .icon(IconName::FolderOpen)
-            .size_6()
-            .absolute()
-            .top_2()
-            .right_2()
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+    let action_buttons = on_reveal.map(|on_reveal| {
+        let reveal_button = Button::new(format!("reveal-{}", skin_id))
+            .icon(PandoraIcon::FolderOpen)
+            .small()
+            .compact()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx: &mut App| {
                 cx.stop_propagation();
             })
             .on_click(move |_, window, cx| {
                 on_reveal(window, cx);
-            })
+            });
+
+        let row = h_flex()
+            .absolute()
+            .top_2()
+            .right_2()
+            .gap_1()
+            .invisible()
+            .group_hover("skin-card", |style| style.visible())
+            .child(reveal_button);
+        if let Some(on_delete) = on_delete {
+            row.child(
+                Button::new(format!("delete-{}", skin_id))
+                    .icon(PandoraIcon::Trash2)
+                    .danger()
+                    .small()
+                    .compact()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx: &mut App| {
+                        cx.stop_propagation();
+                    })
+                    .on_click(move |click, window, cx| {
+                        on_delete(click, window, cx);
+                    }),
+            )
+        } else {
+            row
+        }
     });
 
     div()
@@ -97,7 +124,7 @@ pub fn render_skin_card(
                 div()
                     .absolute()
                     .top_2()
-                    .right_2()
+                    .left_2()
                     .bg(gpui::rgba(0x00ff00ff))
                     .text_color(gpui::black())
                     .text_xs()
@@ -106,5 +133,5 @@ pub fn render_skin_card(
                     .child(if is_equipped { "Equipped" } else { "Selected" }),
             )
         })
-        .when_some(reveal_button, |this, btn| this.child(btn))
+        .when_some(action_buttons, |this, btns| this.child(btns))
 }

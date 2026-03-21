@@ -227,7 +227,7 @@ impl InstanceList {
                             InstanceStatus::NotRunning => {
                                 Button::new(("start", index)).flex_grow().small().success().label(ts!("instance.start.label")).on_click(
                                     move |_, window, cx| {
-                                        root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                                        root::start_instance(id, name.clone(), None, false, &backend_handle, window, cx);
                                     },
                                 )
                             },
@@ -330,7 +330,7 @@ impl TableDelegate for InstanceList {
                             let id = item.id;
                             let backend_handle = backend_handle.clone();
                             move |_, window, cx| {
-                                root::start_instance(id, name.clone(), None, &backend_handle, window, cx);
+                                root::start_instance(id, name.clone(), None, false, &backend_handle, window, cx);
                             }
                         }))
                         .child(Button::new(("view", row_ix)).w(relative(0.5)).small().info().label(ts!("instance.view")).on_click({

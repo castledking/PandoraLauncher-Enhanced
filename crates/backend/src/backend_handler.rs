@@ -79,6 +79,73 @@ fn validate_skin_image(bytes: &[u8]) -> Result<(), Arc<str>> {
 }
 
 impl BackendState {
+    async fn delete_owned_skin_impl(&self, skin_id: Arc<str>) {
+        let account_name = {
+            let mut account_info = self.account_info.write();
+            let info = account_info.get();
+            let Some(selected_uuid) = info.selected_account else {
+                self.send.send_error(Arc::from("No account selected"));
+                return;
+            };
+            let Some(account) = info.accounts.get(&selected_uuid) else {
+                self.send.send_error(Arc::from("Selected account not found"));
+                return;
+            };
+            account.username.to_string()
+        };
+
+        let account_skins_dir = self.directories.owned_skins_dir.join(&account_name);
+        let owned_skins_json = account_skins_dir.join("owned_skins.json");
+
+        let mut owned_skins: crate::backend::OwnedSkins = if owned_skins_json.exists() {
+            match tokio::fs::read_to_string(&owned_skins_json).await {
+                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                Err(_) => crate::backend::OwnedSkins::default(),
+            }
+        } else {
+            crate::backend::OwnedSkins::default()
+        };
+
+        let Some(index) = owned_skins
+            .skins
+            .iter()
+            .position(|skin| skin.skin_id == skin_id.as_ref() || skin.id == skin_id.as_ref())
+        else {
+            self.send.send_error(Arc::from("Owned skin not found"));
+            return;
+        };
+
+        let owned_skin = owned_skins.skins.remove(index);
+        let file_path = account_skins_dir.join(&owned_skin.file_name);
+
+        if file_path.exists() {
+            let file_path_for_trash = file_path.clone();
+            let trash_result = tokio::task::spawn_blocking(move || trash::delete(&file_path_for_trash)).await;
+            match trash_result {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    self.send.send_error(Arc::from(format!("Failed to move skin to trash: {}", err)));
+                    return;
+                }
+                Err(err) => {
+                    self.send.send_error(Arc::from(format!("Failed to move skin to trash: {}", err)));
+                    return;
+                }
+            }
+        }
+
+        owned_skins.skins.retain(|owned| account_skins_dir.join(&owned.file_name).exists());
+        if let Ok(json) = serde_json::to_string_pretty(&owned_skins) {
+            let _ = tokio::fs::write(&owned_skins_json, json).await;
+        }
+
+        self.send.send(MessageToFrontend::AddNotification {
+            notification_type: bridge::message::BridgeNotificationType::Success,
+            message: Arc::from("Skin moved to trash."),
+        });
+        self.request_minecraft_profile_reload().await;
+    }
+
     async fn add_owned_skin_impl(
         &self,
         skin_data: Arc<[u8]>,
@@ -991,12 +1058,22 @@ impl BackendState {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     if let Some(mut child) = instance.child.take() {
                         let result = child.kill();
+                        instance.clear_running_pid();
                         if result.is_err() {
                             self.send.send_error("Failed to kill instance");
                             log::error!("Failed to kill instance: {:?}", result.unwrap_err());
                         }
 
                         self.send.send(instance.create_modify_message());
+                    } else if let Some(pid) = instance.running_pid {
+                        let result = crate::instance::Instance::kill_pid(pid);
+                        if result.is_err() {
+                            self.send.send_error("Failed to kill instance");
+                            log::error!("Failed to kill instance PID {}: {:?}", pid, result.unwrap_err());
+                        } else {
+                            instance.clear_running_pid();
+                            self.send.send(instance.create_modify_message());
+                        }
                     } else {
                         self.send.send_error("Can't kill instance, instance wasn't running");
                     }
@@ -1008,6 +1085,7 @@ impl BackendState {
             MessageToBackend::StartInstance {
                 id,
                 quick_play,
+                allow_running_instance,
                 modal_action,
             } => {
                 let Some(login_info) = self.get_login_info(&modal_action).await else {
@@ -1029,7 +1107,7 @@ impl BackendState {
                 }
 
                 let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    if instance.child.is_some() {
+                    if (instance.child.is_some() || instance.running_pid.is_some()) && !allow_running_instance {
                         self.send.send_warning("Can't launch instance, already running");
                         modal_action.set_error_message("Can't launch instance, already running".into());
                         modal_action.set_finished();
@@ -1065,6 +1143,7 @@ impl BackendState {
                 let is_err = result.is_err();
                 match result {
                     Ok(mut child) => {
+                        let pid = child.id();
                         if !self.config.write().get().dont_open_game_output_when_launching {
                             if let Some(stdout) = child.stdout.take() {
                                 log_reader::start_game_output(stdout, child.stderr.take(), self.send.clone());
@@ -1077,6 +1156,7 @@ impl BackendState {
                         child.stdout.take();
 
                         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                            instance.set_running_pid(pid);
                             instance.child = Some(child);
                         }
                     },
@@ -1771,6 +1851,9 @@ impl BackendState {
                         modal_action.set_finished();
                     }
                 }
+            },
+            MessageToBackend::DeleteOwnedSkin { skin_id } => {
+                self.delete_owned_skin_impl(skin_id).await;
             },
             MessageToBackend::SetSkinFromPath { path, skin_variant, modal_action } => {
                 match std::fs::read(std::path::Path::new(path.as_ref())) {

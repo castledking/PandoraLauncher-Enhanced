@@ -11,7 +11,7 @@ use schema::{
         CurseforgeModLoaderType,
     },
     loader::Loader,
-    modrinth::{ModrinthLoader, ModrinthProjectVersionsRequest},
+    modrinth::{ModrinthDependency, ModrinthDependencyType, ModrinthLoader, ModrinthProjectVersion, ModrinthProjectVersionsRequest},
 };
 use sha1::{Digest, Sha1};
 use tokio::io::AsyncWriteExt;
@@ -94,6 +94,19 @@ impl From<&Path> for FilenameAndExtension {
 
 impl BackendState {
     pub async fn install_content(&self, content: ContentInstall, modal_action: ModalAction) {
+        let expanded_files = match self.expand_content_files_recursive(&content).await {
+            Ok(files) => files,
+            Err(error) => {
+                modal_action.set_error_message(Arc::from(format!("{}", error)));
+                return;
+            },
+        };
+
+        let content = ContentInstall {
+            files: expanded_files.into(),
+            ..content
+        };
+
         let semaphore = tokio::sync::Semaphore::new(8);
 
         let mut tasks = Vec::new();
@@ -562,6 +575,225 @@ impl BackendState {
                 modal_action.set_error_message(Arc::from(format!("{}", error).as_str()));
             },
         }
+    }
+
+    async fn expand_content_files_recursive(&self, content: &ContentInstall) -> Result<Vec<ContentInstallFile>, ContentInstallError> {
+        let mut expanded = Vec::new();
+        let mut stack: Vec<(ContentInstallFile, bool)> = content.files.iter().cloned().rev().map(|file| (file, true)).collect();
+        let mut seen_modrinth = std::collections::HashSet::<(Arc<str>, Option<Arc<str>>)>::new();
+        let mut seen_curseforge = std::collections::HashSet::<u32>::new();
+
+        while let Some((mut content_file, explicit)) = stack.pop() {
+            match &content_file.download {
+                bridge::install::ContentDownload::Modrinth {
+                    project_id,
+                    version_id,
+                    install_dependencies,
+                } => {
+                    let key = (project_id.clone(), version_id.clone());
+                    if !explicit && !seen_modrinth.insert(key.clone()) {
+                        continue;
+                    }
+                    if explicit && *install_dependencies {
+                        seen_modrinth.insert(key.clone());
+                    }
+
+                    if *install_dependencies {
+                        let version = self.resolve_modrinth_version_for_install(content, project_id.clone(), version_id.clone()).await?;
+                        let dependencies = self.resolve_modrinth_dependency_files(content, &version).await?;
+
+                        if let bridge::install::ContentDownload::Modrinth { install_dependencies, .. } = &mut content_file.download {
+                            *install_dependencies = false;
+                        }
+
+                        for dependency in dependencies.into_iter().rev() {
+                            stack.push((dependency, false));
+                        }
+                    }
+                },
+                bridge::install::ContentDownload::Curseforge {
+                    project_id,
+                    install_dependencies,
+                } => {
+                    if !explicit && !seen_curseforge.insert(*project_id) {
+                        continue;
+                    }
+                    if explicit && *install_dependencies {
+                        seen_curseforge.insert(*project_id);
+                    }
+
+                    if *install_dependencies {
+                        let file = self.resolve_curseforge_file_for_install(content, *project_id).await?;
+                        let dependencies = self.resolve_curseforge_dependency_files(&file);
+
+                        if let bridge::install::ContentDownload::Curseforge { install_dependencies, .. } = &mut content_file.download {
+                            *install_dependencies = false;
+                        }
+
+                        for dependency in dependencies.into_iter().rev() {
+                            stack.push((dependency, false));
+                        }
+                    }
+                },
+                bridge::install::ContentDownload::Url { .. } | bridge::install::ContentDownload::File { .. } => {}
+            }
+
+            expanded.push(content_file);
+        }
+
+        Ok(expanded)
+    }
+
+    async fn resolve_modrinth_version_for_install(
+        &self,
+        content: &ContentInstall,
+        project_id: Arc<str>,
+        version_id: Option<Arc<str>>,
+    ) -> Result<Arc<ModrinthProjectVersion>, ContentInstallError> {
+        if let Some(version_id) = version_id {
+            let version = self.meta.fetch(&ModrinthVersionMetadataItem(version_id)).await?;
+            if version.project_id != project_id {
+                return Err(ContentInstallError::MismatchedProjectIdForVersion(
+                    version.id.clone(),
+                    project_id,
+                    version.project_id.clone(),
+                ));
+            }
+            return Ok(version);
+        }
+
+        let loaders_filter = if content.datapack_world.is_some() {
+            Some(Arc::from([
+                ModrinthLoader::Datapack,
+                ModrinthLoader::Minecraft,
+            ]))
+        } else {
+            None
+        };
+
+        let versions = self.meta.fetch(&ModrinthProjectVersionsMetadataItem(&ModrinthProjectVersionsRequest {
+            project_id: project_id.clone(),
+            game_versions: content.version_hint.clone().map(|v| [v].into()),
+            loaders: loaders_filter,
+        })).await?;
+
+        let modrinth_loader = content.loader_hint.as_modrinth_loader();
+        let version = if content.datapack_world.is_some() {
+            versions.0.iter()
+                .find(|version| version.loaders.as_ref().map_or(false, |loaders| {
+                    loaders.contains(&ModrinthLoader::Datapack) || loaders.contains(&ModrinthLoader::Minecraft)
+                }))
+                .or(versions.0.first())
+        } else if modrinth_loader != ModrinthLoader::Unknown {
+            versions.0.iter()
+                .find(|version| version.loaders.as_ref().map_or(false, |loaders| loaders.contains(&modrinth_loader)))
+                .or(versions.0.first())
+        } else {
+            versions.0.first()
+        };
+
+        version
+            .map(|version| Arc::new(version.clone()))
+            .ok_or(ContentInstallError::UnableToFindVersion)
+    }
+
+    async fn resolve_modrinth_dependency_files(
+        &self,
+        content: &ContentInstall,
+        version: &ModrinthProjectVersion,
+    ) -> Result<Vec<ContentInstallFile>, ContentInstallError> {
+        let mut dependencies = Vec::new();
+
+        for dependency in version.dependencies.as_deref().unwrap_or(&[]) {
+            if dependency.dependency_type != ModrinthDependencyType::Required {
+                continue;
+            }
+
+            let (project_id, version_id) = self.resolve_modrinth_dependency_target(dependency).await?;
+            dependencies.push(ContentInstallFile {
+                replace_old: None,
+                path: ContentInstallPath::Automatic,
+                download: bridge::install::ContentDownload::Modrinth {
+                    project_id: project_id.clone(),
+                    version_id,
+                    install_dependencies: true,
+                },
+                content_source: schema::content::ContentSource::ModrinthProject { project: project_id },
+            });
+        }
+
+        let _ = content;
+        Ok(dependencies)
+    }
+
+    async fn resolve_modrinth_dependency_target(
+        &self,
+        dependency: &ModrinthDependency,
+    ) -> Result<(Arc<str>, Option<Arc<str>>), ContentInstallError> {
+        if let Some(project_id) = &dependency.project_id {
+            return Ok((project_id.clone(), dependency.version_id.clone()));
+        }
+
+        let Some(version_id) = &dependency.version_id else {
+            return Err(ContentInstallError::UnableToFindVersion);
+        };
+
+        let version = self.meta.fetch(&ModrinthVersionMetadataItem(version_id.clone())).await?;
+        Ok((version.project_id.clone(), Some(version.id.clone())))
+    }
+
+    async fn resolve_curseforge_file_for_install(
+        &self,
+        content: &ContentInstall,
+        project_id: u32,
+    ) -> Result<Arc<schema::curseforge::CurseforgeFile>, ContentInstallError> {
+        let versions = self.meta.fetch(&CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
+            mod_id: project_id,
+            game_version: content.version_hint.clone().map(|v| v.into()),
+            mod_loader_type: match content.loader_hint {
+                Loader::Vanilla => None,
+                Loader::Fabric => Some(CurseforgeModLoaderType::Fabric as u32),
+                Loader::Forge => Some(CurseforgeModLoaderType::Forge as u32),
+                Loader::NeoForge => Some(CurseforgeModLoaderType::NeoForge as u32),
+                Loader::Unknown => None,
+            },
+            page_size: Some(1),
+        })).await?;
+
+        let Some(file) = versions.data.first() else {
+            return Err(ContentInstallError::UnableToFindVersion);
+        };
+
+        if file.mod_id != project_id {
+            return Err(ContentInstallError::MismatchedProjectIdForVersion(
+                file.file_name.clone(),
+                format!("{}", project_id).into(),
+                format!("{}", file.mod_id).into(),
+            ));
+        }
+
+        Ok(Arc::new(file.clone()))
+    }
+
+    fn resolve_curseforge_dependency_files(
+        &self,
+        file: &schema::curseforge::CurseforgeFile,
+    ) -> Vec<ContentInstallFile> {
+        file.dependencies
+            .iter()
+            .filter(|dependency| dependency.relation_type == schema::curseforge::CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY)
+            .map(|dependency| ContentInstallFile {
+                replace_old: None,
+                path: ContentInstallPath::Automatic,
+                download: bridge::install::ContentDownload::Curseforge {
+                    project_id: dependency.mod_id,
+                    install_dependencies: true,
+                },
+                content_source: schema::content::ContentSource::CurseforgeProject {
+                    project_id: dependency.mod_id,
+                },
+            })
+            .collect()
     }
 
     fn replace_aux_path(&self, replace: &Path, new_summary: &Option<Arc<ContentSummary>>, new_path: &Path) {

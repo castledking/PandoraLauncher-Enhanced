@@ -104,6 +104,7 @@ pub enum MessageToBackend {
     StartInstance {
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
+        allow_running_instance: bool,
         modal_action: ModalAction,
     },
     RequestLoadWorlds {
@@ -251,6 +252,9 @@ pub enum MessageToBackend {
         skin_url: Arc<str>,
         skin_variant: Arc<str>,
         modal_action: ModalAction,
+    },
+    DeleteOwnedSkin {
+        skin_id: Arc<str>,
     },
     SetSkinFromPath {
         path: Arc<str>,

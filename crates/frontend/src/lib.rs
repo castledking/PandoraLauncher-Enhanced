@@ -314,7 +314,7 @@ pub(crate) fn labelled(label: impl Into<SharedString>, element: impl IntoElement
 
 pub(crate) fn open_folder(path: &Path, window: &mut Window, cx: &mut App) {
     if path.is_dir() {
-        if let Err(err) = open::that_detached(path) {
+        if let Err(err) = open_folder_detached(path) {
             let notification: Notification = (NotificationType::Error, ts!("file_system.open_folder.error", err = err)).into();
             window.push_notification(notification.autohide(false), cx);
         }
@@ -322,4 +322,37 @@ pub(crate) fn open_folder(path: &Path, window: &mut Window, cx: &mut App) {
         let notification: Notification = (NotificationType::Error, ts!("file_system.open_folder.not_a_directory")).into();
         window.push_notification(notification.autohide(false), cx);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn open_folder_detached(path: &Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let candidates: [(&str, &[&str]); 3] = [
+        ("xdg-open", &[]),
+        ("gio", &["open"]),
+        ("thunar", &[]),
+    ];
+
+    let path_str = path.to_string_lossy().into_owned();
+    let mut errors = Vec::new();
+
+    for (program, args) in candidates {
+        let result = Command::new(program)
+            .args(args)
+            .arg(&path_str)
+            .spawn();
+
+        match result {
+            Ok(_) => return Ok(()),
+            Err(err) => errors.push(format!("{program}: {err}")),
+        }
+    }
+
+    Err(errors.join("; "))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_folder_detached(path: &Path) -> Result<(), String> {
+    open::that_detached(path).map_err(|err| err.to_string())
 }

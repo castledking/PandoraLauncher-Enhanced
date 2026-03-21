@@ -430,6 +430,9 @@ impl BackendState {
                 resource_packs_state: Arc::clone(&instance.content_state[ContentFolder::ResourcePacks].load_state),
             };
             self.send.send(message);
+            if instance.status() == bridge::instance::InstanceStatus::Running {
+                self.send.send(instance.create_modify_message());
+            }
 
             instance.id
         };
@@ -490,6 +493,12 @@ impl BackendState {
             {
                 log::debug!("Child process is no longer alive");
                 instance.child = None;
+                instance.clear_running_pid();
+                self.send.send(instance.create_modify_message());
+                continue;
+            }
+
+            if instance.child.is_none() && instance.refresh_running_pid() {
                 self.send.send(instance.create_modify_message());
             }
         }

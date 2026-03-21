@@ -96,7 +96,7 @@ pub fn perform_datapack_install(
                     download: ContentDownload::Modrinth {
                         project_id: dep.project_id.clone().unwrap(),
                         version_id: dep.version_id.clone(),
-                        install_dependencies: false,
+                        install_dependencies: true,
                     },
                     content_source: ContentSource::ModrinthProject {
                         project: dep.project_id.clone().unwrap(),
@@ -1153,7 +1153,7 @@ impl InstallDialog {
                                             download: ContentDownload::Modrinth {
                                                 project_id: dep.project_id.clone().unwrap(),
                                                 version_id: dep.version_id.clone(),
-                                                install_dependencies: false,
+                                                install_dependencies: true,
                                             },
                                             content_source: ContentSource::ModrinthProject {
                                                 project: dep.project_id.clone().unwrap(),

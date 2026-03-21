@@ -1,6 +1,7 @@
 pub mod create_instance;
 pub mod curseforge_install;
 pub mod delete_instance;
+pub mod delete_skin;
 pub mod generic;
 pub mod modrinth_install;
 pub mod modrinth_install_auto;

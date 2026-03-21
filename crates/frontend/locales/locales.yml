@@ -742,6 +742,8 @@ settings:
       en: Shift+Click to skip mod delete confirmation
     skip_instance_delete_confirmation:
       en: Shift+Click to skip instance delete confirmation
+    skip_skin_delete_confirmation:
+      en: Shift+Click to skip skin delete confirmation
   launch:
     title:
       en: Launching

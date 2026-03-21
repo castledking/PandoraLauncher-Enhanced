@@ -39,6 +39,8 @@ pub struct InterfaceConfig {
     pub quick_delete_mods: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub quick_delete_instance: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quick_delete_skins: bool,
     #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
     pub content_install_latest: bool,
     pub modrinth_install_normally: bool,
@@ -87,6 +89,7 @@ impl Default for InterfaceConfig {
             page_path: Default::default(),
             quick_delete_mods: Default::default(),
             quick_delete_instance: Default::default(),
+            quick_delete_skins: Default::default(),
             content_install_latest: true,
             modrinth_install_normally: Default::default(),
             modrinth_filter_version: default_modrinth_filter_version(),

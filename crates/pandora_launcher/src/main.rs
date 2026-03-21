@@ -66,6 +66,7 @@ fn main() {
                     backend_handle.send(bridge::message::MessageToBackend::StartInstance {
                         id,
                         quick_play: None,
+                        allow_running_instance: false,
                         modal_action: modal_action.clone()
                     });
                     run_modal_action(modal_action);

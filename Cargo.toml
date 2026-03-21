@@ -118,3 +118,4 @@ itertools = "0.14.0"
 crc32fast = "1.5.0"
 scopeguard = "1.2.0"
 hickory-resolver = { version = "0.25.2", features = ["system-config"] }
+trash = "5.2.5"

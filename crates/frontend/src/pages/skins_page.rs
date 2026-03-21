@@ -19,7 +19,7 @@ use crate::{
     component::{cape_card, skin_renderer::SkinRenderer},
     entity::{account::{AccountEntries, AccountChanged}, minecraft_profile::MinecraftProfileEntries, skin_thumbnail_cache::SkinThumbnailCache, DataEntities},
     interface_config::InterfaceConfig,
-    modals::upload_skin_modal,
+    modals::{delete_skin, upload_skin_modal},
     pages::page::{Page, page_layout},
     ui::PageType,
 };
@@ -707,6 +707,26 @@ impl Render for SkinsPage {
                                     });
                                 }
                             }),
+                            if !is_equipped && skin.local_path.is_some() {
+                                let backend_handle = self.backend_handle.clone();
+                                let skin_id = skin.id.clone();
+                                Some(move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                    if InterfaceConfig::get(cx).quick_delete_skins && click.modifiers().shift {
+                                        backend_handle.send(MessageToBackend::DeleteOwnedSkin {
+                                            skin_id: skin_id.clone(),
+                                        });
+                                    } else {
+                                        delete_skin::open_delete_skin(
+                                            skin_id.clone(),
+                                            backend_handle.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                })
+                            } else {
+                                None
+                            },
                         ).into_any_element()
                     );
                 }

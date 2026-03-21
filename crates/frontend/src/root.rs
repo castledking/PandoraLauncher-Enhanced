@@ -108,6 +108,7 @@ pub fn start_instance(
     id: InstanceID,
     name: SharedString,
     quick_play: Option<QuickPlayLaunch>,
+    allow_running_instance: bool,
     backend_handle: &BackendHandle,
     window: &mut Window,
     cx: &mut App,
@@ -117,6 +118,7 @@ pub fn start_instance(
     backend_handle.send(MessageToBackend::StartInstance {
         id,
         quick_play,
+        allow_running_instance,
         modal_action: modal_action.clone(),
     });
 

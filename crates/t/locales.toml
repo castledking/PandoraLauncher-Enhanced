@@ -1561,6 +1561,19 @@ en = "Duplicate this instance"
 de = "Diese Instanz duplizieren"
 hu = "Példány másolása"
 
+[instance.group.new]
+en = "New group"
+[instance.group.rename]
+en = "Rename"
+[instance.group.delete]
+en = "Delete"
+[instance.group.new_above]
+en = "New group above"
+[instance.group.new_below]
+en = "New group below"
+[instance.group.ungrouped]
+en = "Ungrouped"
+
 [instance.delete]
 en = "Delete this instance"
 pl = "Usuń tę instancję"

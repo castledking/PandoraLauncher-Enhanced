@@ -1,5 +1,10 @@
-use std::{fs, io::{Error, ErrorKind, Read, Write, Result}, path::{Path, PathBuf}, sync::Arc};
 use sha1::Digest;
+use std::{
+    fs,
+    io::{Error, ErrorKind, Read, Result, Write},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use bridge::{
     instance::InstanceID,
@@ -15,7 +20,8 @@ fn find_content_library_path(content_library_dir: &Path, hash: [u8; 20], path: &
         return Some(lib_path);
     }
 
-    let disabled_extension = path.file_name()
+    let disabled_extension = path
+        .file_name()
         .and_then(|s| s.to_str())
         .and_then(|filename| filename.strip_suffix(".disabled"))
         .and_then(|base| Path::new(base).extension())
@@ -150,10 +156,14 @@ fn duplicate_with_content_library(
 
         // If the source_path was hard linked from the content library
         // We will make the duplicated file also hard linked
-        if let Ok(source_metadata) = crate::fs::FileMetadata::new(source_path) && source_metadata.number_of_links() > 1 {
+        if let Ok(source_metadata) = crate::fs::FileMetadata::new(source_path)
+            && source_metadata.number_of_links() > 1
+        {
             if let Ok(hash) = hash_file(source_path, &mut buf, check_cancel) {
                 if let Some(lib_path) = find_content_library_path(content_library_dir, hash, source_path) {
-                    if let Ok(lib_metadata) = crate::fs::FileMetadata::new(&lib_path) && source_metadata.is_same(&lib_metadata) {
+                    if let Ok(lib_metadata) = crate::fs::FileMetadata::new(&lib_path)
+                        && source_metadata.is_same(&lib_metadata)
+                    {
                         if crate::fs::fastcopy(&lib_path, &dest, false, true).is_ok() {
                             files_done += 1;
                             progress(files_done, total_files);
@@ -201,17 +211,19 @@ fn duplicate_with_content_library(
     Ok(())
 }
 
-pub async fn duplicate_instance(
-    backend: Arc<BackendState>,
-    id: InstanceID,
-    name: &str,
-    modal_action: ModalAction,
-) {
+pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name: &str, modal_action: ModalAction) {
     if !crate::fs::is_single_component_path_str(name) {
-        modal_action.set_finished_with_error(format!("Unable to duplicate instance, name must not be a path: {name}").into());
+        modal_action
+            .set_finished_with_error(format!("Unable to duplicate instance, name must not be a path: {name}").into());
         return;
     }
-    if !sanitize_filename::is_sanitized_with_options(name, sanitize_filename::OptionsForCheck { windows: true, ..Default::default() }) {
+    if !sanitize_filename::is_sanitized_with_options(
+        name,
+        sanitize_filename::OptionsForCheck {
+            windows: true,
+            ..Default::default()
+        },
+    ) {
         modal_action.set_finished_with_error(format!("Unable to duplicate instance, name is invalid: {name}").into());
         return;
     }
@@ -238,17 +250,23 @@ pub async fn duplicate_instance(
 
     let tracker = modal_action.push_tracker("Copying instance files...".into());
 
-    let result = duplicate_with_content_library(&source, &dest, &backend.directories.content_library_dir, &|current, total| {
-        tracker.set_count(current as usize);
-        tracker.set_total(total as usize);
-    }, &|| {
-        if modal_action.has_requested_cancel() {
-            tracker.set_title("Cancelling...".into());
-            Err(Error::new(ErrorKind::Interrupted, "Operation cancelled"))
-        } else {
-            Ok(())
-        }
-    });
+    let result = duplicate_with_content_library(
+        &source,
+        &dest,
+        &backend.directories.content_library_dir,
+        &|current, total| {
+            tracker.set_count(current as usize);
+            tracker.set_total(total as usize);
+        },
+        &|| {
+            if modal_action.has_requested_cancel() {
+                tracker.set_title("Cancelling...".into());
+                Err(Error::new(ErrorKind::Interrupted, "Operation cancelled"))
+            } else {
+                Ok(())
+            }
+        },
+    );
 
     match result {
         Ok(()) => {

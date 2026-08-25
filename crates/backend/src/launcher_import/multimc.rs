@@ -3,7 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use auth::{credentials::AccountCredentials, models::{TokenWithExpiry, XstsToken}, secret::PlatformSecretStorage};
+use auth::{
+    credentials::AccountCredentials,
+    models::{TokenWithExpiry, XstsToken},
+    secret::PlatformSecretStorage,
+};
 use bridge::{import::ImportFromOtherLauncherJob, modal_action::ModalAction};
 use chrono::DateTime;
 use schema::{
@@ -515,14 +519,24 @@ fn import_instances_from_multimc(
             });
         } else if mmc_dot_minecraft.exists() {
             _ = std::fs::create_dir_all(&target_dot_minecraft);
-            _ = crate::fs::copy_content_recursive(&mmc_dot_minecraft, &target_dot_minecraft, false, &|copied, total| {
-                tracker.set_total(total as usize);
-                tracker.set_count(copied as usize);
-            });
+            _ = crate::fs::copy_content_recursive(
+                &mmc_dot_minecraft,
+                &target_dot_minecraft,
+                false,
+                &|copied, total| {
+                    tracker.set_total(total as usize);
+                    tracker.set_count(copied as usize);
+                },
+            );
         }
 
         // Copy icon
-        _ = crate::fs::fastcopy(&to_import.folder.join("icon.png"), &to_import.pandora_path.join("icon.png"), true, false);
+        _ = crate::fs::fastcopy(
+            &to_import.folder.join("icon.png"),
+            &to_import.pandora_path.join("icon.png"),
+            true,
+            false,
+        );
 
         // Write info_v1.json
         let info_path = to_import.pandora_path.join("info_v1.json");

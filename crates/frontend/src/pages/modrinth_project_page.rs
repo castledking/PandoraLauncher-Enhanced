@@ -28,9 +28,9 @@ use crate::{
         instance::ContentStates,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
+    format_downloads,
     icon::PandoraIcon,
     pages::modrinth_page::{InstalledContent, PrimaryAction, env_display, get_primary_action, icon_for},
-    format_downloads,
 };
 
 pub struct ModrinthProjectPage {
@@ -102,7 +102,10 @@ impl ModrinthProjectPage {
 
                         if let Some(content) = entity.read(cx) {
                             for summary in content.iter() {
-                                let ContentSource::ModrinthProject { project_id: other_project_id } = &summary.content_source else {
+                                let ContentSource::ModrinthProject {
+                                    project_id: other_project_id,
+                                } = &summary.content_source
+                                else {
                                     continue;
                                 };
 
@@ -386,7 +389,7 @@ impl Render for ModrinthProjectPage {
                         t::modrinth::versions::range(
                             gv.first().map(|v| v.as_ref()).unwrap_or(""),
                             gv.last().map(|v| v.as_ref()).unwrap_or(""),
-                            gv.len()
+                            gv.len(),
                         )
                     };
                     h_flex().gap_1().text_sm().child(PandoraIcon::Layers).child(text).into_any_element()

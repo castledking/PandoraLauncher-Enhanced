@@ -187,33 +187,206 @@ impl Render for SyncingPage {
 
         let warning = cx.theme().red;
         let info = cx.theme().blue;
-        let content = v_flex().size_full().p_3().gap_3()
+        let content = v_flex()
+            .size_full()
+            .p_3()
+            .gap_3()
             .items_start()
             .child(t::instance::sync::description())
-            .child(Button::new("open").info().icon(PandoraIcon::FolderOpen).label(t::instance::sync::open_folder()).on_click(move |_, window, cx| {
-                crate::open_folder(&sync_folder, window, cx);
-            }))
-            .child(div().w_full().border_b_1().border_color(cx.theme().border).text_lg().child(t::instance::sync::files()))
-            .child(self.create_entry(sync_state, "options.txt".into(), true,  t::instance::sync::targets::options().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "servers.dat".into(), true, t::instance::sync::targets::servers().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "command_history.txt".into(), true, t::instance::sync::targets::commands().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "hotbar.nbt".into(), true, t::instance::sync::targets::hotbars().into(), warning, info, cx))
-            .child(div().w_full().border_b_1().border_color(cx.theme().border).text_lg().child(t::instance::sync::folders()))
-            .child(self.create_entry(sync_state, "saves".into(), false, t::instance::sync::targets::saves().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "config".into(), false, t::instance::sync::targets::config().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "screenshots".into(), false, t::instance::sync::targets::screenshots().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "resourcepacks".into(), false, t::instance::sync::targets::resourcepacks().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "downloads".into(), false, t::instance::sync::targets::downloads().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "shaderpacks".into(), false, t::instance::sync::targets::shaderpacks().into(), warning, info, cx))
-            .child(div().w_full().border_b_1().border_color(cx.theme().border).text_lg().child(t::instance::sync::mods()))
-            .child(self.create_entry(sync_state, "flashback".into(), false, t::instance::sync::targets::flashback().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "Distant_Horizons_server_data".into(), false, t::instance::sync::targets::dh().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, ".voxy".into(), false, t::instance::sync::targets::voxy().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "xaero".into(), false, t::instance::sync::targets::xaero().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "journeymap".into(), false, t::instance::sync::targets::journeymap().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, ".bobby".into(), false, t::instance::sync::targets::bobby().into(), warning, info, cx))
-            .child(self.create_entry(sync_state, "schematics".into(), false, t::instance::sync::targets::litematic().into(), warning, info, cx))
-            .child(div().w_full().border_b_1().border_color(cx.theme().border).text_lg().child(t::instance::sync::custom()))
+            .child(
+                Button::new("open")
+                    .info()
+                    .icon(PandoraIcon::FolderOpen)
+                    .label(t::instance::sync::open_folder())
+                    .on_click(move |_, window, cx| {
+                        crate::open_folder(&sync_folder, window, cx);
+                    }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .text_lg()
+                    .child(t::instance::sync::files()),
+            )
+            .child(self.create_entry(
+                sync_state,
+                "options.txt".into(),
+                true,
+                t::instance::sync::targets::options().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "servers.dat".into(),
+                true,
+                t::instance::sync::targets::servers().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "command_history.txt".into(),
+                true,
+                t::instance::sync::targets::commands().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "hotbar.nbt".into(),
+                true,
+                t::instance::sync::targets::hotbars().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .text_lg()
+                    .child(t::instance::sync::folders()),
+            )
+            .child(self.create_entry(
+                sync_state,
+                "saves".into(),
+                false,
+                t::instance::sync::targets::saves().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "config".into(),
+                false,
+                t::instance::sync::targets::config().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "screenshots".into(),
+                false,
+                t::instance::sync::targets::screenshots().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "resourcepacks".into(),
+                false,
+                t::instance::sync::targets::resourcepacks().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "downloads".into(),
+                false,
+                t::instance::sync::targets::downloads().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "shaderpacks".into(),
+                false,
+                t::instance::sync::targets::shaderpacks().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .text_lg()
+                    .child(t::instance::sync::mods()),
+            )
+            .child(self.create_entry(
+                sync_state,
+                "flashback".into(),
+                false,
+                t::instance::sync::targets::flashback().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "Distant_Horizons_server_data".into(),
+                false,
+                t::instance::sync::targets::dh().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                ".voxy".into(),
+                false,
+                t::instance::sync::targets::voxy().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "xaero".into(),
+                false,
+                t::instance::sync::targets::xaero().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "journeymap".into(),
+                false,
+                t::instance::sync::targets::journeymap().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                ".bobby".into(),
+                false,
+                t::instance::sync::targets::bobby().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(self.create_entry(
+                sync_state,
+                "schematics".into(),
+                false,
+                t::instance::sync::targets::litematic().into(),
+                warning,
+                info,
+                cx,
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .text_lg()
+                    .child(t::instance::sync::custom()),
+            )
             .children(sync_state.targets.iter().filter_map(|(name, state)| {
                 if !state.enabled || NAMED_SYNC_TARGETS.contains(&**name) {
                     return None;

@@ -488,7 +488,8 @@ impl InstallDialog {
                             .w_full()
                             .gap_0p5()
                             .child(
-                                Select::new(instances).placeholder(t::instance::none_selected())
+                                Select::new(instances)
+                                    .placeholder(t::instance::none_selected())
                                     .title_prefix(format!("{}: ", t::instance::label()))
                                     .search_placeholder(t::common::search()),
                             )

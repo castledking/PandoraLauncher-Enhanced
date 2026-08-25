@@ -13,7 +13,15 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{Root, Theme, WindowExt, scroll::ScrollableElement, v_flex};
 
-use crate::{Backwards, CloseWindow, Forwards, MAIN_FONT, OpenSettings, entity::DataEntities, game_output::{GameOutput, GameOutputRoot}, interface_config::{InterfaceConfig, LiveGameOutputDisplay}, modals, pages::instance::instance_page::InstanceSubpageType, ui::{LauncherUI, PageType}};
+use crate::{
+    Backwards, CloseWindow, Forwards, MAIN_FONT, OpenSettings,
+    entity::DataEntities,
+    game_output::{GameOutput, GameOutputRoot},
+    interface_config::{InterfaceConfig, LiveGameOutputDisplay},
+    modals,
+    pages::instance::instance_page::InstanceSubpageType,
+    ui::{LauncherUI, PageType},
+};
 
 pub struct LauncherRootGlobal {
     pub root: Entity<LauncherRoot>,
@@ -88,6 +96,7 @@ impl Render for LauncherRoot {
         }
 
         Theme::global_mut(cx).sheet.margin_top = Pixels::ZERO;
+        Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 
         let sheet_layer = Root::render_sheet_layer(window, cx);
         let dialog_layer = Root::render_dialog_layer(window, cx);
@@ -235,13 +244,16 @@ pub fn start_instance(
                     });
 
                     let config = InterfaceConfig::get(cx);
-                    if matches!(config.main_page, PageType::InstancePage { .. }) && config.instance_subpage != InstanceSubpageType::LiveGameOutput {
+                    if matches!(config.main_page, PageType::InstancePage { .. })
+                        && config.instance_subpage != InstanceSubpageType::LiveGameOutput
+                    {
                         InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::LiveGameOutput;
                     }
                 });
             },
         }
-    }).detach();
+    })
+    .detach();
 }
 
 pub fn start_install(

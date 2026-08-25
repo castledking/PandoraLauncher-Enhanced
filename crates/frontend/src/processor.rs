@@ -1,10 +1,26 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
-use bridge::{instance::InstanceStatus, message::{BridgeNotificationType, MessageToFrontend}, quit::QuitCoordinator};
+use bridge::{
+    instance::InstanceStatus,
+    message::{BridgeNotificationType, MessageToFrontend},
+    quit::QuitCoordinator,
+};
 use gpui::{AnyWindowHandle, App, SharedString, Window};
-use gpui_component::{notification::{Notification, NotificationType}, Root, WindowExt};
+use gpui_component::{
+    Root, WindowExt,
+    notification::{Notification, NotificationType},
+};
 
-use crate::{entity::{DataEntities, account::AccountEntries, instance::{ContentStates, InstanceEntries}, metadata::FrontendMetadata}, interface_config::InterfaceConfig, root::LauncherRoot};
+use crate::{
+    entity::{
+        DataEntities,
+        account::AccountEntries,
+        instance::{ContentStates, InstanceEntries},
+        metadata::FrontendMetadata,
+    },
+    interface_config::InterfaceConfig,
+    root::LauncherRoot,
+};
 
 pub struct Processor {
     data: DataEntities,

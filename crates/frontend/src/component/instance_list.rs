@@ -19,7 +19,7 @@ use crate::{
 
 pub struct InstanceList {
     columns: Vec<Column>,
-    items: Vec<InstanceEntry>,
+    pub(crate) items: Vec<InstanceEntry>,
     data: DataEntities,
     _instance_added_subscription: Subscription,
     _instance_removed_subscription: Subscription,
@@ -78,8 +78,8 @@ impl InstanceList {
         })
     }
 
-    pub fn render_card(&self, index: usize, cx: &mut App) -> Div {
-        let item = &self.items[index];
+    pub fn render_card(entry: &InstanceEntry, index: usize, data: &DataEntities, cx: &mut App) -> Div {
+        let item = entry;
         let loader_and_version = format!(
             "{} {}",
             item.configuration.loader.pretty_name(),
@@ -99,14 +99,14 @@ impl InstanceList {
             Icon::default().path(icon_path).size_16().min_w_16().min_h_16().into_any_element()
         };
 
-        let play_button = render_play_button(item, index, self.data.clone());
+        let play_button = render_play_button(item, index, data.clone());
 
         let theme = cx.theme();
         let id = item.id;
         let name = item.name.clone();
-        let backend_handle = self.data.backend_handle.clone();
-        let backend_handle_for_icon = self.data.backend_handle.clone();
-        let backend_handle_for_rename = self.data.backend_handle.clone();
+        let backend_handle = data.backend_handle.clone();
+        let backend_handle_for_icon = data.backend_handle.clone();
+        let backend_handle_for_rename = data.backend_handle.clone();
         let name_for_rename = item.name.clone();
         let trash_icon = Icon::default().path("icons/trash-2.svg");
         let edit_icon = Icon::default().path("icons/brush.svg").text_color(white());
@@ -391,36 +391,21 @@ fn render_play_button(item: &InstanceEntry, index: usize, data: DataEntities) ->
     let name = item.name.clone();
     let id = item.id;
     match item.status {
-        InstanceStatus::NotRunning => {
-            Button::new(("start_instance", index))
-                .success()
-                .label(t::instance::start::label())
-                .on_click(
-                move |_, window, cx| {
-                    root::start_instance(id, name.clone(), None, &data, window, cx);
-                },
-            )
-        },
-        InstanceStatus::Launching => {
-            Button::new(("launching", index))
-                .warning()
-                .label("...")
-        },
-        InstanceStatus::Stopping => {
-            Button::new(("launching", index))
-                .danger()
-                .label("...")
-        },
+        InstanceStatus::NotRunning => Button::new(("start_instance", index))
+            .success()
+            .label(t::instance::start::label())
+            .on_click(move |_, window, cx| {
+                root::start_instance(id, name.clone(), None, &data, window, cx);
+            }),
+        InstanceStatus::Launching => Button::new(("launching", index)).warning().label("..."),
+        InstanceStatus::Stopping => Button::new(("launching", index)).danger().label("..."),
         InstanceStatus::Running => {
-            Button::new(("kill_instance", index))
-                .danger()
-                .label(t::instance::kill())
-                .on_click({
-                    let backend_handle = data.backend_handle.clone();
-                    move |_, _, _| {
-                        backend_handle.send(MessageToBackend::KillInstance { id });
-                    }
-                })
+            Button::new(("kill_instance", index)).danger().label(t::instance::kill()).on_click({
+                let backend_handle = data.backend_handle.clone();
+                move |_, _, _| {
+                    backend_handle.send(MessageToBackend::KillInstance { id });
+                }
+            })
         },
     }
 }

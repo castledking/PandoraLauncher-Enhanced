@@ -5,10 +5,10 @@ use std::ffi::{OsStr, OsString};
 mod backend;
 pub use backend::*;
 
-mod backend_filesystem;
-mod backend_handler;
 mod account;
 mod arcfactory;
+mod backend_filesystem;
+mod backend_handler;
 mod directories;
 mod duplicate;
 mod export;

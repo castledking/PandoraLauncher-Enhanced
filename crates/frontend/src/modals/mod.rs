@@ -7,6 +7,7 @@ pub mod duplicate_instance;
 pub mod export_instance;
 pub mod generic;
 pub mod modrinth_install;
+pub mod rename_group;
 pub mod rename_instance;
 pub mod select_icon;
 pub mod settings;

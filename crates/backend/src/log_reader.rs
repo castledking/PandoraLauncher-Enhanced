@@ -4,9 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use bridge::{
-    game_output::GameOutputLogLevel, message::GameOutputMsg,
-};
+use bridge::{game_output::GameOutputLogLevel, message::GameOutputMsg};
 use chrono::Utc;
 use memchr::memchr;
 use once_cell::sync::Lazy;
@@ -37,7 +35,10 @@ pub fn replace(string: &str) -> Cow<'_, str> {
     replaced
 }
 
-pub fn start_game_output(stdout: PipeReader, stderr: Option<PipeReader>) -> tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg> {
+pub fn start_game_output(
+    stdout: PipeReader,
+    stderr: Option<PipeReader>,
+) -> tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg> {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
 
     if let Some(stderr) = stderr {

@@ -40,7 +40,26 @@ use ustr::Ustr;
 use uuid::Uuid;
 
 use crate::{
-    BackendState, CachedMinecraftProfile, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, fs::FolderChanges, instance::Instance, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}, skin_manager::SkinManager
+    BackendState, CachedMinecraftProfile, LoginError,
+    account::BackendAccount,
+    arcfactory::ArcStrFactory,
+    fs::FolderChanges,
+    instance::Instance,
+    launch::{ArgumentExpansionKey, LaunchError},
+    log_reader,
+    metadata::{
+        items::{
+            AssetsIndexMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem,
+            FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem,
+            MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem,
+            ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem,
+            MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem,
+            VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters,
+        },
+        manager::MetaLoadError,
+    },
+    mod_metadata::{ContentUpdateAction, ContentUpdateKey},
+    skin_manager::SkinManager,
 };
 
 impl BackendState {
@@ -480,9 +499,7 @@ impl BackendState {
                     // disk — the resourcepacks/shaderpacks folders aren't rebuilt on launch the way
                     // mods are, so otherwise a deleted resource pack/shader would linger.
                     let mut extracted_removals: Vec<std::path::PathBuf> = Vec::new();
-                    if delete
-                        && let Some(files) = instance_mod.content_summary.extra.modpack_files()
-                    {
+                    if delete && let Some(files) = instance_mod.content_summary.extra.modpack_files() {
                         for file in files.iter() {
                             if file.path.as_str() != &*child_filename {
                                 continue;
@@ -703,8 +720,9 @@ impl BackendState {
                     // While the instance is running the live mods folder is a throwaway copy
                     // that gets restored from `original_mods/` on stop, so mirror the delete
                     // into the backup folder to make it persist.
-                    let backup_path =
-                        (folder == ContentFolder::Mods).then(|| instance.frozen_mods_backup_path(&live_path)).flatten();
+                    let backup_path = (folder == ContentFolder::Mods)
+                        .then(|| instance.frozen_mods_backup_path(&live_path))
+                        .flatten();
                     let backup_aux_path = match (folder, &aux_path) {
                         (ContentFolder::Mods, Some(aux_path)) => instance.frozen_mods_backup_path(aux_path),
                         _ => None,
@@ -1157,23 +1175,42 @@ impl BackendState {
                 modal_action.set_finished();
                 self.send.send(MessageToFrontend::Refresh);
             },
-            MessageToBackend::UnzipModpack { id, content_id, modal_action } => {
-                let (summary, loader, minecraft_version, dot_minecraft_dir, mods_dir) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let Some((summary, _)) = instance.try_get_content(content_id) else {
+            MessageToBackend::UnzipModpack {
+                id,
+                content_id,
+                modal_action,
+            } => {
+                let (summary, loader, minecraft_version, dot_minecraft_dir, mods_dir) =
+                    if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                        let Some((summary, _)) = instance.try_get_content(content_id) else {
+                            return;
+                        };
+                        let summary = summary.clone();
+
+                        let cfg = instance.configuration.get();
+                        (
+                            summary,
+                            cfg.loader,
+                            cfg.minecraft_version,
+                            instance.dot_minecraft_path.clone(),
+                            instance.content_state[ContentFolder::Mods].path.clone(),
+                        )
+                    } else {
                         return;
                     };
-                    let summary = summary.clone();
-
-                    let cfg = instance.configuration.get();
-                    (summary, cfg.loader, cfg.minecraft_version, instance.dot_minecraft_path.clone(), instance.content_state[ContentFolder::Mods].path.clone())
-                } else {
-                    return;
-                };
 
                 let modpack_path = summary.path.clone();
 
-                let mod_copies = self.apply_modpack_and_collect_mods(loader, minecraft_version,
-                    &[summary], &dot_minecraft_dir, &mods_dir, &modal_action).await;
+                let mod_copies = self
+                    .apply_modpack_and_collect_mods(
+                        loader,
+                        minecraft_version,
+                        &[summary],
+                        &dot_minecraft_dir,
+                        &mods_dir,
+                        &modal_action,
+                    )
+                    .await;
 
                 let copy_tracker = modal_action.push_tracker("Copying mod files".into());
                 self.apply_copies_to_mods_dir(mod_copies, &mods_dir, &copy_tracker);
@@ -1640,7 +1677,10 @@ impl BackendState {
                 account_info.modify(|account_info| {
                     let to_index = (from_index as isize + delta) as usize;
 
-                    if from_index >= account_info.accounts.len() || to_index >= account_info.accounts.len() || from_index == to_index {
+                    if from_index >= account_info.accounts.len()
+                        || to_index >= account_info.accounts.len()
+                        || from_index == to_index
+                    {
                         return;
                     }
 
@@ -2042,7 +2082,13 @@ impl BackendState {
                     return;
                 }
 
-                let filename = sanitize_filename::sanitize_with_options(filename, sanitize_filename::Options { windows: true, ..Default::default() });
+                let filename = sanitize_filename::sanitize_with_options(
+                    filename,
+                    sanitize_filename::Options {
+                        windows: true,
+                        ..Default::default()
+                    },
+                );
                 let filename = crate::fs::unique_name(&self.directories.skin_library_dir, &filename, false);
                 let path = self.directories.skin_library_dir.join(&*filename);
 
@@ -2174,7 +2220,13 @@ impl BackendState {
                     return;
                 }
 
-                let filename = sanitize_filename::sanitize_with_options(filename, sanitize_filename::Options { windows: true, ..Default::default() });
+                let filename = sanitize_filename::sanitize_with_options(
+                    filename,
+                    sanitize_filename::Options {
+                        windows: true,
+                        ..Default::default()
+                    },
+                );
                 let filename = crate::fs::unique_name(&self.directories.skin_library_dir, &filename, false);
                 let path = self.directories.skin_library_dir.join(&*filename);
 
@@ -2198,12 +2250,14 @@ impl BackendState {
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
         live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
-        modal_action: ModalAction
+        modal_action: ModalAction,
     ) {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            if let Some(launch_keepalive) = &instance.launch_keepalive && launch_keepalive.is_alive() {
+            if let Some(launch_keepalive) = &instance.launch_keepalive
+                && launch_keepalive.is_alive()
+            {
                 modal_action.set_finished_with_error("Can't launch instance, already launching".into());
                 return;
             }
@@ -2255,7 +2309,19 @@ impl BackendState {
         modal_action.clear_trackers();
 
         let launch_tracker = modal_action.push_tracker("Launching".into());
-        let result = self.launcher.launch(&self.redirecting_http_client, dot_minecraft, configuration, quick_play, login_info, live_game_output.is_some(), &launch_tracker, &modal_action).await;
+        let result = self
+            .launcher
+            .launch(
+                &self.redirecting_http_client,
+                dot_minecraft,
+                configuration,
+                quick_play,
+                login_info,
+                live_game_output.is_some(),
+                &launch_tracker,
+                &modal_action,
+            )
+            .await;
 
         if matches!(result, Err(LaunchError::CancelledByUser)) {
             return;

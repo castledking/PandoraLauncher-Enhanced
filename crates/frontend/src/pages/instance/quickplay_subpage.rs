@@ -8,11 +8,19 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Colorize, Disableable, IndexPath, Sizable, Theme, button::{Button, ButtonVariants}, h_flex, list::{List, ListDelegate, ListItem, ListState}, spinner::Spinner, v_flex
+    ActiveTheme as _, Colorize, Disableable, IndexPath, Sizable, Theme,
+    button::{Button, ButtonVariants},
+    h_flex,
+    list::{List, ListDelegate, ListItem, ListState},
+    spinner::Spinner,
+    v_flex,
 };
 
 use crate::{
-    entity::{DataEntities, instance::InstanceEntry}, icon::PandoraIcon, interface_config::InterfaceConfig, png_render_cache, root,
+    entity::{DataEntities, instance::InstanceEntry},
+    icon::PandoraIcon,
+    interface_config::InterfaceConfig,
+    png_render_cache, root,
 };
 
 pub struct InstanceQuickplaySubpage {
@@ -224,11 +232,7 @@ impl ListDelegate for WorldsListDelegate {
         !self.loaded
     }
 
-    fn render_loading(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> impl IntoElement {
+    fn render_loading(&mut self, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> impl IntoElement {
         v_flex()
             .w_full()
             .h_1_2()
@@ -321,11 +325,7 @@ impl ListDelegate for ServersListDelegate {
         !self.loaded
     }
 
-    fn render_loading(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> impl IntoElement {
+    fn render_loading(&mut self, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> impl IntoElement {
         v_flex()
             .w_full()
             .h_1_2()
@@ -395,11 +395,11 @@ impl ListDelegate for ServersListDelegate {
                             theme.danger
                         };
 
-                    this.child(div().text_color(color).child(format!("{}ms", millis)))
-                })
-                .when(summary.status.is_none() && summary.pinging, |this| {
-                    this.child(t::instance::quickplay::pinging())
-                })
+                        this.child(div().text_color(color).child(format!("{}ms", millis)))
+                    })
+                    .when(summary.status.is_none() && summary.pinging, |this| {
+                        this.child(t::instance::quickplay::pinging())
+                    }),
             )
             .when_some(summary.status.as_ref(), |this, status| {
                 this.child(
@@ -413,11 +413,13 @@ impl ListDelegate for ServersListDelegate {
                 )
             })
             .when(summary.status.is_none() && !summary.pinging, |this| {
-                this.child(div()
-                    .whitespace_nowrap()
-                    .text_color(theme.danger)
-                    .h(rems(2.0))
-                    .child(t::instance::quickplay::unable_to_get_status()))
+                this.child(
+                    div()
+                        .whitespace_nowrap()
+                        .text_color(theme.danger)
+                        .h(rems(2.0))
+                        .child(t::instance::quickplay::unable_to_get_status()),
+                )
             });
 
         let id = self.id;
@@ -452,34 +454,27 @@ impl ListDelegate for ServersListDelegate {
                 delegate.reorder_servers(row_index, row_index + 1, cx);
             }));
 
-        let item = ListItem::new(ix)
-            .p_1()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .child(Button::new(ix).success().icon(PandoraIcon::Play).on_click(move |_, window, cx| {
-                                root::start_instance(
-                                    id,
-                                    name.clone(),
-                                    Some(QuickPlayLaunch::Multiplayer(target.clone())),
-                                    &data,
-                                    window,
-                                    cx,
-                                );
-                            }))
-                            .px_2(),
-                    )
-                    .child(icon.size_16().min_w_16().min_h_16())
-                    .child(description)
-                    .child(v_flex()
-                        .gap_1()
-                        .child(move_up)
-                        .child(move_down)
+        let item = ListItem::new(ix).p_1().child(
+            h_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .child(Button::new(ix).success().icon(PandoraIcon::Play).on_click(move |_, window, cx| {
+                            root::start_instance(
+                                id,
+                                name.clone(),
+                                Some(QuickPlayLaunch::Multiplayer(target.clone())),
+                                &data,
+                                window,
+                                cx,
+                            );
+                        }))
                         .px_2(),
-                    ),
-            );
+                )
+                .child(icon.size_16().min_w_16().min_h_16())
+                .child(description)
+                .child(v_flex().gap_1().child(move_up).child(move_down).px_2()),
+        );
 
         Some(item)
     }

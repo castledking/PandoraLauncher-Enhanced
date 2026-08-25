@@ -32,7 +32,8 @@ fn inner(dir: &Path) -> Result<(), Box<dyn Error>> {
 
     let locales = Locales::new(data)?;
 
-    content.push_str(r#"
+    content.push_str(
+        r#"
 static LANG: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 #[derive(Clone, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -87,7 +88,8 @@ pub fn set_lang(lang: &Language) {
     LANG.store(language_to_id(lang), std::sync::atomic::Ordering::Relaxed);
 }
 
-"#);
+"#,
+    );
 
     // lang_code_to_id function
     content.push_str("fn lang_code_to_id(code: &str) -> Option<u8> {\n");

@@ -4,7 +4,11 @@ use std::{
 };
 
 use bridge::{import::ImportFromOtherLauncherJob, modal_action::ModalAction};
-use schema::{curseforge::{CurseforgeModLoaderType}, instance::{InstanceConfiguration, InstanceMemoryConfiguration}, loader::Loader};
+use schema::{
+    curseforge::CurseforgeModLoaderType,
+    instance::{InstanceConfiguration, InstanceMemoryConfiguration},
+    loader::Loader,
+};
 use serde::Deserialize;
 use ustr::Ustr;
 
@@ -143,7 +147,10 @@ pub fn import_instances_from_curseforge(
 
         let Some(configuration) = try_load_from_curseforge(&to_import.config_path) else {
             tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Error);
-            log::error!("Failed to load config path from curseforge for {:?}", to_import.folder.file_name().unwrap());
+            log::error!(
+                "Failed to load config path from curseforge for {:?}",
+                to_import.folder.file_name().unwrap()
+            );
             continue;
         };
 
@@ -179,5 +186,4 @@ pub fn import_instances_from_curseforge(
     }
 
     all_tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Normal);
-
 }

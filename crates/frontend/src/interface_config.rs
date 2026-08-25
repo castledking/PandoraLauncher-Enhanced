@@ -1,4 +1,6 @@
-use std::{cmp::Ordering, io::Write, path::Path, sync::Arc, time::Duration};
+use std::{cmp::Ordering, collections::HashMap, io::Write, path::Path, sync::Arc, time::Duration};
+
+use bridge::instance::InstanceID;
 
 use bridge::instance::InstanceContentSummary;
 use gpui::{App, SharedString, Task};
@@ -89,6 +91,17 @@ pub struct InterfaceConfig {
     pub skin_list_sort_desc: bool,
     #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
     pub skin_list_show_3d: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_groups: Vec<InstanceGroup>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_group_assignments: HashMap<InstanceID, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InstanceGroup {
+    pub id: u64,
+    pub name: String,
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
@@ -223,6 +236,8 @@ impl Default for InterfaceConfig {
             collapse_capes_in_skins_page: false,
             skin_list_sort_desc: false,
             skin_list_show_3d: true,
+            instance_groups: Default::default(),
+            instance_group_assignments: Default::default(),
         }
     }
 }

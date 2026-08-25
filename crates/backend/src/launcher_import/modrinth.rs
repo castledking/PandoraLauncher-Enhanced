@@ -19,15 +19,15 @@ struct ModrinthInstanceToImport {
 }
 
 fn table_exists(conn: &rusqlite::Connection, table_name: &str) -> bool {
-    conn.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1",
-        [table_name],
-        |_| Ok(()),
-    )
-    .is_ok()
+    conn.query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1", [table_name], |_| Ok(()))
+        .is_ok()
 }
 
-pub fn import_instances_from_modrinth(backend: &BackendState, import_job: ImportFromOtherLauncherJob, modal_action: &ModalAction) -> rusqlite::Result<()> {
+pub fn import_instances_from_modrinth(
+    backend: &BackendState,
+    import_job: ImportFromOtherLauncherJob,
+    modal_action: &ModalAction,
+) -> rusqlite::Result<()> {
     if import_job.paths.is_empty() {
         return Ok(());
     }
@@ -115,10 +115,15 @@ pub fn import_instances_from_modrinth(backend: &BackendState, import_job: Import
         let target_dot_minecraft = to_import.pandora_path.join(".minecraft");
 
         _ = std::fs::create_dir_all(&target_dot_minecraft);
-        _ = crate::fs::copy_content_recursive(&to_import.minecraft_folder, &target_dot_minecraft, false, &|copied, total| {
-            tracker.set_total(total as usize);
-            tracker.set_count(copied as usize);
-        });
+        _ = crate::fs::copy_content_recursive(
+            &to_import.minecraft_folder,
+            &target_dot_minecraft,
+            false,
+            &|copied, total| {
+                tracker.set_total(total as usize);
+                tracker.set_count(copied as usize);
+            },
+        );
 
         // Copy icon
         if let Some(icon_path) = to_import.icon_path {
@@ -163,9 +168,7 @@ pub fn read_profiles_from_modrinth_db(modrinth: &Path) -> rusqlite::Result<Optio
 
     let conn = rusqlite::Connection::open(app_db)?;
 
-    let custom_dir = conn.query_one("SELECT custom_dir FROM settings", [], |row| {
-        row.get::<_, String>(0)
-    }).ok();
+    let custom_dir = conn.query_one("SELECT custom_dir FROM settings", [], |row| row.get::<_, String>(0)).ok();
 
     let mut profile_dir_main = modrinth.join("profiles");
     let mut profile_dir_fallback = None;
@@ -191,7 +194,11 @@ pub fn read_profiles_from_modrinth_db(modrinth: &Path) -> rusqlite::Result<Optio
     Ok(Some(paths_from_query(profile_dir_main, profile_dir_fallback, query)?))
 }
 
-fn paths_from_query(profile_dir_main: PathBuf, profile_dir_fallback: Option<PathBuf>, mut query: rusqlite::Rows<'_>) -> Result<Vec<Arc<Path>>, rusqlite::Error> {
+fn paths_from_query(
+    profile_dir_main: PathBuf,
+    profile_dir_fallback: Option<PathBuf>,
+    mut query: rusqlite::Rows<'_>,
+) -> Result<Vec<Arc<Path>>, rusqlite::Error> {
     let mut paths = Vec::new();
 
     while let Ok(Some(row)) = query.next() {

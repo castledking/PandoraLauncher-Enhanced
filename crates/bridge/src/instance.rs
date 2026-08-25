@@ -14,7 +14,7 @@ use schema::{
 
 use crate::safe_path::SafePath;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct InstanceID {
     pub index: usize,
     pub generation: usize,

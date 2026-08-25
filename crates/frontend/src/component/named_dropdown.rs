@@ -10,7 +10,7 @@ pub struct NamedDropdownItem<T: Clone + PartialEq> {
     pub item: T,
 }
 
-impl <T: Clone + PartialEq> PartialEq for NamedDropdownItem<T> {
+impl<T: Clone + PartialEq> PartialEq for NamedDropdownItem<T> {
     fn eq(&self, other: &Self) -> bool {
         self.item == other.item
     }
@@ -44,7 +44,12 @@ impl<T: Clone + PartialEq> NamedDropdown<T> {
         })
     }
 
-    pub fn create_and_select(items: Vec<NamedDropdownItem<T>>, selected: T, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
+    pub fn create_and_select(
+        items: Vec<NamedDropdownItem<T>>,
+        selected: T,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<SelectState<Self>> {
         cx.new(|cx| {
             let delegate = Self::new(items);
             let mut select_state = SelectState::new(delegate, None, window, cx);
@@ -79,12 +84,7 @@ impl<T: Clone + PartialEq + 'static> SelectDelegate for NamedDropdown<T> {
         None
     }
 
-    fn perform_search(
-        &mut self,
-        _query: &str,
-        _window: &mut Window,
-        _: &mut App,
-    ) -> Task<()> {
+    fn perform_search(&mut self, _query: &str, _window: &mut Window, _: &mut App) -> Task<()> {
         Task::ready(())
     }
 }

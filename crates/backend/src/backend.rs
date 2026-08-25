@@ -20,13 +20,12 @@ use bridge::{
     handle::{BackendHandle, BackendReceiver, FrontendHandle},
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath},
     instance::{
-        ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath,
-        ModpackFileSource,
+        ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath, ModpackFileSource,
     },
     message::{EmbeddedOrRaw, MessageToFrontend},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
-    safe_path::SafePath
+    safe_path::SafePath,
 };
 use image::ImageFormat;
 use indexmap::IndexSet;
@@ -780,7 +779,12 @@ impl BackendState {
         if disable {
             crate::syncing::apply_to_instance(&SyncTargets::default(), &self.directories, path, &mut instances);
         } else {
-            crate::syncing::apply_to_instance(&self.config.write().get().sync_targets, &self.directories, path, &mut instances);
+            crate::syncing::apply_to_instance(
+                &self.config.write().get().sync_targets,
+                &self.directories,
+                path,
+                &mut instances,
+            );
         }
     }
 
@@ -821,11 +825,7 @@ impl BackendState {
         instance.set_frozen_mods_folder(false);
     }
 
-    pub async fn prelaunch_setup_mods(
-        self: &Arc<Self>,
-        id: InstanceID,
-        modal_action: &ModalAction,
-    ) {
+    pub async fn prelaunch_setup_mods(self: &Arc<Self>, id: InstanceID, modal_action: &ModalAction) {
         let (loader, minecraft_version, root_dir, dot_minecraft_dir, mods_dir) =
             if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                 if !instance.processes.is_empty() {
@@ -886,7 +886,16 @@ impl BackendState {
             }
         }
 
-        let mod_copies = self.apply_modpack_and_collect_mods(loader, minecraft_version, &mods, &dot_minecraft_dir, &mods_dir, modal_action).await;
+        let mod_copies = self
+            .apply_modpack_and_collect_mods(
+                loader,
+                minecraft_version,
+                &mods,
+                &dot_minecraft_dir,
+                &mods_dir,
+                modal_action,
+            )
+            .await;
 
         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             instance.set_frozen_mods_folder(true);
@@ -943,7 +952,15 @@ impl BackendState {
         }
     }
 
-    pub async fn apply_modpack_and_collect_mods(self: &Arc<Self>, loader: Loader, minecraft_version: Ustr, mods: &[InstanceContentSummary], dot_minecraft_dir: &Path, mod_dir: &Path, modal_action: &ModalAction) -> Vec<PrelaunchModCopy> {
+    pub async fn apply_modpack_and_collect_mods(
+        self: &Arc<Self>,
+        loader: Loader,
+        minecraft_version: Ustr,
+        mods: &[InstanceContentSummary],
+        dot_minecraft_dir: &Path,
+        mod_dir: &Path,
+        modal_action: &ModalAction,
+    ) -> Vec<PrelaunchModCopy> {
         let mut mod_copies = Vec::new();
 
         struct ModpackInstall {
@@ -983,12 +1000,18 @@ impl BackendState {
                     };
 
                     let extension = path.extension().and_then(OsStr::to_str);
-                    let content_library_path = crate::fs::create_content_library_path(&content_library_dir, summary.content_summary.hash, extension);
+                    let content_library_path = crate::fs::create_content_library_path(
+                        &content_library_dir,
+                        summary.content_summary.hash,
+                        extension,
+                    );
 
                     if content_library_path.exists() {
                         mod_copies.push(PrelaunchModCopy {
                             path: rel_path.to_path_buf(),
-                            source: PrelaunchModCopySource::FromContentLibrary { hash: summary.content_summary.hash },
+                            source: PrelaunchModCopySource::FromContentLibrary {
+                                hash: summary.content_summary.hash,
+                            },
                         });
                     } else if let Ok(file) = std::fs::read(&path) {
                         mod_copies.push(PrelaunchModCopy {
@@ -1083,9 +1106,7 @@ impl BackendState {
                         if let Some(filename) = rel_path.strip_prefix("mods") {
                             mod_copies.push(PrelaunchModCopy {
                                 path: filename.to_path(Path::new(".")),
-                                source: PrelaunchModCopySource::FromBytes {
-                                    bytes: bytes.clone(),
-                                },
+                                source: PrelaunchModCopySource::FromBytes { bytes: bytes.clone() },
                             });
                         } else {
                             let dest_path = rel_path.to_path(&dot_minecraft_dir);
@@ -1106,14 +1127,16 @@ impl BackendState {
                         if let Some(filename) = rel_path.strip_prefix("mods") {
                             mod_copies.push(PrelaunchModCopy {
                                 path: filename.to_path(Path::new(".")),
-                                source: PrelaunchModCopySource::FromContentLibrary {
-                                    hash: file.hash,
-                                },
+                                source: PrelaunchModCopySource::FromContentLibrary { hash: file.hash },
                             });
                         } else {
                             let dest_path = rel_path.to_path(&dot_minecraft_dir);
 
-                            let content_path = crate::fs::create_content_library_path(content_library_dir, file.hash, rel_path.extension());
+                            let content_path = crate::fs::create_content_library_path(
+                                content_library_dir,
+                                file.hash,
+                                rel_path.extension(),
+                            );
 
                             if should_override_file(file.path.as_str(), &dest_path, file.hash, &aux) {
                                 if let Some(aux) = &mut aux {
@@ -1148,7 +1171,12 @@ impl BackendState {
         mod_copies
     }
 
-    pub fn apply_copies_to_mods_dir(&self, mod_copies: Vec<PrelaunchModCopy>, mods_dir: &Path, tracker: &ProgressTracker) {
+    pub fn apply_copies_to_mods_dir(
+        &self,
+        mod_copies: Vec<PrelaunchModCopy>,
+        mods_dir: &Path,
+        tracker: &ProgressTracker,
+    ) {
         tracker.set_total(mod_copies.len());
 
         let content_library_dir = &self.directories.content_library_dir.clone();
@@ -1213,7 +1241,9 @@ impl BackendState {
         let modrinth_source_for_url = |url: &str| -> Option<ContentSource> {
             let path = url.strip_prefix("https://cdn.modrinth.com/data/")?;
             let project_id = path.split('/').next().filter(|s| !s.is_empty())?;
-            Some(ContentSource::ModrinthProject { project_id: project_id.into() })
+            Some(ContentSource::ModrinthProject {
+                project_id: project_id.into(),
+            })
         };
 
         for file in files.iter() {
@@ -1427,7 +1457,8 @@ impl BackendState {
     ) -> Option<PathBuf> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
-            self.send.send_warning(format!("Unable to create instance, name must not be a path: {}", name));
+            self.send
+                .send_warning(format!("Unable to create instance, name must not be a path: {}", name));
             return None;
         }
         if !sanitize_filename::is_sanitized_with_options(
@@ -1482,7 +1513,8 @@ impl BackendState {
 
     pub async fn rename_instance(self: &Arc<Self>, id: InstanceID, name: &str) {
         if !crate::fs::is_single_component_path_str(&name) {
-            self.send.send_warning(format!("Unable to rename instance, name must not be a path: {}", name));
+            self.send
+                .send_warning(format!("Unable to rename instance, name must not be a path: {}", name));
             return;
         }
 

@@ -48,10 +48,10 @@ use crate::{
         instance::ContentStates,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
+    format_downloads,
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::page::Page,
-    format_downloads,
 };
 
 fn show_vanilla_change_to_fabric_modal(
@@ -222,8 +222,7 @@ impl CurseforgeSearchPage {
 
                     if let Some(content) = instance_content[content_folder].read(cx).as_ref() {
                         for summary in content.iter() {
-                            let ContentSource::CurseforgeProject { project_id: project } =
-                                summary.content_source
+                            let ContentSource::CurseforgeProject { project_id: project } = summary.content_source
                             else {
                                 continue;
                             };
@@ -252,8 +251,7 @@ impl CurseforgeSearchPage {
                         let content = entity.read(cx);
                         if let Some(content) = content.as_ref() {
                             for summary in content.iter() {
-                                let ContentSource::CurseforgeProject { project_id: project } =
-                                    summary.content_source
+                                let ContentSource::CurseforgeProject { project_id: project } = summary.content_source
                                 else {
                                     continue;
                                 };
@@ -590,10 +588,8 @@ impl CurseforgeSearchPage {
                     div().flex_shrink_0().child(tag_separator.clone()).into_any_element()
                 });
 
-                let downloads = h_flex()
-                    .gap_1()
-                    .child(PandoraIcon::Download)
-                    .child(format_downloads(hit.download_count));
+                let downloads =
+                    h_flex().gap_1().child(PandoraIcon::Download).child(format_downloads(hit.download_count));
 
                 let primary_action = self.get_primary_action(hit.id, cx);
                 let installed_content = self.all_installed_content_by_project.get(&hit.id);
@@ -869,22 +865,8 @@ impl CurseforgeSearchPage {
                             .flex_grow(1.0)
                             .gap_1()
                             .overflow_hidden()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .items_end()
-                                    .line_clamp(1)
-                                    .text_lg()
-                                    .child(name)
-                                    .child(author_line),
-                            )
-                            .child(
-                                div()
-                                    .flex_auto()
-                                    .line_height(px(20.0))
-                                    .line_clamp(2)
-                                    .child(description),
-                            )
+                            .child(h_flex().gap_1().items_end().line_clamp(1).text_lg().child(name).child(author_line))
+                            .child(div().flex_auto().line_height(px(20.0)).line_clamp(2).child(description))
                             .child(
                                 h_flex()
                                     .text_sm()
@@ -1230,7 +1212,6 @@ impl Render for CurseforgeSearchPage {
         h_flex().flex_1().min_h_0().size_full().child(parameters).child(content)
     }
 }
-
 
 const FILTER_MOD_CATEGORIES: &[(&'static str, u32)] = &[
     ("Addons", 426),

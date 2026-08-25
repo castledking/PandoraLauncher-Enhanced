@@ -17,7 +17,13 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, list::{ListDelegate, ListItem, ListState}, spinner::Spinner, switch::Switch, v_flex
+    ActiveTheme, Disableable, IndexPath, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
+    list::{ListDelegate, ListItem, ListState},
+    spinner::Spinner,
+    switch::Switch,
+    v_flex,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
@@ -302,20 +308,29 @@ impl ContentListDelegate {
         };
 
         let unzip_button = if summary.content_summary.extra.modpack_files().is_some() {
-            Some(Button::new(("unzip", element_id))
-                .outline()
-                .icon(PandoraIcon::PackageOpen)
-                .tooltip(t::instance::content::unzip::tooltip())
-                .on_click({
-                    let instance_id = self.id;
-                    let content_id = summary.id;
-                    let content_title = summary.filename.clone();
-                    let backend_handle = self.backend_handle.clone();
-                    move |_: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        crate::modals::unzip_modpack::open_unzip_modpack(instance_id, content_id, &content_title, backend_handle.clone(), window, cx);
-                    }
-                }))
+            Some(
+                Button::new(("unzip", element_id))
+                    .outline()
+                    .icon(PandoraIcon::PackageOpen)
+                    .tooltip(t::instance::content::unzip::tooltip())
+                    .on_click({
+                        let instance_id = self.id;
+                        let content_id = summary.id;
+                        let content_title = summary.filename.clone();
+                        let backend_handle = self.backend_handle.clone();
+                        move |_: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            crate::modals::unzip_modpack::open_unzip_modpack(
+                                instance_id,
+                                content_id,
+                                &content_title,
+                                backend_handle.clone(),
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            )
         } else {
             None
         };
@@ -564,24 +579,37 @@ impl ContentListDelegate {
             .when_some(desc2, |div, desc2| div.child(desc2.when(!visually_enabled, |this| this.line_through())));
 
         if child.disabled_third_party_downloads {
-            item_content = item_content.child(ErrorAlert::new(t::instance::content::blocked().into(), t::instance::content::install::no_third_party_downloads().into()).w(Length::Auto));
-            item_content = item_content.child(Button::new("download").label(t::instance::content::download()).success().on_click({
-                let backend_handle = self.backend_handle.clone();
-                let id = self.id;
-                let content_id = child.parent;
-                move |_, window, cx| {
-                    let modal_action = ModalAction::default();
+            item_content = item_content.child(
+                ErrorAlert::new(
+                    t::instance::content::blocked().into(),
+                    t::instance::content::install::no_third_party_downloads().into(),
+                )
+                .w(Length::Auto),
+            );
+            item_content = item_content.child(
+                Button::new("download").label(t::instance::content::download()).success().on_click({
+                    let backend_handle = self.backend_handle.clone();
+                    let id = self.id;
+                    let content_id = child.parent;
+                    move |_, window, cx| {
+                        let modal_action = ModalAction::default();
 
-                    backend_handle.send(MessageToBackend::DownloadContentChildren {
-                        id,
-                        content_id,
-                        modal_action: modal_action.clone(),
-                    });
+                        backend_handle.send(MessageToBackend::DownloadContentChildren {
+                            id,
+                            content_id,
+                            modal_action: modal_action.clone(),
+                        });
 
-                    crate::modals::generic::show_modal(window, cx, t::instance::content::downloading_children().into(),
-                        t::instance::content::error_downloading_children().into(), modal_action);
-                }
-            }));
+                        crate::modals::generic::show_modal(
+                            window,
+                            cx,
+                            t::instance::content::downloading_children().into(),
+                            t::instance::content::error_downloading_children().into(),
+                            modal_action,
+                        );
+                    }
+                }),
+            );
         } else {
             let id = self.id;
             let content_id = child.parent;
@@ -951,11 +979,7 @@ impl ListDelegate for ContentListDelegate {
         self.loading
     }
 
-    fn render_loading(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> impl IntoElement {
+    fn render_loading(&mut self, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> impl IntoElement {
         v_flex()
             .w_full()
             .h_1_2()
@@ -964,7 +988,12 @@ impl ListDelegate for ContentListDelegate {
             .child(Spinner::new().color(cx.theme().muted_foreground).with_size(px(36.0)))
     }
 
-    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
         let mut index = ix.row;
 
         if let Some(searched) = &self.searched {

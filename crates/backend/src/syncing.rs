@@ -16,7 +16,12 @@ use schema::backend_config::SyncTargets;
 
 use crate::{BackendStateInstances, directories::LauncherDirectories};
 
-pub fn apply_to_instance(sync_targets: &SyncTargets, directories: &LauncherDirectories, dot_minecraft: Arc<Path>, instances: &mut BackendStateInstances) {
+pub fn apply_to_instance(
+    sync_targets: &SyncTargets,
+    directories: &LauncherDirectories,
+    dot_minecraft: Arc<Path>,
+    instances: &mut BackendStateInstances,
+) {
     _ = std::fs::create_dir_all(&dot_minecraft);
 
     let mut dir_iterator = walkdir::WalkDir::new(&dot_minecraft).into_iter();
@@ -264,10 +269,7 @@ pub fn get_sync_state(
                     is_file: true,
                     sync_count: 0,
                     cannot_sync_count: total,
-                    cannot_sync_instances: syncable_instances
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect(),
+                    cannot_sync_instances: syncable_instances.iter().map(|(name, _)| name.clone()).collect(),
                 },
             );
         }
@@ -292,10 +294,7 @@ pub fn get_sync_state(
                     is_file: false,
                     sync_count: 0,
                     cannot_sync_count: total,
-                    cannot_sync_instances: syncable_instances
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect(),
+                    cannot_sync_instances: syncable_instances.iter().map(|(name, _)| name.clone()).collect(),
                 },
             );
             continue;

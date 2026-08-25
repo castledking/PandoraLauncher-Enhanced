@@ -1,4 +1,9 @@
-use auth::{credentials::AccountCredentials, models::{TokenWithExpiry, XstsToken}, secret::PlatformSecretStorage};
+use crate::{BackendState, account::BackendAccount};
+use auth::{
+    credentials::AccountCredentials,
+    models::{TokenWithExpiry, XstsToken},
+    secret::PlatformSecretStorage,
+};
 use bridge::{import::ImportFromOtherLauncherJob, modal_action::ModalAction};
 use chrono::DateTime;
 use log::debug;
@@ -13,7 +18,6 @@ use std::{
     sync::Arc,
 };
 use uuid::Uuid;
-use crate::{BackendState, account::BackendAccount};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,7 +294,7 @@ async fn import_accounts_from_atlauncher(
         Err(error) => {
             log::error!("Error initializing secret storage: {error}");
             return None;
-        }
+        },
     };
 
     tracker.set_count(1);
@@ -303,12 +307,17 @@ async fn import_accounts_from_atlauncher(
         let mut last_account_username = None;
         for account in &accounts_json {
             tracker.add_count(1);
-            accounts.accounts.insert(account.uuid, BackendAccount {
-                username: account.minecraft_username.clone().into(),
-                offline: false,
-                head: None,
-            });
-            if let Some(last_account) = launcher_config.last_account && account.username == last_account {
+            accounts.accounts.insert(
+                account.uuid,
+                BackendAccount {
+                    username: account.minecraft_username.clone().into(),
+                    offline: false,
+                    head: None,
+                },
+            );
+            if let Some(last_account) = launcher_config.last_account
+                && account.username == last_account
+            {
                 last_account_username = Some(account.uuid);
             }
         }
@@ -417,12 +426,7 @@ fn try_load_from_atlauncher(
         configuration.preferred_account = instance_cfg
             .launcher
             .account
-            .map(|username| {
-                accounts
-                    .iter()
-                    .find(|account| account.username == username)
-                    .map(|account| account.uuid)
-            })
+            .map(|username| accounts.iter().find(|account| account.username == username).map(|account| account.uuid))
             .flatten();
     }
 
@@ -480,7 +484,10 @@ fn import_instances_from_atlauncher(
 
         let Ok(configuration) = try_load_from_atlauncher(&to_import.config_path, launcher_config, accounts) else {
             tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Error);
-            log::error!("Failed to load config path from atlauncher for {:?}", to_import.folder.file_name().unwrap());
+            log::error!(
+                "Failed to load config path from atlauncher for {:?}",
+                to_import.folder.file_name().unwrap()
+            );
             continue;
         };
 

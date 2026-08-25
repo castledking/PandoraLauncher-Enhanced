@@ -127,7 +127,9 @@ pub async fn import_from_other_launcher(
         OtherLauncher::Modrinth => {
             if let Err(err) = import_instances_from_modrinth(backend, import_job, &modal_action) {
                 log::error!("Sqlite error while importing from modrinth: {err}");
-                modal_action.set_finished_with_error("Sqlite error while importing from modrinth, see logs for more info".into());
+                modal_action.set_finished_with_error(
+                    "Sqlite error while importing from modrinth, see logs for more info".into(),
+                );
             }
         },
         OtherLauncher::ATLauncher => {

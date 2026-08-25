@@ -1,6 +1,10 @@
 use bridge::handle::BackendHandle;
 use gpui::{prelude::FluentBuilder, *};
-use gpui_component::{ActiveTheme, Colorize, InteractiveElementExt, Sizable, button::{Button, ButtonVariants}, h_flex};
+use gpui_component::{
+    ActiveTheme, Colorize, InteractiveElementExt, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
+};
 use once_cell::sync::Lazy;
 use schema::pandora_update::UpdatePrompt;
 
@@ -34,36 +38,42 @@ impl RenderOnce for TitleBar {
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .text_xl()
-                .child(h_flex()
-                    .left_2()
-                    .w_full()
-                    .child(h_flex()
-                        .flex_1()
-                        .overflow_hidden()
-                        .child(div().overflow_hidden().pr_8().child(self.page_path))
-                        .child(div().flex_1().child(self.controls))
-                    )
-                    .when_some(self.update, |this, update| {
-                        this.child(h_flex()
-                            .flex_shrink_0()
-                            .h_full()
-                            .gap_1()
-                            .child(Button::new("update")
-                                .label(t::system::update::available())
-                                .success()
-                                .compact()
-                                .small()
-                                .ml_2()
-                                .icon(PandoraIcon::Download)
-                                .on_click({
-                                    let send = self.send.clone();
-                                    move |_, window, cx| {
-                                        crate::modals::update_prompt::open_update_prompt(update.clone(), send.clone(), window, cx);
-                                    }
-                                })
-                            )
+                .child(
+                    h_flex()
+                        .left_2()
+                        .w_full()
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(div().overflow_hidden().pr_8().child(self.page_path))
+                                .child(div().flex_1().child(self.controls)),
                         )
-                    }));
+                        .when_some(self.update, |this, update| {
+                            this.child(
+                                h_flex().flex_shrink_0().h_full().gap_1().child(
+                                    Button::new("update")
+                                        .label(t::system::update::available())
+                                        .success()
+                                        .compact()
+                                        .small()
+                                        .ml_2()
+                                        .icon(PandoraIcon::Download)
+                                        .on_click({
+                                            let send = self.send.clone();
+                                            move |_, window, cx| {
+                                                crate::modals::update_prompt::open_update_prompt(
+                                                    update.clone(),
+                                                    send.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                ),
+                            )
+                        }),
+                );
         }
 
         let window_controls = window.window_controls();
@@ -106,57 +116,69 @@ impl RenderOnce for TitleBar {
             .border_b_1()
             .border_color(cx.theme().border)
             .text_xl()
-            .child(h_flex()
-                .left_2()
-                .w_full()
-                .on_any_mouse_down(|_, window, cx| {
-                    if window.default_prevented() {
-                        cx.stop_propagation();
-                    }
-                })
-                .child(h_flex()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(div().overflow_hidden().pr_8().child(self.page_path))
-                    .child(div().flex_1().child(self.controls))
-                )
-                .when(!cfg!(target_os = "macos") || self.update.is_some(), |this| {
-                    this.child(h_flex()
-                        .flex_shrink_0()
-                        .h_full()
-                        .gap_1()
-                        .on_any_mouse_down(|_, window, cx| {
-                            if window.default_prevented() {
-                                cx.stop_propagation();
-                            }
-                        })
-                        .when_some(self.update, |this, update| {
-                            this.child(Button::new("update")
-                                .label(t::system::update::available())
-                                .success()
-                                .compact()
-                                .small()
-                                .ml_2()
-                                .icon(PandoraIcon::Download)
-                                .on_click({
-                                    let send = self.send.clone();
-                                    move |_, window, cx| {
-                                        crate::modals::update_prompt::open_update_prompt(update.clone(), send.clone(), window, cx);
+            .child(
+                h_flex()
+                    .left_2()
+                    .w_full()
+                    .on_any_mouse_down(|_, window, cx| {
+                        if window.default_prevented() {
+                            cx.stop_propagation();
+                        }
+                    })
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(div().overflow_hidden().pr_8().child(self.page_path))
+                            .child(div().flex_1().child(self.controls)),
+                    )
+                    .when(!cfg!(target_os = "macos") || self.update.is_some(), |this| {
+                        this.child(
+                            h_flex()
+                                .flex_shrink_0()
+                                .h_full()
+                                .gap_1()
+                                .on_any_mouse_down(|_, window, cx| {
+                                    if window.default_prevented() {
+                                        cx.stop_propagation();
                                     }
                                 })
-                            )
-                        })
-                        .when(!cfg!(target_os = "macos"), |this| {
-                            this
-                                .when(window_controls.minimize, |this| this.child(WindowControl::Minimize))
-                                .when(window_controls.maximize, |this| this.child(if window.is_maximized() {
-                                    WindowControl::Restore
-                                } else {
-                                    WindowControl::Maximize
-                                }))
-                                .child(WindowControl::Close)
-                        }))
-                }))
+                                .when_some(self.update, |this, update| {
+                                    this.child(
+                                        Button::new("update")
+                                            .label(t::system::update::available())
+                                            .success()
+                                            .compact()
+                                            .small()
+                                            .ml_2()
+                                            .icon(PandoraIcon::Download)
+                                            .on_click({
+                                                let send = self.send.clone();
+                                                move |_, window, cx| {
+                                                    crate::modals::update_prompt::open_update_prompt(
+                                                        update.clone(),
+                                                        send.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            }),
+                                    )
+                                })
+                                .when(!cfg!(target_os = "macos"), |this| {
+                                    this.when(window_controls.minimize, |this| this.child(WindowControl::Minimize))
+                                        .when(window_controls.maximize, |this| {
+                                            this.child(if window.is_maximized() {
+                                                WindowControl::Restore
+                                            } else {
+                                                WindowControl::Maximize
+                                            })
+                                        })
+                                        .child(WindowControl::Close)
+                                }),
+                        )
+                    }),
+            )
     }
 }
 
@@ -198,33 +220,27 @@ impl RenderOnce for WindowControl {
                 this.bg(col)
             });
         if cfg!(windows) {
-            base
-                .font_family(*ICON_FONT)
-                .text_size(px(10.0))
-                .child(match self {
-                    WindowControl::Minimize => "\u{e921}",
-                    WindowControl::Maximize => "\u{e922}",
-                    WindowControl::Restore => "\u{e923}",
-                    WindowControl::Close => "\u{e8bb}",
-                })
+            base.font_family(*ICON_FONT).text_size(px(10.0)).child(match self {
+                WindowControl::Minimize => "\u{e921}",
+                WindowControl::Maximize => "\u{e922}",
+                WindowControl::Restore => "\u{e923}",
+                WindowControl::Close => "\u{e8bb}",
+            })
         } else {
-            base
-                .on_click(move |_, window, _| {
-                    match self {
-                        WindowControl::Minimize => window.minimize_window(),
-                        WindowControl::Maximize | WindowControl::Restore => window.zoom_window(),
-                        WindowControl::Close => window.remove_window(),
-                    }
-                }).child(match self {
-                    WindowControl::Minimize => PandoraIcon::WindowMinimize,
-                    WindowControl::Maximize => PandoraIcon::WindowMaximize,
-                    WindowControl::Restore => PandoraIcon::WindowRestore,
-                    WindowControl::Close => PandoraIcon::WindowClose,
-                })
+            base.on_click(move |_, window, _| match self {
+                WindowControl::Minimize => window.minimize_window(),
+                WindowControl::Maximize | WindowControl::Restore => window.zoom_window(),
+                WindowControl::Close => window.remove_window(),
+            })
+            .child(match self {
+                WindowControl::Minimize => PandoraIcon::WindowMinimize,
+                WindowControl::Maximize => PandoraIcon::WindowMaximize,
+                WindowControl::Restore => PandoraIcon::WindowRestore,
+                WindowControl::Close => PandoraIcon::WindowClose,
+            })
         }
     }
 }
-
 
 #[cfg(not(windows))]
 static ICON_FONT: Lazy<&'static str> = Lazy::new(|| "Segoe MDL2 Assets");
@@ -232,9 +248,7 @@ static ICON_FONT: Lazy<&'static str> = Lazy::new(|| "Segoe MDL2 Assets");
 #[cfg(windows)]
 static ICON_FONT: Lazy<&'static str> = Lazy::new(|| {
     let mut version = unsafe { std::mem::zeroed() };
-    let status = unsafe {
-        windows::Wdk::System::SystemServices::RtlGetVersion(&mut version)
-    };
+    let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
 
     if status.is_ok() && version.dwBuildNumber >= 22000 {
         // Windows 11

@@ -86,11 +86,23 @@ struct ExportInstanceData {
 impl ExportInstanceData {
     async fn determine_loader_version(&self, backend: &BackendState) -> Option<Ustr> {
         match self.configuration.loader {
-            Loader::Fabric => backend.meta.fetch(&FabricLoaderManifestMetadataItem).await.ok()
+            Loader::Fabric => backend
+                .meta
+                .fetch(&FabricLoaderManifestMetadataItem)
+                .await
+                .ok()
                 .and_then(|manifest| self.configuration.determine_fabric_loader_version(&manifest)),
-            Loader::Forge => backend.meta.fetch(&ForgeInstallerMavenMetadataItem).await.ok()
+            Loader::Forge => backend
+                .meta
+                .fetch(&ForgeInstallerMavenMetadataItem)
+                .await
+                .ok()
                 .and_then(|manifest| self.configuration.determine_forge_loader_version(&manifest)),
-            Loader::NeoForge => backend.meta.fetch(&NeoforgeInstallerMavenMetadataItem).await.ok()
+            Loader::NeoForge => backend
+                .meta
+                .fetch(&NeoforgeInstallerMavenMetadataItem)
+                .await
+                .ok()
                 .and_then(|manifest| self.configuration.determine_neoforge_loader_version(&manifest)),
             Loader::Vanilla => None,
         }

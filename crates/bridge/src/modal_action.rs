@@ -51,7 +51,9 @@ impl ModalActionInner {
     }
 
     pub fn set_finished(&self) {
-        let _ = self.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        let _ = self
+            .finished_at
+            .compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
         self.notify.notify_one();
     }
 
@@ -185,15 +187,15 @@ impl ProgressTracker {
     }
 
     pub fn get(&self) -> (usize, usize) {
-        (
-            self.0.count.load(Ordering::SeqCst),
-            self.0.total.load(Ordering::SeqCst)
-        )
+        (self.0.count.load(Ordering::SeqCst), self.0.total.load(Ordering::SeqCst))
     }
 
     pub fn set_finished(&self, finish_type: ProgressTrackerFinishType) {
         self.0.finish_type.store(finish_type, Ordering::SeqCst);
-        let _ = self.0.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        let _ = self
+            .0
+            .finished_at
+            .compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
         self.0.notify.notify_one();
     }
 

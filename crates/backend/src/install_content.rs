@@ -6,7 +6,10 @@ use std::{
 };
 
 use bridge::{
-    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, instance::{ContentFolder, ContentSummary, ContentType, ModpackFileSource}, modal_action::{ModalAction, ProgressTrackerFinishType}, safe_path::SafePath
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
+    instance::{ContentFolder, ContentSummary, ContentType, ModpackFileSource},
+    modal_action::{ModalAction, ProgressTrackerFinishType},
+    safe_path::SafePath,
 };
 use parking_lot::Mutex;
 use reqwest::StatusCode;
@@ -285,7 +288,10 @@ impl BackendState {
             // restored from `original_mods/` on stop, so installs into it must be mirrored to the
             // backup to persist.
             let original_mods_dir = if instance_running {
-                dot_minecraft_dir.parent().map(|parent| parent.join("original_mods")).filter(|dir| dir.is_dir())
+                dot_minecraft_dir
+                    .parent()
+                    .map(|parent| parent.join("original_mods"))
+                    .filter(|dir| dir.is_dir())
             } else {
                 None
             };
@@ -1072,8 +1078,18 @@ impl BackendState {
         }
     }
 
-    async fn download_file_into_library(&self, modal_action: &ModalAction, name: FilenameAndExtension, url: &Arc<str>, sha1: [u8; 20], size: usize, download_meta: ModrinthDownloadMeta) -> Result<(PathBuf, [u8; 20], Arc<ContentSummary>), ContentInstallError> {
-        let mut result = self.download_file_into_library_inner(modal_action, name, url, sha1, size, download_meta.clone()).await?;
+    async fn download_file_into_library(
+        &self,
+        modal_action: &ModalAction,
+        name: FilenameAndExtension,
+        url: &Arc<str>,
+        sha1: [u8; 20],
+        size: usize,
+        download_meta: ModrinthDownloadMeta,
+    ) -> Result<(PathBuf, [u8; 20], Arc<ContentSummary>), ContentInstallError> {
+        let mut result = self
+            .download_file_into_library_inner(modal_action, name, url, sha1, size, download_meta.clone())
+            .await?;
 
         let mut curseforge_file_ids = Vec::new();
 
@@ -1168,7 +1184,12 @@ impl BackendState {
                         },
                     );
 
-                    curseforge_sources.push((hash, ContentSource::CurseforgeProject { project_id: file.mod_id }));
+                    curseforge_sources.push((
+                        hash,
+                        ContentSource::CurseforgeProject {
+                            project_id: file.mod_id,
+                        },
+                    ));
 
                     let Some(path) = SafePath::new(&file.file_name) else {
                         log::warn!("Skipping file because of invalid filename: {}", file.file_name);
@@ -1236,16 +1257,22 @@ impl BackendState {
 
         let file_name = name.filename.clone();
 
-        let title = format!("Downloading {}", file_name.as_deref().map(|s| s.to_string_lossy()).unwrap_or(std::borrow::Cow::Borrowed("???")));
+        let title = format!(
+            "Downloading {}",
+            file_name
+                .as_deref()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or(std::borrow::Cow::Borrowed("???"))
+        );
         let tracker = modal_action.push_tracker(title.into());
 
         tracker.set_total(size);
 
         let valid_hash_on_disk = {
             let path = path.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::fs::check_sha1_hash(&path, sha1).unwrap_or(false)
-            }).await.unwrap()
+            tokio::task::spawn_blocking(move || crate::fs::check_sha1_hash(&path, sha1).unwrap_or(false))
+                .await
+                .unwrap()
         };
 
         if valid_hash_on_disk {
@@ -1255,12 +1282,15 @@ impl BackendState {
             return Ok((path, sha1, summary));
         }
 
-
-        let mut builder = self.redirecting_http_client.get(&**url)
+        let mut builder = self
+            .redirecting_http_client
+            .get(&**url)
             .header("modrinth-download-meta", serde_json::to_string(&download_meta).unwrap_or_default());
 
         if let Ok(url) = url::Url::parse(&**url) {
-            if let Some(host) = url.host_str() && host.ends_with("forgecdn.net") {
+            if let Some(host) = url.host_str()
+                && host.ends_with("forgecdn.net")
+            {
                 builder = builder.header("x-api-key", CURSEFORGE_API_KEY);
             }
         }

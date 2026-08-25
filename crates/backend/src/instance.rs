@@ -34,7 +34,15 @@ use thiserror::Error;
 
 use ustr::Ustr;
 
-use crate::{BackendState, BackendStateFileWatching, WatchTarget, fs::{FolderChanges, IoOrSerializationError}, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent, server_list_pinger::{PingResult, ServerListPinger}};
+use crate::{
+    BackendState, BackendStateFileWatching, WatchTarget,
+    fs::{FolderChanges, IoOrSerializationError},
+    id_slab::{GetId, Id},
+    launcher_import,
+    mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager},
+    persistent::Persistent,
+    server_list_pinger::{PingResult, ServerListPinger},
+};
 
 #[derive(Debug)]
 pub struct Instance {
@@ -1078,7 +1086,11 @@ impl Instance {
 
     /// Removes the given content ids from the cached mods summaries. Used after
     /// mirroring deletions to the backup folder while the instance is running.
-    pub fn remove_frozen_mods_summaries(&mut self, backend: &Arc<BackendState>, removed: &FxHashSet<InstanceContentID>) {
+    pub fn remove_frozen_mods_summaries(
+        &mut self,
+        backend: &Arc<BackendState>,
+        removed: &FxHashSet<InstanceContentID>,
+    ) {
         let Some(summaries) = self.content_state[ContentFolder::Mods].summaries.as_ref() else {
             return;
         };
@@ -1206,7 +1218,11 @@ fn create_instance_content_summary(
 
     let content_source = mod_metadata_manager.read_content_sources().get(&summary.hash).unwrap_or_default();
 
-    let lowercase_search_keys = summary.id.as_ref().map(lowercase_arc).into_iter()
+    let lowercase_search_keys = summary
+        .id
+        .as_ref()
+        .map(lowercase_arc)
+        .into_iter()
         .chain(summary.name.as_ref().map(lowercase_arc).into_iter())
         .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
@@ -1249,7 +1265,11 @@ fn lowercase_arc(s: &Arc<str>) -> Arc<str> {
     }
 }
 
-fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option<&[u8]>, path: &Path) -> Option<InstanceContentSummary> {
+fn try_load_resourcepack_folder(
+    pack_mcmeta_bytes: &[u8],
+    pack_png_bytes: Option<&[u8]>,
+    path: &Path,
+) -> Option<InstanceContentSummary> {
     let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
         return None;
     };
@@ -1262,7 +1282,11 @@ fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option
 
     let filename: Arc<str> = filename.into();
 
-    let lowercase_search_keys = summary.id.as_ref().map(lowercase_arc).into_iter()
+    let lowercase_search_keys = summary
+        .id
+        .as_ref()
+        .map(lowercase_arc)
+        .into_iter()
         .chain(summary.name.as_ref().map(lowercase_arc).into_iter())
         .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
@@ -1283,10 +1307,7 @@ fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option
     });
 }
 
-fn read_disabled_children_for(
-    summary: &ContentSummary,
-    path: &Path,
-) -> Option<AuxDisabledChildren> {
+fn read_disabled_children_for(summary: &ContentSummary, path: &Path) -> Option<AuxDisabledChildren> {
     let aux_path = crate::fs::pandora_aux_path(&summary.id, &summary.name, path)?;
     let aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).ok()?;
     Some(aux.disabled_children)

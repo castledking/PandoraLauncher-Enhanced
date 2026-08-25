@@ -1,33 +1,40 @@
 #![deny(unused_must_use)]
 
 use std::{
-    borrow::Cow, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicBool}
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use bridge::{
-    handle::{BackendHandle, FrontendReceiver}, quit::QuitCoordinator}
-;
+    handle::{BackendHandle, FrontendReceiver},
+    quit::QuitCoordinator,
+};
 use gpui::*;
 use gpui_component::{
-    Root, StyledExt, WindowExt, notification::{Notification, NotificationType}
+    Root, StyledExt, WindowExt,
+    notification::{Notification, NotificationType},
 };
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 
 use crate::{
     entity::{
-        DataEntities, PanicMessages, account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata
-    }, interface_config::InterfaceConfig, processor::Processor, root::{LauncherRoot, LauncherRootGlobal}
+        DataEntities, PanicMessages, account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata,
+    },
+    interface_config::InterfaceConfig,
+    processor::Processor,
+    root::{LauncherRoot, LauncherRootGlobal},
 };
 
 pub mod component;
 pub mod data_asset_loader;
 pub mod entity;
 pub mod game_output;
-pub mod modals;
-pub mod pages;
 pub mod icon;
 pub mod interface_config;
+pub mod modals;
+pub mod pages;
 pub mod png_render_cache;
 pub mod processor;
 pub mod root;
@@ -81,126 +88,138 @@ pub fn start(
 
     let http_client = Arc::new(reqwest_client::ReqwestClient::user_agent(&user_agent).unwrap());
 
-    gpui_platform::application().with_http_client(http_client).with_assets(Assets).run(move |cx: &mut App| {
-        let _ = cx.text_system().add_fonts(vec![
-            Assets.load("fonts/inter/Inter-Regular.ttf").unwrap().unwrap(),
-            Assets.load("fonts/roboto-mono/RobotoMono-Regular.ttf").unwrap().unwrap(),
-            Assets.load("fonts/minecraft.ttf").unwrap().unwrap(),
-        ]);
+    gpui_platform::application()
+        .with_http_client(http_client)
+        .with_assets(Assets)
+        .run(move |cx: &mut App| {
+            let _ = cx.text_system().add_fonts(vec![
+                Assets.load("fonts/inter/Inter-Regular.ttf").unwrap().unwrap(),
+                Assets.load("fonts/roboto-mono/RobotoMono-Regular.ttf").unwrap().unwrap(),
+                Assets.load("fonts/minecraft.ttf").unwrap().unwrap(),
+            ]);
 
-        gpui_component::init(cx);
-        InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
+            gpui_component::init(cx);
+            InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
 
-        t::set_lang(&InterfaceConfig::get(cx).language);
+            t::set_lang(&InterfaceConfig::get(cx).language);
 
-        gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+            gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
 
-        let theme_folder = launcher_dir.join("themes");
+            let theme_folder = launcher_dir.join("themes");
 
-        _ = gpui_component::ThemeRegistry::watch_dir(theme_folder.clone(), cx, move |cx| {
-            let theme_name = InterfaceConfig::get(cx).active_theme.clone();
-            if theme_name.is_empty() {
-                return;
-            }
-
-            let Some(theme) = gpui_component::ThemeRegistry::global(cx).themes().get(&SharedString::new(theme_name.trim_ascii())).cloned() else {
-                return;
-            };
-
-            gpui_component::Theme::global_mut(cx).apply_config(&theme);
-        });
-
-        let theme = gpui_component::Theme::global_mut(cx);
-        theme.font_family = SharedString::new_static(MAIN_FONT);
-        theme.scrollbar_show = gpui_component::scroll::ScrollbarShow::Always;
-
-        cx.set_quit_mode(QuitMode::Explicit);
-
-        cx.on_app_quit(|cx| {
-            InterfaceConfig::force_save(cx);
-            async {}
-        }).detach();
-
-        let main_window_hidden = Arc::new(AtomicBool::new(false));
-
-        cx.on_window_closed({
-            let main_window_hidden = main_window_hidden.clone();
-            let quit_coordinator = quit_coordinator.clone();
-            move |cx, _window| {
-                if main_window_hidden.load(std::sync::atomic::Ordering::SeqCst) {
+            _ = gpui_component::ThemeRegistry::watch_dir(theme_folder.clone(), cx, move |cx| {
+                let theme_name = InterfaceConfig::get(cx).active_theme.clone();
+                if theme_name.is_empty() {
                     return;
                 }
 
-                let config = InterfaceConfig::get(cx);
-                if config.quit_on_main_closed {
-                    for window in cx.windows() {
-                        let is_main = window.read(cx, |window: Entity<Root>, cx| {
-                            window.read(cx).view().clone().downcast::<LauncherRoot>().is_ok()
-                        }).unwrap_or(false);
-                        if is_main {
-                            return;
+                let Some(theme) = gpui_component::ThemeRegistry::global(cx)
+                    .themes()
+                    .get(&SharedString::new(theme_name.trim_ascii()))
+                    .cloned()
+                else {
+                    return;
+                };
+
+                gpui_component::Theme::global_mut(cx).apply_config(&theme);
+            });
+
+            let theme = gpui_component::Theme::global_mut(cx);
+            theme.font_family = SharedString::new_static(MAIN_FONT);
+            theme.scrollbar_show = gpui_component::scroll::ScrollbarShow::Always;
+
+            cx.set_quit_mode(QuitMode::Explicit);
+
+            cx.on_app_quit(|cx| {
+                InterfaceConfig::force_save(cx);
+                async {}
+            })
+            .detach();
+
+            let main_window_hidden = Arc::new(AtomicBool::new(false));
+
+            cx.on_window_closed({
+                let main_window_hidden = main_window_hidden.clone();
+                let quit_coordinator = quit_coordinator.clone();
+                move |cx, _window| {
+                    if main_window_hidden.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+
+                    let config = InterfaceConfig::get(cx);
+                    if config.quit_on_main_closed {
+                        for window in cx.windows() {
+                            let is_main = window
+                                .read(cx, |window: Entity<Root>, cx| {
+                                    window.read(cx).view().clone().downcast::<LauncherRoot>().is_ok()
+                                })
+                                .unwrap_or(false);
+                            if is_main {
+                                return;
+                            }
+                        }
+
+                        for window in cx.windows() {
+                            _ = window.update(cx, |_, window, _| {
+                                window.remove_window();
+                            });
                         }
                     }
 
-                    for window in cx.windows() {
-                        _ = window.update(cx, |_, window, _| {
-                            window.remove_window();
-                        });
-                    }
+                    quit_coordinator.set_can_quit(cx.windows().is_empty());
                 }
-
-                quit_coordinator.set_can_quit(cx.windows().is_empty());
-            }
-        }).detach();
-
-        cx.bind_keys([
-            KeyBinding::new("secondary-q", Quit, None),
-            KeyBinding::new("secondary-w", CloseWindow, None),
-            KeyBinding::new("secondary-,", OpenSettings, None),
-            KeyBinding::new("secondary-[", Backwards, None),
-            KeyBinding::new("secondary-]", Forwards, None),
-            KeyBinding::new("enter", Confirm, None),
-        ]);
-
-        cx.on_action(|_: &Quit, cx| {
-            for window in cx.windows() {
-                _ = window.update(cx, |_, window, _| {
-                    window.remove_window();
-                });
-            }
-        });
-
-        let instances = cx.new(|_| InstanceEntries {
-            entries: IndexMap::new(),
-        });
-        let metadata = cx.new(|_| FrontendMetadata::new(backend_handle.clone()));
-        let accounts = cx.new(|_| AccountEntries::default());
-        let data = DataEntities {
-            instances,
-            metadata,
-            backend_handle,
-            accounts,
-            theme_folder: theme_folder.into(),
-            panic_messages: Arc::new(PanicMessages {
-                panic_message,
-                deadlock_message,
             })
-        };
+            .detach();
 
-        let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
+            cx.bind_keys([
+                KeyBinding::new("secondary-q", Quit, None),
+                KeyBinding::new("secondary-w", CloseWindow, None),
+                KeyBinding::new("secondary-,", OpenSettings, None),
+                KeyBinding::new("secondary-[", Backwards, None),
+                KeyBinding::new("secondary-]", Forwards, None),
+                KeyBinding::new("enter", Confirm, None),
+            ]);
 
-        while let Some(message) = recv.try_recv() {
-            processor.process(message, cx);
-        }
+            cx.on_action(|_: &Quit, cx| {
+                for window in cx.windows() {
+                    _ = window.update(cx, |_, window, _| {
+                        window.remove_window();
+                    });
+                }
+            });
 
-        cx.spawn(async move |cx| {
-            while let Some(message) = recv.recv().await {
-                _ = cx.update(|cx| {
-                    processor.process(message, cx);
-                });
+            let instances = cx.new(|_| InstanceEntries {
+                entries: IndexMap::new(),
+            });
+            let metadata = cx.new(|_| FrontendMetadata::new(backend_handle.clone()));
+            let accounts = cx.new(|_| AccountEntries::default());
+            let data = DataEntities {
+                instances,
+                metadata,
+                backend_handle,
+                accounts,
+                theme_folder: theme_folder.into(),
+                panic_messages: Arc::new(PanicMessages {
+                    panic_message,
+                    deadlock_message,
+                }),
+            };
+
+            let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
+
+            while let Some(message) = recv.try_recv() {
+                processor.process(message, cx);
             }
-        }).detach();
-    });
+
+            cx.spawn(async move |cx| {
+                while let Some(message) = recv.recv().await {
+                    _ = cx.update(|cx| {
+                        processor.process(message, cx);
+                    });
+                }
+            })
+            .detach();
+        });
 }
 
 pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
@@ -221,76 +240,85 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
 
     let use_custom_titlebar = !config.use_os_titlebar;
     crate::root::set_should_render_custom_titlebar(use_custom_titlebar);
-    let handle = cx.open_window(
-        WindowOptions {
-            app_id: Some("PandoraLauncher".into()),
-            window_min_size: Some(size(px(500.0), px(250.0))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Pandora Launcher".into()),
-                appears_transparent: use_custom_titlebar,
+    let handle = cx
+        .open_window(
+            WindowOptions {
+                app_id: Some("PandoraLauncher".into()),
+                window_min_size: Some(size(px(500.0), px(250.0))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Pandora Launcher".into()),
+                    appears_transparent: use_custom_titlebar,
+                    ..Default::default()
+                }),
+                app_owns_titlebar_drag: use_custom_titlebar,
+                window_bounds,
+                window_decorations: Some(if use_custom_titlebar {
+                    WindowDecorations::Client
+                } else {
+                    WindowDecorations::Server
+                }),
                 ..Default::default()
-            }),
-            app_owns_titlebar_drag: use_custom_titlebar,
-            window_bounds,
-            window_decorations: Some(if use_custom_titlebar { WindowDecorations::Client } else { WindowDecorations::Server }),
-            ..Default::default()
-        },
-        |window, cx| {
-            let launcher_root = cx.new(|cx| {
-                cx.observe_window_bounds(window, move |_, window, cx| {
-                    let origin = window.bounds().origin;
-                    let size = window.viewport_size();
-                    let new_bounds = (
-                        origin.x.to_f64() as f32, origin.y.to_f64() as f32,
-                        size.width.to_f64() as f32, size.height.to_f64() as f32
-                    );
+            },
+            |window, cx| {
+                let launcher_root = cx.new(|cx| {
+                    cx.observe_window_bounds(window, move |_, window, cx| {
+                        let origin = window.bounds().origin;
+                        let size = window.viewport_size();
+                        let new_bounds = (
+                            origin.x.to_f64() as f32,
+                            origin.y.to_f64() as f32,
+                            size.width.to_f64() as f32,
+                            size.height.to_f64() as f32,
+                        );
 
-                    let old_window_bounds = InterfaceConfig::get(cx).main_window_bounds.clone();
-                    let old_bounds = match old_window_bounds {
-                        interface_config::WindowBounds::Inherit => new_bounds,
-                        interface_config::WindowBounds::Windowed { x, y, w, h } => (x, y, w, h),
-                        interface_config::WindowBounds::Maximized { x, y, w, h } => (x, y, w, h),
-                        interface_config::WindowBounds::Fullscreen { x, y, w, h } => (x, y, w, h),
-                    };
+                        let old_window_bounds = InterfaceConfig::get(cx).main_window_bounds.clone();
+                        let old_bounds = match old_window_bounds {
+                            interface_config::WindowBounds::Inherit => new_bounds,
+                            interface_config::WindowBounds::Windowed { x, y, w, h } => (x, y, w, h),
+                            interface_config::WindowBounds::Maximized { x, y, w, h } => (x, y, w, h),
+                            interface_config::WindowBounds::Fullscreen { x, y, w, h } => (x, y, w, h),
+                        };
 
-                    let new_window_bounds = if window.is_fullscreen() {
-                        interface_config::WindowBounds::Fullscreen {
-                            x: old_bounds.0,
-                            y: old_bounds.1,
-                            w: old_bounds.2,
-                            h: old_bounds.3
+                        let new_window_bounds = if window.is_fullscreen() {
+                            interface_config::WindowBounds::Fullscreen {
+                                x: old_bounds.0,
+                                y: old_bounds.1,
+                                w: old_bounds.2,
+                                h: old_bounds.3,
+                            }
+                        } else if window.is_maximized() {
+                            interface_config::WindowBounds::Maximized {
+                                x: old_bounds.0,
+                                y: old_bounds.1,
+                                w: old_bounds.2,
+                                h: old_bounds.3,
+                            }
+                        } else {
+                            interface_config::WindowBounds::Windowed {
+                                x: new_bounds.0,
+                                y: new_bounds.1,
+                                w: new_bounds.2,
+                                h: new_bounds.3,
+                            }
+                        };
+
+                        if new_window_bounds != old_window_bounds {
+                            InterfaceConfig::get_mut(cx).main_window_bounds = new_window_bounds;
                         }
-                    } else if window.is_maximized() {
-                        interface_config::WindowBounds::Maximized {
-                            x: old_bounds.0,
-                            y: old_bounds.1,
-                            w: old_bounds.2,
-                            h: old_bounds.3
-                        }
-                    } else {
-                        interface_config::WindowBounds::Windowed {
-                            x: new_bounds.0,
-                            y: new_bounds.1,
-                            w: new_bounds.2,
-                            h: new_bounds.3
-                        }
-                    };
+                    })
+                    .detach();
 
-                    if new_window_bounds != old_window_bounds {
-                        InterfaceConfig::get_mut(cx).main_window_bounds = new_window_bounds;
-                    }
-                }).detach();
+                    LauncherRoot::new(&data, window, cx)
+                });
 
-                LauncherRoot::new(&data, window, cx)
-            });
-
-            DataEntities::init_globals(cx);
-            cx.set_global(LauncherRootGlobal {
-                root: launcher_root.clone(),
-            });
-            cx.new(|cx| Root::new(launcher_root, window, cx))
-        },
-    ).unwrap();
+                DataEntities::init_globals(cx);
+                cx.set_global(LauncherRootGlobal {
+                    root: launcher_root.clone(),
+                });
+                cx.new(|cx| Root::new(launcher_root, window, cx))
+            },
+        )
+        .unwrap();
 
     cx.activate(true);
 
@@ -298,8 +326,14 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
 }
 
 pub(crate) fn is_valid_instance_name(name: &str) -> bool {
-    is_single_component_path(name) &&
-    sanitize_filename::is_sanitized_with_options(name, sanitize_filename::OptionsForCheck { windows: true, ..Default::default() })
+    is_single_component_path(name)
+        && sanitize_filename::is_sanitized_with_options(
+            name,
+            sanitize_filename::OptionsForCheck {
+                windows: true,
+                ..Default::default()
+            },
+        )
 }
 
 pub(crate) fn is_single_component_path(path: &str) -> bool {
@@ -330,7 +364,10 @@ pub(crate) fn get_unique_instance_name(original_name: &str, existing_names: &[&s
 
 #[inline]
 pub(crate) fn labelled(label: impl Into<SharedString>, element: impl IntoElement) -> Div {
-    gpui_component::v_flex().gap_0p5().child(div().text_sm().font_medium().child(label.into())).child(element)
+    gpui_component::v_flex()
+        .gap_0p5()
+        .child(div().text_sm().font_medium().child(label.into()))
+        .child(element)
 }
 
 pub(crate) fn open_folder(path: &Path, window: &mut Window, cx: &mut App) {
@@ -341,11 +378,13 @@ pub(crate) fn open_folder(path: &Path, window: &mut Window, cx: &mut App) {
     }
     if is_dir {
         if let Err(err) = open::that_detached(path) {
-            let notification: Notification = (NotificationType::Error, SharedString::new(t::file_system::open_folder::error(err))).into();
+            let notification: Notification =
+                (NotificationType::Error, SharedString::new(t::file_system::open_folder::error(err))).into();
             window.push_notification(notification.autohide(false), cx);
         }
     } else {
-        let notification: Notification = (NotificationType::Error, t::file_system::open_folder::not_a_directory()).into();
+        let notification: Notification =
+            (NotificationType::Error, t::file_system::open_folder::not_a_directory()).into();
         window.push_notification(notification.autohide(false), cx);
     }
 }
@@ -359,5 +398,6 @@ pub fn format_downloads(downloads: u64) -> SharedString {
         t::instance::content::downloads::k((downloads / 10) as f64 / 100.0)
     } else {
         t::instance::content::downloads::n(downloads)
-    }.into()
+    }
+    .into()
 }

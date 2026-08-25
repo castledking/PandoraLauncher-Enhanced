@@ -192,46 +192,96 @@ impl ExportInstanceModalState {
 
         let common_options = v_flex()
             .gap_2()
-            .child(Checkbox::new("include_saves")
-                .checked(self.include_saves)
-                .label(t::instance::export::include_saves())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_saves = *value; cx.notify(); })))
-            .child(Checkbox::new("include_mods")
-                .checked(self.include_mods)
-                .label(t::instance::export::include_mods())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_mods = *value; cx.notify(); })))
-            .child(Checkbox::new("include_resourcepacks")
-                .checked(self.include_resourcepacks)
-                .label(t::instance::export::include_resourcepacks())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_resourcepacks = *value; cx.notify(); })))
-            .child(Checkbox::new("include_shaders")
-                .checked(self.include_shaders)
-                .label(t::instance::export::include_shaders())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_shaders = *value; cx.notify(); })))
-            .child(Checkbox::new("include_configs")
-                .checked(self.include_configs)
-                .label(t::instance::export::include_configs())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_configs = *value; cx.notify(); })))
-            .child(Checkbox::new("include_screenshots")
-                .checked(self.include_screenshots)
-                .label(t::instance::export::include_screenshots())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_screenshots = *value; cx.notify(); })))
-            .child(Checkbox::new("include_backups")
-                .checked(self.include_backups)
-                .label(t::instance::export::include_backups())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_backups = *value; cx.notify(); })))
-            .child(Checkbox::new("include_logs")
-                .checked(self.include_logs)
-                .label(t::instance::export::include_logs())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_logs = *value; cx.notify(); })))
-            .child(Checkbox::new("include_cache")
-                .checked(self.include_cache)
-                .label(t::instance::export::include_cache())
-                .on_click(cx.listener(|this, value, _, cx| { this.include_cache = *value; cx.notify(); })));
-        let common_options = common_options.child(Checkbox::new("include_synced")
-            .checked(self.include_synced)
-            .label(t::instance::export::include_synced())
-            .on_click(cx.listener(|this, value, _, cx| { this.include_synced = *value; cx.notify(); })));
+            .child(
+                Checkbox::new("include_saves")
+                    .checked(self.include_saves)
+                    .label(t::instance::export::include_saves())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_saves = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_mods")
+                    .checked(self.include_mods)
+                    .label(t::instance::export::include_mods())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_mods = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_resourcepacks")
+                    .checked(self.include_resourcepacks)
+                    .label(t::instance::export::include_resourcepacks())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_resourcepacks = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_shaders")
+                    .checked(self.include_shaders)
+                    .label(t::instance::export::include_shaders())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_shaders = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_configs")
+                    .checked(self.include_configs)
+                    .label(t::instance::export::include_configs())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_configs = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_screenshots")
+                    .checked(self.include_screenshots)
+                    .label(t::instance::export::include_screenshots())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_screenshots = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_backups")
+                    .checked(self.include_backups)
+                    .label(t::instance::export::include_backups())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_backups = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_logs")
+                    .checked(self.include_logs)
+                    .label(t::instance::export::include_logs())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_logs = *value;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("include_cache")
+                    .checked(self.include_cache)
+                    .label(t::instance::export::include_cache())
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.include_cache = *value;
+                        cx.notify();
+                    })),
+            );
+        let common_options = common_options.child(
+            Checkbox::new("include_synced")
+                .checked(self.include_synced)
+                .label(t::instance::export::include_synced())
+                .on_click(cx.listener(|this, value, _, cx| {
+                    this.include_synced = *value;
+                    cx.notify();
+                })),
+        );
 
         let modrinth_options = v_flex()
             .gap_2()
@@ -244,19 +294,24 @@ impl ExportInstanceModalState {
             .child(labelled(t::instance::export::name(), Input::new(&self.name_input)))
             .child(labelled(t::instance::export::version(), Input::new(&self.version_input)))
             .child(labelled(t::instance::export::author(), Input::new(&self.curseforge_author_input)))
-            .child(h_flex()
-                .gap_2()
-                .child(Checkbox::new("curseforge_ram")
-                    .checked(self.curseforge_recommended_ram_enabled)
-                    .label(t::instance::export::recommended_ram())
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.curseforge_recommended_ram_enabled = *value;
-                        cx.notify();
-                    })))
-                .child(NumberInput::new(&self.curseforge_recommended_ram_input)
-                    .small()
-                    .suffix(t::common::size::mib())
-                    .disabled(!self.curseforge_recommended_ram_enabled))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Checkbox::new("curseforge_ram")
+                            .checked(self.curseforge_recommended_ram_enabled)
+                            .label(t::instance::export::recommended_ram())
+                            .on_click(cx.listener(|this, value, _, cx| {
+                                this.curseforge_recommended_ram_enabled = *value;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        NumberInput::new(&self.curseforge_recommended_ram_input)
+                            .small()
+                            .suffix(t::common::size::mib())
+                            .disabled(!self.curseforge_recommended_ram_enabled),
+                    ),
             );
 
         let content = v_flex()

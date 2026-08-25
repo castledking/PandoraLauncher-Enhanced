@@ -723,7 +723,8 @@ impl ModMetadataManager {
             let summary = if let Some(cached) = self.by_hash.read().get(&file_hash).cloned() {
                 Some(cached)
             } else {
-                let content_path = crate::fs::create_content_library_path(&self.content_library_dir, file_hash, path.extension());
+                let content_path =
+                    crate::fs::create_content_library_path(&self.content_library_dir, file_hash, path.extension());
 
                 if let Ok(mut file) = std::fs::File::open(&content_path) {
                     let filesize = file.metadata().ok().as_ref().map(std::fs::Metadata::len);
@@ -898,7 +899,11 @@ impl ModMetadataManager {
             let summary = if let Some(cached) = self.by_hash.read().get(&cached_info.hash).cloned() {
                 Some(cached)
             } else {
-                let content_path = crate::fs::create_content_library_path(&self.content_library_dir, cached_info.hash, filename.extension());
+                let content_path = crate::fs::create_content_library_path(
+                    &self.content_library_dir,
+                    cached_info.hash,
+                    filename.extension(),
+                );
 
                 if let Ok(mut file) = std::fs::File::open(&content_path) {
                     let filesize = file.metadata().ok().as_ref().map(std::fs::Metadata::len);
@@ -955,7 +960,13 @@ impl ModMetadataManager {
         }))
     }
 
-    fn load_jarjar<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], _filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+    fn load_jarjar<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        _filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
         let metadata_json: JarJarMetadata = serde_json::from_slice(&bytes)

@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "rust-i18n-support"
-version = "4.0.0"
+version = "4.2.1"
 build = false
 autolib = false
 autobins = false
@@ -23,6 +23,17 @@ description = "Support for rust-i18n crate."
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/longbridge/rust-i18n"
+
+[features]
+codegen = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:serde-saphyr",
+    "dep:toml",
+    "dep:globwalk",
+    "dep:normpath",
+    "dep:itertools",
+]
 
 [lib]
 name = "rust_i18n_support"
@@ -36,38 +47,35 @@ version = "2.0.2"
 
 [dependencies.globwalk]
 version = "0.8.1"
+optional = true
 
 [dependencies.itertools]
 version = "0.11.0"
-
-[dependencies.lazy_static]
-version = "1"
+optional = true
 
 [dependencies.normpath]
 version = "1.1.1"
-
-[dependencies.proc-macro2]
-version = "1"
-features = ["span-locations"]
-
-[dependencies.regex]
-version = "1"
+optional = true
 
 [dependencies.serde]
 version = "1"
 features = ["derive"]
+optional = true
+
+[dependencies.serde-saphyr]
+version = "0.0.29"
+optional = true
 
 [dependencies.serde_json]
 version = "1"
-
-[dependencies.serde_yaml]
-version = "0.9.33"
+optional = true
 
 [dependencies.siphasher]
 version = "1.0"
 
 [dependencies.toml]
 version = "0.8.8"
+optional = true
 
 [dependencies.triomphe]
 version = "0.1.11"

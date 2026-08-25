@@ -63,7 +63,7 @@ fn api_01() {
     let doc = Document::parse(data).unwrap();
     let p = doc.root_element();
 
-    assert_eq!(p.attribute("attr"), Some("no_ns"));
+    assert_eq!(p.attributes().find(|a| a.namespace().is_none() && a.name() == "attr").map(|a| a.value()), Some("no_ns"));
     assert_eq!(p.has_attribute("attr"), true);
 
     assert_eq!(p.attribute(("http://www.w3.org", "attr")), Some("a_ns"));
@@ -80,6 +80,18 @@ fn api_01() {
 
     assert_eq!(p.attribute("xmlns"), None);
     assert_eq!(p.has_attribute("xmlns"), false);
+}
+
+#[test]
+fn has_local_name() {
+    let doc = Document::parse(r#"<root xmlns:foo="http://example.com/foo"><foo:bar foo:baz="qux"/></root>"#).unwrap();
+
+    let node = doc.descendants().next_back().unwrap();
+
+    assert_eq!(node.has_tag_name("bar"), true);
+
+    assert_eq!(node.has_attribute("baz"), true);
+    assert_eq!(node.attribute("baz"), Some("qux"));
 }
 
 #[test]
@@ -145,6 +157,7 @@ fn text_pos_01() {
 
     let doc = Document::parse(data).unwrap();
     let node = doc.root_element();
+    let attr = node.attribute_node("a").unwrap();
 
     assert_eq!(
         doc.text_pos_at(doc.root().range().start),
@@ -155,14 +168,12 @@ fn text_pos_01() {
     assert_eq!(doc.text_pos_at(node.range().start), TextPos::new(1, 1));
     assert_eq!(doc.text_pos_at(node.range().end), TextPos::new(4, 5));
 
-    if let Some(attr) = node.attribute_node("a") {
-        assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 4));
-        assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 9));
-        assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 4));
-        assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 5));
-        assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 7));
-        assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 8));
-    }
+    assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 4));
+    assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 9));
+    assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 4));
+    assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 5));
+    assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 7));
+    assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 8));
 
     // first child is a text/whitespace, not a comment
     let comm = node.first_child().unwrap().next_sibling().unwrap();
@@ -182,17 +193,16 @@ fn text_pos_02() {
 
     let doc = Document::parse(data).unwrap();
     let node = doc.root_element();
+    let attr = node.attribute_node(("http://www.w3.org", "a")).unwrap();
 
     assert_eq!(doc.text_pos_at(node.range().start), TextPos::new(1, 1));
 
-    if let Some(attr) = node.attribute_node(("http://www.w3.org", "a")) {
-        assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 36));
-        assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 44));
-        assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 36));
-        assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 40));
-        assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 42));
-        assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 43));
-    }
+    assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 36));
+    assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 44));
+    assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 36));
+    assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 40));
+    assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 42));
+    assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 43));
 }
 
 #[cfg(feature = "positions")]
@@ -217,15 +227,14 @@ fn text_pos_04() {
 
     let doc = Document::parse(data).unwrap();
     let node = doc.root_element();
+    let attr = node.attribute_node("a").unwrap();
 
-    if let Some(attr) = node.attribute_node("a") {
-        assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 36));
-        assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 43));
-        assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 36));
-        assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 40));
-        assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 42));
-        assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 42));
-}
+    assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 36));
+    assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 43));
+    assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 36));
+    assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 40));
+    assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 42));
+    assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 42));
 }
 
 #[cfg(feature = "positions")]
@@ -235,15 +244,14 @@ fn text_pos_05() {
 
     let doc = Document::parse(data).unwrap();
     let node = doc.root_element();
+    let attr = node.attribute_node("a").unwrap();
 
-    if let Some(attr) = node.attribute_node("a") {
-        assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 36));
-        assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 48));
-        assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 36));
-        assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 40));
-        assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 47));
-        assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 48));
-    }
+    assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 36));
+    assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 49));
+    assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 36));
+    assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 40));
+    assert_eq!(doc.text_pos_at(attr.range_value().start), TextPos::new(1, 47));
+    assert_eq!(doc.text_pos_at(attr.range_value().end), TextPos::new(1, 48));
 }
 
 #[cfg(feature = "positions")]
@@ -254,14 +262,13 @@ fn text_pos_06() {
 
     let doc = Document::parse(data).unwrap();
     let node = doc.root_element();
+    let attr = node.attribute_node("a").unwrap();
 
-    if let Some(attr) = node.attribute_node("a") {
-        assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 4));
-        assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 269));
-        assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 4));
-        assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 5));
-        attr.range_value(); // unreliable since >254 spaces around equal sign, but still shouldn't panic
-    }
+    assert_eq!(doc.text_pos_at(attr.range().start), TextPos::new(1, 4));
+    assert_eq!(doc.text_pos_at(attr.range().end), TextPos::new(1, 269));
+    assert_eq!(doc.text_pos_at(attr.range_qname().start), TextPos::new(1, 4));
+    assert_eq!(doc.text_pos_at(attr.range_qname().end), TextPos::new(1, 5));
+    attr.range_value(); // unreliable since >254 spaces around equal sign, but still shouldn't panic
 }
 
 #[test]
@@ -310,8 +317,8 @@ fn nodes_document_order() {
     let b = a.next_sibling_element().unwrap();
     let c = b.next_sibling_element().unwrap();
 
-    let mut elems = vec![&b, &c, &a];
-    elems.sort();
+    let mut elems = [&b, &c, &a];
+    elems.sort_unstable();
     assert!(elems[0] == &a);
     assert!(elems[1] == &b);
     assert!(elems[2] == &c);
@@ -355,4 +362,30 @@ fn tag_name_lifetime() {
     let doc = roxmltree::Document::parse(data).unwrap();
     let root = doc.root_element();
     assert_eq!(get_tag_name(&root), "e");
+}
+
+#[test]
+fn entity_resolver_works() {
+    let text = r#"<!DOCTYPE foo [<!ENTITY bar SYSTEM "baz.xml">]> <qux>&bar;</qux>"#.to_owned();
+
+    let entity = r#"<?xml version="1.0"?><foobar/>"#.to_owned();
+
+    let entity_resolver =
+        |_pub_id: Option<&str>, _uri: &str| Ok(Some(&*entity));
+
+    let opts = roxmltree::ParsingOptions {
+        allow_dtd: true,
+        entity_resolver: Some(&entity_resolver),
+        ..Default::default()
+    };
+
+    let doc = roxmltree::Document::parse_with_options(&text, opts).unwrap();
+
+    assert!(
+        doc.root_element()
+            .children()
+            .next()
+            .unwrap()
+            .has_tag_name("foobar")
+    );
 }

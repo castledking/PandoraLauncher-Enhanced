@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = ResponseInit)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "ResponseInit")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `ResponseInit` dictionary."]
     #[doc = ""]
@@ -23,7 +23,7 @@ extern "C" {
     #[cfg(feature = "Headers")]
     #[doc = "Change the `headers` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `ResponseInit`*"]
+    #[doc = "*This API requires the following crate features to be activated: `Headers`, `ResponseInit`*"]
     #[wasm_bindgen(method, setter = "headers")]
     pub fn set_headers_headers(this: &ResponseInit, val: &Headers);
     #[doc = "Change the `headers` field of this object."]

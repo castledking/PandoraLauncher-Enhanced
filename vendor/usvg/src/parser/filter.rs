@@ -11,15 +11,15 @@ use strict_num::PositiveF32;
 use svgtypes::{AspectRatio, Length, LengthUnit as Unit};
 
 use crate::{
-    filter::{self, *},
     ApproxZeroUlps, Color, Group, Node, NonEmptyString, NonZeroF32, NonZeroRect, Opacity, Size,
     Units,
+    filter::{self, *},
 };
 
+use super::OptionLog;
 use super::converter::{self, SvgColorExt};
 use super::paint_server::{convert_units, resolve_number};
 use super::svgtree::{AId, EId, FromValue, SvgNode};
-use super::OptionLog;
 
 impl<'a, 'input: 'a> FromValue<'a, 'input> for filter::ColorInterpolation {
     fn parse(_: SvgNode, _: AId, value: &str) -> Option<Self> {
@@ -111,28 +111,28 @@ pub(crate) fn convert(
                 cache,
             ),
             svgtypes::FilterValue::Brightness(amount) => {
-                create_base_filter_func(convert_brightness_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_brightness_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::Contrast(amount) => {
-                create_base_filter_func(convert_contrast_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_contrast_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::Grayscale(amount) => {
-                create_base_filter_func(convert_grayscale_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_grayscale_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::HueRotate(angle) => {
-                create_base_filter_func(convert_hue_rotate_function(angle), &mut filters, cache)
+                create_base_filter_func(convert_hue_rotate_function(angle), &mut filters, cache);
             }
             svgtypes::FilterValue::Invert(amount) => {
-                create_base_filter_func(convert_invert_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_invert_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::Opacity(amount) => {
-                create_base_filter_func(convert_opacity_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_opacity_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::Sepia(amount) => {
-                create_base_filter_func(convert_sepia_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_sepia_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::Saturate(amount) => {
-                create_base_filter_func(convert_saturate_function(amount), &mut filters, cache)
+                create_base_filter_func(convert_saturate_function(amount), &mut filters, cache);
             }
             svgtypes::FilterValue::Url(url) => {
                 if let Some(link) = node.document().element_by_id(url) {
@@ -218,7 +218,7 @@ fn convert_url(
             log::warn!(
                 "Filter '{}' has an invalid region. Skipped.",
                 node.element_id()
-            )
+            );
         })
         .ok_or(())?;
 
@@ -836,14 +836,14 @@ fn convert_image_inner(
         return if root.has_children() {
             root.calculate_bounding_boxes();
             // Transfer node id from group's child to the group itself if needed.
-            if let Some(Node::Group(ref mut g)) = root.children.first_mut() {
+            if let Some(Node::Group(g)) = root.children.first_mut() {
                 if let Some(child2) = g.children.first_mut() {
                     g.id = child2.id().to_string();
                     match child2 {
-                        Node::Group(ref mut g2) => g2.id.clear(),
-                        Node::Path(ref mut path) => path.id.clear(),
-                        Node::Image(ref mut image) => image.id.clear(),
-                        Node::Text(ref mut text) => text.id.clear(),
+                        Node::Group(g2) => g2.id.clear(),
+                        Node::Path(path) => path.id.clear(),
+                        Node::Image(image) => image.id.clear(),
+                        Node::Text(text) => text.id.clear(),
                     }
                 }
             }
@@ -855,7 +855,7 @@ fn convert_image_inner(
     }
 
     let href = fe.try_attribute(AId::Href).log_none(|| {
-        log::warn!("The 'feImage' element lacks the 'xlink:href' attribute. Skipped.")
+        log::warn!("The 'feImage' element lacks the 'xlink:href' attribute. Skipped.");
     })?;
     let img_data = super::image::get_href_data(href, state)?;
     let actual_size = img_data.actual_size()?;

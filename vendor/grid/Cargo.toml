@@ -13,7 +13,7 @@
 edition = "2018"
 rust-version = "1.59"
 name = "grid"
-version = "0.18.0"
+version = "1.0.1"
 authors = ["Armin Becher <armin.becher@gmai.com>"]
 build = false
 autolib = false

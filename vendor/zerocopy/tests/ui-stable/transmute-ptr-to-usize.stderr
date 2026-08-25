@@ -1,22 +1,18 @@
 error[E0277]: the trait bound `*const usize: IntoBytes` is not satisfied
-  --> tests/ui-stable/transmute-ptr-to-usize.rs:18:30
+  --> tests/ui-stable/transmute-ptr-to-usize.rs:20:30
    |
-18 | const POINTER_VALUE: usize = transmute!(&0usize as *const usize);
+20 | const POINTER_VALUE: usize = transmute!(&0usize as *const usize);
    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                              |
    |                              the trait `IntoBytes` is not implemented for `*const usize`
    |                              required by a bound introduced by this call
    |
    = note: Consider adding `#[derive(IntoBytes)]` to `*const usize`
-help: the trait `IntoBytes` is implemented for `usize`
-  --> src/impls.rs
-   |
-   |     unsafe_impl!(usize: Immutable, TryFromBytes, FromZeros, FromBytes, IntoBytes);
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: the trait `IntoBytes` is implemented for `usize`
 note: required by a bound in `POINTER_VALUE::transmute`
-  --> tests/ui-stable/transmute-ptr-to-usize.rs:18:30
+  --> tests/ui-stable/transmute-ptr-to-usize.rs:20:30
    |
-18 | const POINTER_VALUE: usize = transmute!(&0usize as *const usize);
+20 | const POINTER_VALUE: usize = transmute!(&0usize as *const usize);
    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                              |
    |                              required by a bound in this function

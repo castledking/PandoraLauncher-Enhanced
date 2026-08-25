@@ -2,8 +2,6 @@
 
 #![cfg_attr(not(all(test, feature = "float")), allow(dead_code, unused_macros))]
 
-#[allow(unused_imports)]
-pub(crate) use self::generated::{RegISize, RegSize};
 #[macro_use]
 #[path = "gen/utils.rs"]
 mod generated;
@@ -12,8 +10,11 @@ use core::sync::atomic::Ordering;
 
 macro_rules! static_assert {
     ($cond:expr $(,)?) => {{
-        let [()] = [(); (true /* type check */ & $cond) as usize];
+        let [] = [(); true as usize - $crate::utils::_assert_is_bool($cond) as usize];
     }};
+}
+pub(crate) const fn _assert_is_bool(v: bool) -> bool {
+    v
 }
 
 macro_rules! static_assert_layout {
@@ -53,15 +54,15 @@ macro_rules! doc_comment {
     all(target_arch = "x86_64", not(any(target_env = "sgx", miri))),
 ))]
 macro_rules! ifunc {
-    (unsafe fn($($arg_pat:ident: $arg_ty:ty),* $(,)?) $(-> $ret_ty:ty)? { $($init_body:tt)* }) => {{
+    (unsafe fn($($arg_pat:ident: $arg_ty:ty),*) $(-> $ret_ty:ty)? { $($detect_body:tt)* }) => {{
         type FnTy = unsafe fn($($arg_ty),*) $(-> $ret_ty)?;
         static FUNC: core::sync::atomic::AtomicPtr<()>
-            = core::sync::atomic::AtomicPtr::new(init as *mut ());
+            = core::sync::atomic::AtomicPtr::new(detect as *mut ());
         #[cold]
-        unsafe fn init($($arg_pat: $arg_ty),*) $(-> $ret_ty)? {
-            let func: FnTy = { $($init_body)* };
+        unsafe fn detect($($arg_pat: $arg_ty),*) $(-> $ret_ty)? {
+            let func: FnTy = { $($detect_body)* };
             FUNC.store(func as *mut (), core::sync::atomic::Ordering::Relaxed);
-            // SAFETY: the caller must uphold the safety contract for the function returned by $init_body.
+            // SAFETY: the caller must uphold the safety contract for the function returned by $detect_body.
             unsafe { func($($arg_pat),*) }
         }
         // SAFETY: `FnTy` is a function pointer, which is always safe to transmute with a `*mut ()`.
@@ -70,7 +71,7 @@ macro_rules! ifunc {
         let func = {
             core::mem::transmute::<*mut (), FnTy>(FUNC.load(core::sync::atomic::Ordering::Relaxed))
         };
-        // SAFETY: the caller must uphold the safety contract for the function returned by $init_body.
+        // SAFETY: the caller must uphold the safety contract for the function returned by $detect_body.
         // (To force the caller to use unsafe block for this macro, do not use
         // unsafe block here.)
         func($($arg_pat),*)
@@ -232,34 +233,6 @@ macro_rules! impl_default_no_fetch_ops {
     };
 }
 macro_rules! impl_default_bit_opts {
-    (AtomicPtr, $int_type:ty) => {
-        impl<T> AtomicPtr<T> {
-            #[inline]
-            #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
-            pub(crate) fn bit_set(&self, bit: u32, order: Ordering) -> bool {
-                #[cfg(portable_atomic_no_strict_provenance)]
-                use crate::utils::ptr::PtrExt as _;
-                let mask = <$int_type>::wrapping_shl(1, bit);
-                self.fetch_or(mask, order).addr() & mask != 0
-            }
-            #[inline]
-            #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
-            pub(crate) fn bit_clear(&self, bit: u32, order: Ordering) -> bool {
-                #[cfg(portable_atomic_no_strict_provenance)]
-                use crate::utils::ptr::PtrExt as _;
-                let mask = <$int_type>::wrapping_shl(1, bit);
-                self.fetch_and(!mask, order).addr() & mask != 0
-            }
-            #[inline]
-            #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
-            pub(crate) fn bit_toggle(&self, bit: u32, order: Ordering) -> bool {
-                #[cfg(portable_atomic_no_strict_provenance)]
-                use crate::utils::ptr::PtrExt as _;
-                let mask = <$int_type>::wrapping_shl(1, bit);
-                self.fetch_xor(mask, order).addr() & mask != 0
-            }
-        }
-    };
     ($atomic_type:ident, $int_type:ty) => {
         impl $atomic_type {
             #[inline]
@@ -285,89 +258,25 @@ macro_rules! impl_default_bit_opts {
 }
 
 // This just outputs the input as is, but can be used like an item-level block by using it with cfg.
-// Note: This macro is items!({ }), not items! { }.
-// An extra brace is used in input to make contents rustfmt-able.
 macro_rules! items {
-    ({$($tt:tt)*}) => {
+    ($($tt:tt)*) => {
         $($tt)*
     };
 }
 
-// rustfmt-compatible cfg_select/cfg_if alternative
-// Note: This macro is cfg_sel!({ }), not cfg_sel! { }.
-// An extra brace is used in input to make contents rustfmt-able.
-macro_rules! cfg_sel {
-    ({#[cfg(else)] { $($output:tt)* }}) => {
-        $($output)*
-    };
-    ({
-        #[cfg($cfg:meta)]
-        { $($output:tt)* }
-        $($( $rest:tt )+)?
-    }) => {
-        #[cfg($cfg)]
-        cfg_sel! {{#[cfg(else)] { $($output)* }}}
-        $(
-            #[cfg(not($cfg))]
-            cfg_sel! {{ $($rest)+ }}
-        )?
-    };
-    ({
-        #[cfg_attr(portable_atomic_no_cfg_target_has_atomic, cfg($cfg1:meta))]
-        #[cfg_attr(not(portable_atomic_no_cfg_target_has_atomic), cfg($cfg2:meta))]
-        { $($output:tt)* }
-        $($( $rest:tt )+)?
-    }) => {
-        #[cfg_attr(portable_atomic_no_cfg_target_has_atomic, cfg($cfg1))]
-        #[cfg_attr(not(portable_atomic_no_cfg_target_has_atomic), cfg($cfg2))]
-        cfg_sel! {{#[cfg(else)] { $($output)* }}}
-        $(
-            #[cfg_attr(portable_atomic_no_cfg_target_has_atomic, cfg(not($cfg1)))]
-            #[cfg_attr(not(portable_atomic_no_cfg_target_has_atomic), cfg(not($cfg2)))]
-            cfg_sel! {{ $($rest)+ }}
-        )?
-    };
-}
-
-// Stable equivalent of core::hint::{likely, unlikely}.
 #[allow(dead_code)]
-#[inline(always)]
-#[cold]
-fn cold_path() {}
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn likely(b: bool) -> bool {
-    if b {
-        true
-    } else {
-        cold_path();
-        false
-    }
-}
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn unlikely(b: bool) -> bool {
-    if b {
-        cold_path();
-        true
-    } else {
-        false
-    }
-}
-
-// Equivalent to core::hint::assert_unchecked, but compatible with pre-1.81 rustc.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[allow(dead_code)]
+// Stable version of https://doc.rust-lang.org/nightly/std/hint/fn.assert_unchecked.html.
+// TODO: use real core::hint::assert_unchecked on 1.81+ https://github.com/rust-lang/rust/pull/123588
 #[inline(always)]
 #[cfg_attr(all(debug_assertions, not(portable_atomic_no_track_caller)), track_caller)]
 pub(crate) unsafe fn assert_unchecked(cond: bool) {
     if !cond {
-        #[cfg(debug_assertions)]
-        unreachable!();
-        #[cfg(not(debug_assertions))]
-        // SAFETY: the caller promised `cond` is true.
-        unsafe {
-            core::hint::unreachable_unchecked()
+        if cfg!(debug_assertions) {
+            unreachable!()
+        } else {
+            // SAFETY: the caller promised `cond` is true.
+            unsafe { core::hint::unreachable_unchecked() }
         }
     }
 }
@@ -427,12 +336,6 @@ pub(crate) fn upgrade_success_ordering(success: Ordering, failure: Ordering) -> 
     }
 }
 
-#[cfg(not(portable_atomic_no_asm_maybe_uninit))]
-#[cfg(target_pointer_width = "32")]
-// SAFETY: MaybeUninit returned by zero_extend64_ptr is always initialized.
-const _: () = assert!(unsafe {
-    zero_extend64_ptr(ptr::without_provenance_mut(!0)).assume_init() == !0_u32 as u64
-});
 /// Zero-extends the given 32-bit pointer to `MaybeUninit<u64>`.
 /// This is used for 64-bit architecture's 32-bit ABI (e.g., AArch64 ILP32 ABI).
 /// See ptr_reg! macro in src/gen/utils.rs for details.
@@ -440,7 +343,7 @@ const _: () = assert!(unsafe {
 #[cfg(target_pointer_width = "32")]
 #[allow(dead_code)]
 #[inline]
-pub(crate) const fn zero_extend64_ptr(v: *mut ()) -> core::mem::MaybeUninit<u64> {
+pub(crate) fn zero_extend64_ptr(v: *mut ()) -> core::mem::MaybeUninit<u64> {
     #[repr(C)]
     struct ZeroExtended {
         #[cfg(target_endian = "big")]
@@ -514,17 +417,15 @@ type RetInt = u32;
 // Adapted from https://github.com/taiki-e/atomic-maybe-uninit/blob/v0.3.6/src/utils.rs#L255.
 // Helper for implementing sub-word atomic operations using word-sized LL/SC loop or CAS loop.
 //
-// Refs: https://github.com/llvm/llvm-project/blob/llvmorg-22.1.0-rc1/llvm/lib/CodeGen/AtomicExpandPass.cpp#L811
+// Refs: https://github.com/llvm/llvm-project/blob/llvmorg-20.1.0/llvm/lib/CodeGen/AtomicExpandPass.cpp#L799
 // (aligned_ptr, shift, mask)
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn create_sub_word_mask_values<T>(ptr: *mut T) -> (*mut MinWord, RetInt, RetInt) {
-    use core::mem;
-
     #[cfg(portable_atomic_no_strict_provenance)]
     use self::ptr::PtrExt as _;
-
+    use core::mem;
     // RISC-V, MIPS, SPARC, LoongArch, Xtensa, BPF: shift amount of 32-bit shift instructions is 5 bits unsigned (0-31).
     // PowerPC, C-SKY: shift amount of 32-bit shift instructions is 6 bits unsigned (0-63) and shift amount 32-63 means "clear".
     // Arm: shift amount of 32-bit shift instructions is 8 bits unsigned (0-255).
@@ -572,85 +473,67 @@ pub(crate) fn create_sub_word_mask_values<T>(ptr: *mut T) -> (*mut MinWord, RetI
 // This module provides core::ptr strict_provenance/exposed_provenance polyfill for pre-1.84 rustc.
 #[allow(dead_code)]
 pub(crate) mod ptr {
-    cfg_sel!({
-        #[cfg(not(portable_atomic_no_strict_provenance))]
-        {
-            #[allow(unused_imports)]
-            pub(crate) use core::ptr::{
-                with_exposed_provenance, with_exposed_provenance_mut, without_provenance_mut,
-            };
-        }
-        #[cfg(else)]
-        {
-            use core::mem;
+    #[cfg(portable_atomic_no_strict_provenance)]
+    use core::mem;
+    #[cfg(not(portable_atomic_no_strict_provenance))]
+    #[allow(unused_imports)]
+    pub(crate) use core::ptr::{with_exposed_provenance, with_exposed_provenance_mut};
 
-            #[inline(always)]
-            #[must_use]
-            pub(crate) const fn without_provenance_mut<T>(addr: usize) -> *mut T {
-                // An int-to-pointer transmute currently has exactly the intended semantics: it creates a
-                // pointer without provenance. Note that this is *not* a stable guarantee about transmute
-                // semantics, it relies on sysroot crates having special status.
-                // SAFETY: every valid integer is also a valid pointer (as long as you don't dereference that
-                // pointer).
-                #[cfg(miri)]
-                unsafe {
-                    mem::transmute(addr)
-                }
-                // const transmute requires Rust 1.56.
-                #[cfg(not(miri))]
-                {
-                    addr as *mut T
-                }
-            }
-            #[inline(always)]
-            #[must_use]
-            #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
-            pub(crate) fn with_exposed_provenance<T>(addr: usize) -> *const T {
-                addr as *const T
-            }
-            #[inline(always)]
-            #[must_use]
-            #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
-            pub(crate) fn with_exposed_provenance_mut<T>(addr: usize) -> *mut T {
-                addr as *mut T
-            }
+    #[cfg(portable_atomic_no_strict_provenance)]
+    #[inline(always)]
+    #[must_use]
+    #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
+    pub(crate) fn with_exposed_provenance<T>(addr: usize) -> *const T {
+        addr as *const T
+    }
+    #[cfg(portable_atomic_no_strict_provenance)]
+    #[inline(always)]
+    #[must_use]
+    #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
+    pub(crate) fn with_exposed_provenance_mut<T>(addr: usize) -> *mut T {
+        addr as *mut T
+    }
 
-            pub(crate) trait PtrExt<T: ?Sized>: Copy {
-                #[must_use]
-                fn addr(self) -> usize;
-                #[must_use]
-                fn with_addr(self, addr: usize) -> Self
-                where
-                    T: Sized;
-            }
-            impl<T: ?Sized> PtrExt<T> for *mut T {
-                #[inline(always)]
-                #[must_use]
-                fn addr(self) -> usize {
-                    // A pointer-to-integer transmute currently has exactly the right semantics: it returns the
-                    // address without exposing the provenance. Note that this is *not* a stable guarantee about
-                    // transmute semantics, it relies on sysroot crates having special status.
-                    // SAFETY: Pointer-to-integer transmutes are valid (if you are okay with losing the
-                    // provenance).
-                    unsafe { mem::transmute(self as *mut ()) }
-                }
-                #[inline]
-                #[must_use]
-                fn with_addr(self, addr: usize) -> Self
-                where
-                    T: Sized,
-                {
-                    // This should probably be an intrinsic to avoid doing any sort of arithmetic, but
-                    // meanwhile, we can implement it with `wrapping_offset`, which preserves the pointer's
-                    // provenance.
-                    let self_addr = self.addr() as isize;
-                    let dest_addr = addr as isize;
-                    let offset = dest_addr.wrapping_sub(self_addr);
-                    (self as *mut u8).wrapping_offset(offset) as *mut T
-                }
+    #[cfg(portable_atomic_no_strict_provenance)]
+    pub(crate) trait PtrExt<T: ?Sized>: Copy {
+        #[must_use]
+        fn addr(self) -> usize;
+        #[must_use]
+        fn with_addr(self, addr: usize) -> Self
+        where
+            T: Sized;
+    }
+    #[cfg(portable_atomic_no_strict_provenance)]
+    impl<T: ?Sized> PtrExt<T> for *mut T {
+        #[inline(always)]
+        #[must_use]
+        fn addr(self) -> usize {
+            // A pointer-to-integer transmute currently has exactly the right semantics: it returns the
+            // address without exposing the provenance. Note that this is *not* a stable guarantee about
+            // transmute semantics, it relies on sysroot crates having special status.
+            // SAFETY: Pointer-to-integer transmutes are valid (if you are okay with losing the
+            // provenance).
+            #[allow(clippy::transmutes_expressible_as_ptr_casts)]
+            unsafe {
+                mem::transmute(self as *mut ())
             }
         }
-    });
+        #[allow(clippy::cast_possible_wrap)]
+        #[inline]
+        #[must_use]
+        fn with_addr(self, addr: usize) -> Self
+        where
+            T: Sized,
+        {
+            // This should probably be an intrinsic to avoid doing any sort of arithmetic, but
+            // meanwhile, we can implement it with `wrapping_offset`, which preserves the pointer's
+            // provenance.
+            let self_addr = self.addr() as isize;
+            let dest_addr = addr as isize;
+            let offset = dest_addr.wrapping_sub(self_addr);
+            (self as *mut u8).wrapping_offset(offset) as *mut T
+        }
+    }
 }
 
 // This module provides:
@@ -694,31 +577,40 @@ pub(crate) mod ffi {
     pub(crate) type c_size_t = usize;
     // c_char is u8 by default on non-Apple/non-Windows/non-Vita Arm/C-SKY/Hexagon/MSP430/PowerPC/RISC-V/s390x/Xtensa targets, otherwise i8 by default.
     // See references in https://github.com/rust-lang/rust/issues/129945 for details.
-    cfg_sel!({
-        #[cfg(all(
-            not(any(target_vendor = "apple", windows, target_os = "vita")),
-            any(
-                target_arch = "aarch64",
-                target_arch = "arm",
-                target_arch = "csky",
-                target_arch = "hexagon",
-                target_arch = "msp430",
-                target_arch = "powerpc",
-                target_arch = "powerpc64",
-                target_arch = "riscv32",
-                target_arch = "riscv64",
-                target_arch = "s390x",
-                target_arch = "xtensa",
-            ),
-        ))]
-        {
-            pub(crate) type c_char = u8;
-        }
-        #[cfg(else)]
-        {
-            pub(crate) type c_char = i8;
-        }
-    });
+    #[cfg(all(
+        not(any(target_vendor = "apple", windows, target_os = "vita")),
+        any(
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "csky",
+            target_arch = "hexagon",
+            target_arch = "msp430",
+            target_arch = "powerpc",
+            target_arch = "powerpc64",
+            target_arch = "riscv32",
+            target_arch = "riscv64",
+            target_arch = "s390x",
+            target_arch = "xtensa",
+        ),
+    ))]
+    pub(crate) type c_char = u8;
+    #[cfg(not(all(
+        not(any(target_vendor = "apple", windows, target_os = "vita")),
+        any(
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "csky",
+            target_arch = "hexagon",
+            target_arch = "msp430",
+            target_arch = "powerpc",
+            target_arch = "powerpc64",
+            target_arch = "riscv32",
+            target_arch = "riscv64",
+            target_arch = "s390x",
+            target_arch = "xtensa",
+        ),
+    )))]
+    pub(crate) type c_char = i8;
 
     // Static assertions for C type definitions.
     #[cfg(test)]
@@ -759,9 +651,9 @@ pub(crate) mod ffi {
         #[inline]
         #[must_use]
         pub(crate) fn to_bytes_with_nul(&self) -> &[u8] {
-            #[allow(clippy::unnecessary_cast)] // triggered for targets that c_char is u8
             // SAFETY: Transmuting a slice of `c_char`s to a slice of `u8`s
             // is safe on all supported targets.
+            #[allow(clippy::unnecessary_cast)] // triggered for targets that c_char is u8
             unsafe {
                 &*(&self.0 as *const [c_char] as *const [u8])
             }
@@ -831,11 +723,33 @@ pub(crate) mod ffi {
                 $(#[$attr])*
                 $vis type $name = $ty;
             )*
+            // Static assertions for FFI bindings.
+            // This checks that FFI bindings defined in this crate and FFI bindings generated for
+            // the platform's latest header file using bindgen have the same types.
+            // Since this is static assertion, we can detect problems with
+            // `cargo check --tests --target <target>` run in CI (via TESTS=1 build.sh)
+            // without actually running tests on these platforms.
+            // See also https://github.com/taiki-e/test-helper/blob/HEAD/tools/codegen/src/ffi.rs.
             #[cfg(any(test, portable_atomic_test_no_std_static_assert_ffi))]
-            test_helper::static_assert_sys_type!($(
-                $(#[$attr])*
-                type $([$($windows_path)::+])? $name;
-            )*);
+            #[allow(
+                unused_imports,
+                clippy::cast_possible_wrap,
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation
+            )]
+            const _: fn() = || {
+                #[cfg(not(any(target_os = "aix", windows)))]
+                use test_helper::sys;
+                #[cfg(target_os = "aix")]
+                use libc as sys;
+                $(
+                    $(#[$attr])*
+                    {
+                        $(use windows_sys::$($windows_path)::+ as sys;)?
+                        let _: $name = 0 as sys::$name;
+                    }
+                )*
+            };
         };
     }
     /// Defines #[repr(C)] structs with #[cfg(test)] static assertions which checks
@@ -863,14 +777,46 @@ pub(crate) mod ffi {
                     $field_vis $field_name: $field_ty,
                 )*}
             )*
+            // Static assertions for FFI bindings.
+            // This checks that FFI bindings defined in this crate and FFI bindings generated for
+            // the platform's latest header file using bindgen have the same fields.
+            // Since this is static assertion, we can detect problems with
+            // `cargo check --tests --target <target>` run in CI (via TESTS=1 build.sh)
+            // without actually running tests on these platforms.
+            // See also https://github.com/taiki-e/test-helper/blob/HEAD/tools/codegen/src/ffi.rs.
             #[cfg(any(test, portable_atomic_test_no_std_static_assert_ffi))]
-            test_helper::static_assert_sys_struct!($(
-                $(#[$attr])*
-                struct $([$($windows_path)::+])? $name {$(
-                    $(#[$field_attr])*
-                    $field_name: $field_ty,
-                )*}
-            )*);
+            #[allow(unused_imports, clippy::undocumented_unsafe_blocks)]
+            const _: fn() = || {
+                #[cfg(not(any(target_os = "aix", windows)))]
+                use test_helper::sys;
+                #[cfg(target_os = "aix")]
+                use libc as sys;
+                $(
+                    $(#[$attr])*
+                    {
+                        $(use windows_sys::$($windows_path)::+ as sys;)?
+                        static_assert!(
+                            core::mem::size_of::<$name>()
+                                == core::mem::size_of::<sys::$name>()
+                        );
+                        let s: $name = unsafe { core::mem::zeroed() };
+                        // field names and types
+                        let _ = sys::$name {$(
+                            $(#[$field_attr])*
+                            $field_name: s.$field_name,
+                        )*};
+                        // field offsets
+                        #[cfg(not(portable_atomic_no_offset_of))]
+                        {$(
+                            $(#[$field_attr])*
+                            static_assert!(
+                                core::mem::offset_of!($name, $field_name) ==
+                                    core::mem::offset_of!(sys::$name, $field_name),
+                            );
+                        )*}
+                    }
+                )*
+            };
         };
     }
     /// Defines constants with #[cfg(test)] static assertions which checks
@@ -886,11 +832,52 @@ pub(crate) mod ffi {
                 $(#[$attr])*
                 $vis const $name: $ty = $val;
             )*
+            // Static assertions for FFI bindings.
+            // This checks that FFI bindings defined in this crate and FFI bindings generated for
+            // the platform's latest header file using bindgen have the same values.
+            // Since this is static assertion, we can detect problems with
+            // `cargo check --tests --target <target>` run in CI (via TESTS=1 build.sh)
+            // without actually running tests on these platforms.
+            // See also https://github.com/taiki-e/test-helper/blob/HEAD/tools/codegen/src/ffi.rs.
             #[cfg(any(test, portable_atomic_test_no_std_static_assert_ffi))]
-            test_helper::static_assert_sys_const!($(
-                $(#[$attr])*
-                const $([$($windows_path)::+])? $name: $ty;
-            )*);
+            #[allow(
+                unused_attributes, // for #[allow(..)] in $(#[$attr])*
+                unused_imports,
+                clippy::cast_possible_wrap,
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+            )]
+            const _: fn() = || {
+                #[cfg(not(any(target_os = "aix", windows)))]
+                use test_helper::sys;
+                #[cfg(target_os = "aix")]
+                use libc as sys;
+                $(
+                    $(#[$attr])*
+                    {
+                        $(use windows_sys::$($windows_path)::+ as sys;)?
+                        sys_const_cmp!($name, $ty);
+                    }
+                )*
+            };
+        };
+    }
+    #[cfg(any(test, portable_atomic_test_no_std_static_assert_ffi))]
+    macro_rules! sys_const_cmp {
+        (RTLD_DEFAULT, $ty:ty) => {
+            // ptr comparison and ptr-to-int cast are not stable on const context, so use ptr-to-int
+            // transmute and compare its result.
+            static_assert!(
+                // SAFETY: Pointer-to-integer transmutes are valid (since we are okay with losing the
+                // provenance here). (Same as <pointer>::addr().)
+                unsafe {
+                    core::mem::transmute::<$ty, usize>(RTLD_DEFAULT)
+                        == core::mem::transmute::<$ty, usize>(sys::RTLD_DEFAULT)
+                }
+            );
+        };
+        ($name:ident, $ty:ty) => {
+            static_assert!($name == sys::$name as $ty);
         };
     }
     /// Defines functions with #[cfg(test)] static assertions which checks
@@ -912,14 +899,43 @@ pub(crate) mod ffi {
                 $(#[$fn_attr])*
                 $vis fn $name($($args)*) $(-> $ret_ty)?;
             )*}
+            // Static assertions for FFI bindings.
+            // This checks that FFI bindings defined in this crate and FFI bindings generated for
+            // the platform's latest header file using bindgen have the same signatures.
+            // Since this is static assertion, we can detect problems with
+            // `cargo check --tests --target <target>` run in CI (via TESTS=1 build.sh)
+            // without actually running tests on these platforms.
+            // See also https://github.com/taiki-e/test-helper/blob/HEAD/tools/codegen/src/ffi.rs.
             #[cfg(any(test, portable_atomic_test_no_std_static_assert_ffi))]
-            test_helper::static_assert_sys_fn!(
-                $(#[$extern_attr])*
-                extern $abi {$(
+            #[allow(unused_imports)]
+            const _: fn() = || {
+                #[cfg(not(any(target_os = "aix", windows)))]
+                use test_helper::sys;
+                #[cfg(target_os = "aix")]
+                use libc as sys;
+                $(
                     $(#[$fn_attr])*
-                    fn $([$($windows_path)::+])? $name($($args)*) $(-> $ret_ty)?;
-                )*}
-            );
+                    {
+                        $(use windows_sys::$($windows_path)::+ as sys;)?
+                        sys_fn_cmp!($abi fn $name($($args)*) $(-> $ret_ty)?);
+                    }
+                )*
+            };
+        };
+    }
+    #[cfg(any(test, portable_atomic_test_no_std_static_assert_ffi))]
+    macro_rules! sys_fn_cmp {
+        (
+            $abi:literal fn $name:ident($($_arg_pat:ident: $arg_ty:ty),*, ...) $(-> $ret_ty:ty)?
+        ) => {
+            let mut _f: unsafe extern $abi fn($($arg_ty),*, ...) $(-> $ret_ty)? = $name;
+            _f = sys::$name;
+        };
+        (
+            $abi:literal fn $name:ident($($_arg_pat:ident: $arg_ty:ty),* $(,)?) $(-> $ret_ty:ty)?
+        ) => {
+            let mut _f: unsafe extern $abi fn($($arg_ty),*) $(-> $ret_ty)? = $name;
+            _f = sys::$name;
         };
     }
 

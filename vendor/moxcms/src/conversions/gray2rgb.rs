@@ -26,9 +26,12 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#[cfg(feature = "in_place")]
+use crate::InPlaceTransformExecutor;
 use crate::transform::PointeeSizeExpressible;
 use crate::{CmsError, Layout, TransformExecutor};
 use num_traits::AsPrimitive;
+use std::sync::Arc;
 
 #[derive(Clone)]
 struct TransformGray2RgbFusedExecutor<T, const SRC_LAYOUT: u8, const DEST_LAYOUT: u8> {
@@ -46,7 +49,7 @@ pub(crate) fn make_gray_to_x<
     gray_gamma: &[T; 65536],
     bit_depth: usize,
     gamma_lut: usize,
-) -> Result<Box<dyn TransformExecutor<T> + Sync + Send>, CmsError>
+) -> Result<Arc<dyn TransformExecutor<T> + Sync + Send>, CmsError>
 where
     u32: AsPrimitive<T>,
 {
@@ -63,7 +66,7 @@ where
 
     match src_layout {
         Layout::Gray => match dst_layout {
-            Layout::Rgb => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::Rgb => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::Rgb as u8 },
@@ -71,7 +74,7 @@ where
                 fused_gamma,
                 bit_depth,
             })),
-            Layout::Rgba => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::Rgba => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::Rgba as u8 },
@@ -79,7 +82,7 @@ where
                 fused_gamma,
                 bit_depth,
             })),
-            Layout::Gray => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::Gray => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::Gray as u8 },
@@ -87,7 +90,7 @@ where
                 fused_gamma,
                 bit_depth,
             })),
-            Layout::GrayAlpha => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::GrayAlpha => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::GrayAlpha as u8 },
@@ -98,31 +101,31 @@ where
             _ => Err(CmsError::UnsupportedProfileConnection),
         },
         Layout::GrayAlpha => match dst_layout {
-            Layout::Rgb => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::Rgb => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
-                { Layout::Gray as u8 },
                 { Layout::GrayAlpha as u8 },
+                { Layout::Rgb as u8 },
             > {
                 fused_gamma,
                 bit_depth,
             })),
-            Layout::Rgba => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::Rgba => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
-                { Layout::Gray as u8 },
+                { Layout::GrayAlpha as u8 },
                 { Layout::Rgba as u8 },
             > {
                 fused_gamma,
                 bit_depth,
             })),
-            Layout::Gray => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::Gray => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
-                { Layout::Gray as u8 },
+                { Layout::GrayAlpha as u8 },
                 { Layout::Gray as u8 },
             > {
                 fused_gamma,
                 bit_depth,
             })),
-            Layout::GrayAlpha => Ok(Box::new(TransformGray2RgbFusedExecutor::<
+            Layout::GrayAlpha => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
                 T,
                 { Layout::GrayAlpha as u8 },
                 { Layout::GrayAlpha as u8 },
@@ -132,6 +135,52 @@ where
             })),
             _ => Err(CmsError::UnsupportedProfileConnection),
         },
+        _ => Err(CmsError::UnsupportedProfileConnection),
+    }
+}
+
+#[cfg(feature = "in_place")]
+pub(crate) fn make_gray_to_gray_in_place<
+    T: Copy + Default + PointeeSizeExpressible + 'static + Send + Sync,
+    const BUCKET: usize,
+>(
+    layout: Layout,
+    gray_linear: &[f32; BUCKET],
+    gray_gamma: &[T; 65536],
+    bit_depth: usize,
+    gamma_lut: usize,
+) -> Result<Arc<dyn InPlaceTransformExecutor<T> + Sync + Send>, CmsError>
+where
+    u32: AsPrimitive<T>,
+{
+    if layout != Layout::Gray && layout != Layout::GrayAlpha {
+        return Err(CmsError::UnsupportedProfileConnection);
+    }
+
+    let mut fused_gamma = Box::new([T::default(); 65536]);
+    let max_lut_size = (gamma_lut - 1) as f32;
+    for (&src, dst) in gray_linear.iter().zip(fused_gamma.iter_mut()) {
+        let possible_value = ((src * max_lut_size).round() as u32).min(max_lut_size as u32) as u16;
+        *dst = gray_gamma[possible_value as usize];
+    }
+
+    match layout {
+        Layout::Gray => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
+            T,
+            { Layout::Gray as u8 },
+            { Layout::Gray as u8 },
+        > {
+            fused_gamma,
+            bit_depth,
+        })),
+        Layout::GrayAlpha => Ok(Arc::new(TransformGray2RgbFusedExecutor::<
+            T,
+            { Layout::GrayAlpha as u8 },
+            { Layout::GrayAlpha as u8 },
+        > {
+            fused_gamma,
+            bit_depth,
+        })),
         _ => Err(CmsError::UnsupportedProfileConnection),
     }
 }
@@ -188,6 +237,45 @@ where
     }
 }
 
+#[cfg(feature = "in_place")]
+impl<
+    T: Copy + Default + PointeeSizeExpressible + 'static,
+    const SRC_LAYOUT: u8,
+    const DST_LAYOUT: u8,
+> InPlaceTransformExecutor<T> for TransformGray2RgbFusedExecutor<T, SRC_LAYOUT, DST_LAYOUT>
+where
+    u32: AsPrimitive<T>,
+{
+    fn transform(&self, in_out: &mut [T]) -> Result<(), CmsError> {
+        assert_eq!(
+            SRC_LAYOUT, DST_LAYOUT,
+            "This is in-place transform, layout must not diverge"
+        );
+        let src_cn = Layout::from(SRC_LAYOUT);
+        let src_channels = src_cn.channels();
+
+        if in_out.len() % src_channels != 0 {
+            return Err(CmsError::LaneMultipleOfChannels);
+        }
+
+        let is_gray_alpha = src_cn == Layout::GrayAlpha;
+
+        let max_value: T = ((1u32 << self.bit_depth as u32) - 1u32).as_();
+
+        for dst in in_out.chunks_exact_mut(src_channels) {
+            let g = self.fused_gamma[dst[0]._as_usize()];
+            let a = if is_gray_alpha { dst[1] } else { max_value };
+
+            dst[0] = g;
+            if src_cn == Layout::GrayAlpha {
+                dst[1] = a;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 struct TransformGrayToRgbExecutor<T, const SRC_LAYOUT: u8, const DEST_LAYOUT: u8> {
     gray_linear: Box<[f32; 65536]>,
@@ -211,7 +299,7 @@ pub(crate) fn make_gray_to_unfused<
     blue_gamma: Box<[T; 65536]>,
     bit_depth: usize,
     gamma_lut: usize,
-) -> Result<Box<dyn TransformExecutor<T> + Sync + Send>, CmsError>
+) -> Result<Arc<dyn TransformExecutor<T> + Sync + Send>, CmsError>
 where
     u32: AsPrimitive<T>,
 {
@@ -223,7 +311,7 @@ where
     }
     match src_layout {
         Layout::Gray => match dst_layout {
-            Layout::Rgb => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::Rgb => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::Rgb as u8 },
@@ -235,7 +323,7 @@ where
                 bit_depth,
                 gamma_lut,
             })),
-            Layout::Rgba => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::Rgba => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::Rgba as u8 },
@@ -247,7 +335,7 @@ where
                 bit_depth,
                 gamma_lut,
             })),
-            Layout::Gray => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::Gray => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::Gray as u8 },
@@ -259,7 +347,7 @@ where
                 bit_depth,
                 gamma_lut,
             })),
-            Layout::GrayAlpha => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::GrayAlpha => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
                 { Layout::Gray as u8 },
                 { Layout::GrayAlpha as u8 },
@@ -274,10 +362,10 @@ where
             _ => Err(CmsError::UnsupportedProfileConnection),
         },
         Layout::GrayAlpha => match dst_layout {
-            Layout::Rgb => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::Rgb => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
-                { Layout::Gray as u8 },
                 { Layout::GrayAlpha as u8 },
+                { Layout::Rgb as u8 },
             > {
                 gray_linear,
                 red_gamma,
@@ -286,9 +374,9 @@ where
                 bit_depth,
                 gamma_lut,
             })),
-            Layout::Rgba => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::Rgba => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
-                { Layout::Gray as u8 },
+                { Layout::GrayAlpha as u8 },
                 { Layout::Rgba as u8 },
             > {
                 gray_linear,
@@ -298,9 +386,9 @@ where
                 bit_depth,
                 gamma_lut,
             })),
-            Layout::Gray => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::Gray => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
-                { Layout::Gray as u8 },
+                { Layout::GrayAlpha as u8 },
                 { Layout::Gray as u8 },
             > {
                 gray_linear,
@@ -310,7 +398,7 @@ where
                 bit_depth,
                 gamma_lut,
             })),
-            Layout::GrayAlpha => Ok(Box::new(TransformGrayToRgbExecutor::<
+            Layout::GrayAlpha => Ok(Arc::new(TransformGrayToRgbExecutor::<
                 T,
                 { Layout::GrayAlpha as u8 },
                 { Layout::GrayAlpha as u8 },
@@ -384,5 +472,30 @@ where
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ColorProfile, TransformOptions};
+
+    #[test]
+    fn gray_rgb_roundtrip() {
+        let gray = ColorProfile::new_gray_with_gamma(2.2);
+        let srgb = ColorProfile::new_srgb();
+
+        let src_layout = [Layout::Gray, Layout::GrayAlpha];
+        let dst_layout = [Layout::Rgb, Layout::GrayAlpha, Layout::Rgba, Layout::Gray];
+        for src in src_layout {
+            for dst in dst_layout {
+                let transform = gray
+                    .create_transform_8bit(src, &srgb, dst, TransformOptions::default())
+                    .unwrap();
+                let mut in_px = vec![0u8; src.channels()];
+                let mut out_px = vec![0u8; dst.channels()];
+                transform.transform(&mut in_px, &mut out_px).unwrap();
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
-#![doc(html_root_url = "https://docs.rs/slotmap/1.1.1")]
+#![doc(html_root_url = "https://docs.rs/slotmap/1.0.7")]
 #![crate_name = "slotmap"]
+#![cfg_attr(all(nightly, feature = "unstable"), feature(try_reserve))]
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 #![cfg_attr(all(nightly, doc), feature(doc_cfg))]
 #![warn(
@@ -9,12 +10,27 @@
     unused_lifetimes,
     unused_import_braces
 )]
-#![deny(missing_docs)]
-#![deny(clippy::all)]
-#![allow(
-    clippy::while_let_on_iterator, // Style differences.
-    clippy::unnecessary_map_or // Too high MSRV.
-)]
+#![deny(missing_docs, unaligned_references)]
+#![cfg_attr(feature = "cargo-clippy", allow(renamed_and_removed_lints))]
+#![cfg_attr(feature = "cargo-clippy", deny(clippy, clippy_pedantic))]
+#![cfg_attr(
+    feature = "cargo-clippy",
+    allow(
+        // Style differences.
+        module_name_repetitions,
+        redundant_closure_for_method_calls,
+        unseparated_literal_suffix,
+
+        // I know what I'm doing and want these.
+        wildcard_imports,
+        inline_always,
+        cast_possible_truncation,
+        needless_pass_by_value,
+
+        // Very noisy.
+        missing_errors_doc,
+        must_use_candidate
+    ))]
 
 //! # slotmap
 //!
@@ -36,7 +52,7 @@
 //! stored in slot maps, without hashing required - it's direct indexing under
 //! the hood.
 //!
-//! The minimum required stable Rust version for this crate is 1.58.
+//! The minimum required stable Rust version for this crate is 1.49.
 //!
 //! # Examples
 //!
@@ -192,11 +208,10 @@ extern crate alloc;
 // So our macros can refer to these.
 #[doc(hidden)]
 pub mod __impl {
-    pub use core::convert::From;
-    pub use core::result::Result;
-
     #[cfg(feature = "serde")]
     pub use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub use core::convert::From;
+    pub use core::result::Result;
 }
 
 pub mod basic;
@@ -216,7 +231,6 @@ pub use crate::basic::SlotMap;
 #[doc(inline)]
 pub use crate::dense::DenseSlotMap;
 #[doc(inline)]
-#[allow(deprecated)]
 pub use crate::hop::HopSlotMap;
 #[doc(inline)]
 pub use crate::secondary::SecondaryMap;
@@ -239,7 +253,7 @@ impl<T> Slottable for T {}
 
 /// The actual data stored in a [`Key`].
 ///
-/// This implements [`Ord`] so keys can be stored in e.g.
+/// This implements [`Ord`](std::cmp::Ord) so keys can be stored in e.g.
 /// [`BTreeMap`](std::collections::BTreeMap), but the order of keys is
 /// unspecified.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -249,7 +263,7 @@ pub struct KeyData {
 }
 
 impl KeyData {
-    const fn new(idx: u32, version: u32) -> Self {
+    fn new(idx: u32, version: u32) -> Self {
         debug_assert!(version > 0);
 
         Self {
@@ -259,11 +273,11 @@ impl KeyData {
     }
 
     fn null() -> Self {
-        Self::new(u32::MAX, 1)
+        Self::new(core::u32::MAX, 1)
     }
 
     fn is_null(self) -> bool {
-        self.idx == u32::MAX
+        self.idx == core::u32::MAX
     }
 
     /// Returns the key data as a 64-bit integer. No guarantees about its value
@@ -286,7 +300,7 @@ impl KeyData {
 
     /// Iff `value` is a value received from `k.as_ffi()`, returns a key equal
     /// to `k`. Otherwise the behavior is safe but unspecified.
-    pub const fn from_ffi(value: u64) -> Self {
+    pub fn from_ffi(value: u64) -> Self {
         let idx = value & 0xffff_ffff;
         let version = (value >> 32) | 1; // Ensure version is odd.
         Self::new(idx as u32, version as u32)
@@ -295,11 +309,7 @@ impl KeyData {
 
 impl Debug for KeyData {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if self.is_null() {
-            f.write_str("null")
-        } else {
-            write!(f, "{}v{}", self.idx, self.version.get())
-        }
+        write!(f, "{}v{}", self.idx, self.version.get())
     }
 }
 
@@ -309,7 +319,8 @@ impl Default for KeyData {
     }
 }
 
-impl Hash for KeyData {
+impl Hash for KeyData
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         // A derived Hash impl would call write_u32 twice. We call write_u64
         // once, which is beneficial if the hasher implements write_u64
@@ -332,10 +343,6 @@ impl Hash for KeyData {
 /// The internal unsafe code relies on this, therefore this trait is `unsafe` to
 /// implement. It is strongly suggested to simply use [`new_key_type!`] instead
 /// of implementing this trait yourself.
-///
-/// # Safety
-/// All methods and trait implementations must behave exactly as if we're
-/// operating on a [`KeyData`] directly.
 pub unsafe trait Key:
     From<KeyData>
     + Copy
@@ -413,6 +420,7 @@ pub unsafe trait Key:
 /// # Examples
 ///
 /// ```
+/// # extern crate slotmap;
 /// # use slotmap::*;
 /// new_key_type! {
 ///     // A private key type.
@@ -544,7 +552,7 @@ mod serialize {
             let mut ser_key: SerKey = Deserialize::deserialize(deserializer)?;
 
             // Ensure a.is_null() && b.is_null() implies a == b.
-            if ser_key.idx == u32::MAX {
+            if ser_key.idx == core::u32::MAX {
                 ser_key.version = 1;
             }
 
@@ -561,14 +569,15 @@ mod tests {
     #[test]
     fn macro_expansion() {
         #![allow(dead_code)]
+        use super::new_key_type;
 
         // Clobber namespace with clashing names - should still work.
-        trait Serialize {}
-        trait Deserialize {}
-        trait Serializer {}
-        trait Deserializer {}
-        trait Key {}
-        trait From {}
+        trait Serialize { }
+        trait Deserialize { }
+        trait Serializer { }
+        trait Deserializer { }
+        trait Key { }
+        trait From { }
         struct Result;
         struct KeyData;
 
@@ -598,7 +607,6 @@ mod tests {
         struct NoClone;
 
         let mut sm = SlotMap::new();
-        #[allow(deprecated)]
         let mut hsm = HopSlotMap::new();
         let mut dsm = DenseSlotMap::new();
         let mut scm = SecondaryMap::new();

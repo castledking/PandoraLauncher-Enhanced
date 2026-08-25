@@ -167,12 +167,8 @@ impl<U> EyepatchHackVector<U> {
     }
 
     fn truncate(&mut self, max: usize) {
-        // SAFETY:
-        // - The elements in buf are `ULE`, so they don't need to be dropped even if we own them.
-        // - self.buf is a valid, nonnull slice pointer, since it comes from a NonNull and the struct
-        //   invariant requires validity.
-        // - Because of the `min`, we are guaranteed to be constructing a slice of the same length or
-        //   smaller, from the same pointer, so it will be valid as well, and similarly non-null.
+        // SAFETY: The elements in buf are `ULE`, so they don't need to be dropped
+        // even if we own them.
         self.buf = unsafe {
             NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
                 self.buf.as_mut().as_mut_ptr(),
@@ -334,8 +330,6 @@ impl<'a, T: AsULE> ZeroVec<'a, T> {
     ///
     /// If you have a slice of `&[T]`s, prefer using
     /// [`Self::alloc_from_slice()`].
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[inline]
     #[cfg(feature = "alloc")]
     pub fn new_owned(vec: Vec<T::ULE>) -> Self {
@@ -359,8 +353,6 @@ impl<'a, T: AsULE> ZeroVec<'a, T> {
 
     /// Creates a new borrowed `ZeroVec` using an existing
     /// backing buffer
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[inline]
     pub const fn new_borrowed(slice: &'a [T::ULE]) -> Self {
         // Safety: references in Rust cannot be null.
@@ -378,8 +370,6 @@ impl<'a, T: AsULE> ZeroVec<'a, T> {
     }
 
     /// Creates a new, owned, empty `ZeroVec<T>`, with a certain capacity pre-allocated.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[cfg(feature = "alloc")]
     pub fn with_capacity(capacity: usize) -> Self {
         Self::new_owned(Vec::with_capacity(capacity))
@@ -430,8 +420,6 @@ impl<'a, T: AsULE> ZeroVec<'a, T> {
     /// Converts a `ZeroVec<T>` into a `ZeroVec<u8>`, retaining the current ownership model.
     ///
     /// Note that the length of the ZeroVec may change.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Examples
     ///
@@ -493,8 +481,6 @@ impl<'a, T: AsULE> ZeroVec<'a, T> {
     /// If the `ULE`s of `T` and `P` are different types but have the same size,
     /// use [`Self::try_into_converted()`].
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Examples
     ///
     /// ```
@@ -523,8 +509,6 @@ impl<'a, T: AsULE> ZeroVec<'a, T> {
     /// Converts a `ZeroVec<T>` into a `ZeroVec<P>`, retaining the current ownership model.
     ///
     /// If `T` and `P` have the exact same `ULE`, use [`Self::cast()`].
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Panics
     ///
@@ -687,8 +671,6 @@ impl<'a> ZeroVec<'a, u8> {
     ///
     /// Note that the length of the ZeroVec may change.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Examples
     ///
     /// Convert a borrowed `ZeroVec`:
@@ -739,8 +721,6 @@ where
     ///
     /// This function results in an `Owned` instance of `ZeroVec<T>`.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Example
     ///
     /// ```
@@ -762,8 +742,6 @@ where
     }
 
     /// Creates a `Vec<T>` from a `ZeroVec<T>`.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Example
     ///
@@ -815,8 +793,6 @@ where
     /// This is a cheap operation on little-endian platforms, falling back to a more expensive
     /// operation on big-endian platforms.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Example
     ///
     /// ```
@@ -848,8 +824,6 @@ where
     ///
     /// This will convert the ZeroVec into an owned ZeroVec if not already the case.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Example
     ///
     /// ```
@@ -875,8 +849,6 @@ where
     }
 
     /// Same as [`ZeroVec::for_each_mut()`], but bubbles up errors.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Example
     ///
@@ -912,8 +884,6 @@ where
 
     /// Converts a borrowed ZeroVec to an owned ZeroVec. No-op if already owned.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Example
     ///
     /// ```
@@ -939,8 +909,6 @@ where
     /// Allows the ZeroVec to be mutated by converting it to an owned variant, and producing
     /// a mutable vector of ULEs. If you only need a mutable slice, consider using [`Self::to_mut_slice()`]
     /// instead.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Example
     ///
@@ -975,8 +943,6 @@ where
     /// and returning a slice to its backing buffer. [`Self::with_mut()`] allows for mutation
     /// of the vector itself.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Example
     ///
     /// ```rust
@@ -1008,8 +974,6 @@ where
 
     /// Removes the first element of the ZeroVec. The ZeroVec remains in the same
     /// borrowed or owned state.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Examples
     ///
@@ -1056,8 +1020,6 @@ where
     /// Removes the last element of the ZeroVec. The ZeroVec remains in the same
     /// borrowed or owned state.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Examples
     ///
     /// ```
@@ -1099,8 +1061,6 @@ where
 
     /// Converts the type into a `Cow<'a, [T::ULE]>`, which is
     /// the logical equivalent of this type's internal representation
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[inline]
     #[cfg(feature = "alloc")]
     pub fn into_cow(self) -> Cow<'a, [T::ULE]> {

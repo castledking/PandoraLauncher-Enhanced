@@ -3,11 +3,12 @@
 //! [`Buffer`]: crate::buffer::Buffer
 
 use super::{error::Closed, message};
+use futures_core::ready;
 use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 
 pin_project! {

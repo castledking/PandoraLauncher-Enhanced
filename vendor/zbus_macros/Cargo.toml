@@ -11,9 +11,9 @@
 
 [package]
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.85"
 name = "zbus_macros"
-version = "5.14.0"
+version = "5.13.2"
 authors = [
     "Marc-André Lureau <marcandre.lureau@redhat.com>",
     "Zeeshan Ali Khan <zeeshanak@gnome.org>",
@@ -38,6 +38,7 @@ categories = [
 ]
 license = "MIT"
 repository = "https://github.com/z-galaxy/zbus/"
+resolver = "2"
 
 [features]
 blocking-api = []
@@ -79,7 +80,7 @@ features = [
 version = "4.3.1"
 
 [dependencies.zvariant]
-version = "5.10.0"
+version = "5.9.2"
 
 [dependencies.zvariant_utils]
 version = "3.3.0"

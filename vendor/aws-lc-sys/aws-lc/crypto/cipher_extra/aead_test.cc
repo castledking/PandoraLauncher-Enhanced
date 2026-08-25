@@ -1,16 +1,5 @@
-/* Copyright (c) 2014, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+// Copyright (c) 2014, Google Inc.
+// SPDX-License-Identifier: ISC
 
 #include <stdint.h>
 #include <string.h>
@@ -1313,7 +1302,19 @@ TEST(AEADTest, TestGCMSIV128Change16Alignment) {
   GTEST_LOG_(INFO) << "Orig. Ctx.State Location: " << &encrypt_ctx_128->state;
   EVP_AEAD_CTX *moved_encrypt_ctx_128 =
       (EVP_AEAD_CTX *)(((uint8_t *)encrypt_ctx_128) + 8);
+  // The destination pointer is offset into the allocation so that it aliases
+  // the |state| subobject; GCC / fortify-headers infer the subobject size and
+  // report a `stringop-overflow` false positive (see aws-lc#3083).
+  // -Wstringop-overflow was introduced in GCC 7; older GCC versions reject
+  // the pragma with -Werror=pragmas.
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 7)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
   memmove(moved_encrypt_ctx_128, encrypt_ctx_128, sizeof(EVP_AEAD_CTX));
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 7)
+#pragma GCC diagnostic pop
+#endif
   GTEST_LOG_(INFO) << "Moved Ctx.State Location: "
                    << &moved_encrypt_ctx_128->state;
 
@@ -1354,7 +1355,15 @@ TEST(AEADTest, TestGCMSIV256Change16Alignment) {
   GTEST_LOG_(INFO) << "Orig. Ctx.State Location: " << &encrypt_ctx_256->state;
   EVP_AEAD_CTX *moved_encrypt_ctx_256 =
       (EVP_AEAD_CTX *)(((uint8_t *)encrypt_ctx_256) + 8);
+  // See TestGCMSIV128Change16Alignment for why this pragma is needed.
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 7)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
   memmove(moved_encrypt_ctx_256, encrypt_ctx_256, sizeof(EVP_AEAD_CTX));
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 7)
+#pragma GCC diagnostic pop
+#endif
   GTEST_LOG_(INFO) << "Moved Ctx.State Location: "
                    << &moved_encrypt_ctx_256->state;
 

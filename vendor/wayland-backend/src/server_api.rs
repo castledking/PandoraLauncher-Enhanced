@@ -496,6 +496,16 @@ impl Handle {
         self.handle.global_info(id.id)
     }
 
+    /// Get the name of the global.
+    ///
+    /// - `client` Client for which to look up the global.
+    #[doc(alias = "wl_global_get_name")]
+    #[cfg(feature = "libwayland_server_1_22")]
+    #[inline]
+    pub fn global_name(&self, global: GlobalId, client: ClientId) -> Option<u32> {
+        self.handle.global_name(global.id, client.id)
+    }
+
     /// Returns the handler which manages the visibility and notifies when a client has bound the global.
     #[inline]
     pub fn get_global_handler<D: 'static>(
@@ -510,6 +520,20 @@ impl Handle {
     /// If no client is specified, all pending events are flushed to all clients.
     pub fn flush(&mut self, client: Option<ClientId>) -> std::io::Result<()> {
         self.handle.flush(client)
+    }
+
+    /// Set default client max buffer size.
+    ///
+    /// This method will only affect connections created after the method call.
+    #[cfg(feature = "libwayland_server_1_23")]
+    pub fn set_default_max_buffer_size(&self, max_buffer_size: usize) {
+        self.handle.set_default_max_buffer_size(max_buffer_size);
+    }
+
+    /// Set maximum buffer size for client.
+    #[cfg(feature = "libwayland_server_1_23")]
+    pub fn set_client_max_buffer_size(&self, client: ClientId, max_buffer_size: usize) {
+        self.handle.set_client_max_buffer_size(client.id, max_buffer_size);
     }
 }
 

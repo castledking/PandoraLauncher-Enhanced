@@ -1,6 +1,6 @@
 [package]
 name = "serde_fmt"
-version = "1.1.0"
+version = "1.0.3"
 authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
 edition = "2018"
 description = "Write any serde::Serialize using the standard formatting APIs"
@@ -16,14 +16,11 @@ categories = ["encoding", "no-std"]
 
 [features]
 # Support the standard library
-std = ["serde_core/std"]
+std = ["serde/std"]
 
-[dependencies.serde_core]
-version = "1.0.220"
+[dependencies.serde]
+version = "1.0.104"
 default-features = false
 
 [dev-dependencies.serde_derive]
-version = "1"
-
-[dev-dependencies.serde]
 version = "1"

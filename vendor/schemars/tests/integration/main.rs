@@ -2,7 +2,6 @@
 
 #[cfg(feature = "arrayvec07")]
 mod arrayvec;
-mod attr_order;
 mod bound;
 #[cfg(feature = "bytes1")]
 mod bytes;
@@ -21,7 +20,6 @@ mod enum_repr;
 mod enums;
 mod enums_deny_unknown_fields;
 mod enums_flattened;
-mod enums_option_flattened;
 mod enums_ref_variants;
 mod enums_untagged_variant;
 mod examples;
@@ -47,7 +45,7 @@ mod settings;
 mod skip;
 #[cfg(feature = "smallvec1")]
 mod smallvec;
-#[cfg(any(feature = "smol_str02", feature = "smol_str03"))]
+#[cfg(feature = "smol_str02")]
 mod smol_str;
 mod std_types;
 mod structs;

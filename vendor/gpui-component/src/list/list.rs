@@ -1,5 +1,5 @@
-use std::ops::Range;
 use instant::Duration;
+use std::ops::Range;
 
 use crate::actions::{Cancel, Confirm, SelectDown, SelectUp};
 use crate::input::InputState;
@@ -14,7 +14,7 @@ use crate::{Icon, IndexPath, Selectable, Sizable, StyledExt};
 use crate::{VirtualListScrollHandle, list::ListDelegate, v_virtual_list};
 use gpui::{
     App, AvailableSpace, ClickEvent, Context, DefiniteLength, EdgesRefinement, EventEmitter,
-    ListSizingBehavior, RenderOnce, ScrollStrategy, SharedString, StatefulInteractiveElement,
+    ListSizingBehavior, RenderOnce, Role, ScrollStrategy, SharedString, StatefulInteractiveElement,
     StyleRefinement, Subscription, px, size,
 };
 use gpui::{
@@ -211,6 +211,14 @@ where
         self.mouse_right_clicked_index
     }
 
+    /// Set the query text of the search input, this will trigger a search.
+    pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let query = query.to_string();
+        self.query_input.update(cx, |input, cx| {
+            input.set_value(query, window, cx);
+        });
+    }
+
     /// Set a specific list item for measurement.
     pub fn set_item_to_measure_index(
         &mut self,
@@ -287,7 +295,10 @@ where
                     });
 
                     // Always wait 100ms to avoid flicker
-                    window.background_executor().timer(Duration::from_millis(100)).await;
+                    window
+                        .background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
                     _ = this.update_in(window, |this, window, cx| {
                         this.set_searching(false, window, cx);
                     });
@@ -452,8 +463,14 @@ where
             .unwrap_or(false);
         let id = SharedString::from(format!("list-item-{}", ix));
 
+        let total_items = self.rows_cache.items_count();
+
         div()
             .id(id)
+            .role(Role::ListItem)
+            .aria_position_in_set(ix.row + 1)
+            .aria_size_of_set(total_items)
+            .aria_selected(selected)
             .w_full()
             .relative()
             .overflow_hidden()
@@ -493,9 +510,13 @@ where
         let rows_cache = self.rows_cache.clone();
         let scrollbar_visible = self.options.scrollbar_visible;
         let scroll_handle = self.scroll_handle.clone();
+        let item_to_measure_index = rows_cache
+            .position_of(&self.item_to_measure_index)
+            .or_else(|| rows_cache.first_entry_position())
+            .unwrap_or(0);
 
         v_flex()
-            .flex_grow()
+            .flex_grow_1()
             .relative()
             .size_full()
             .when_some(self.options.max_height, |this, h| this.max_h(h))
@@ -546,6 +567,7 @@ where
                                     .collect::<Vec<_>>()
                             },
                         )
+                        .with_item_to_measure_index(item_to_measure_index)
                         .paddings(self.options.paddings.clone())
                         .when(self.options.max_height.is_some(), |this| {
                             this.with_sizing_behavior(ListSizingBehavior::Infer)
@@ -743,6 +765,7 @@ where
 
         div()
             .id("list")
+            .role(Role::List)
             .size_full()
             .refine_style(&self.style)
             .child(self.state.clone())

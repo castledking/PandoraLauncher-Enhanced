@@ -28,30 +28,6 @@ Released YYYY-MM-DD.
 
 --------------------------------------------------------------------------------
 
-## 0.4.12
-
-Released 2026-02-10.
-
-### Changed
-
-* Recommend `SmallRng` over `StdRng` in the examples for faster, more lightweight
-  seeding and sampling
-* Updated `rand` dependency from 0.8.5 to 0.10
-* Updated `flate2` dependency from 1.0.24 to 1.1
-* Rename `gen` variable to `rng` for better 2024 Edition compatibility
-
---------------------------------------------------------------------------------
-
-## 0.4.11
-
-Released 2026-02-10.
-
-### Changed
-
-* Updated to `libFuzzer` commit `a47b42eb9f9b` (`release/22.x`).
-
---------------------------------------------------------------------------------
-
 ## 0.4.10
 
 Released 2025-07-03.

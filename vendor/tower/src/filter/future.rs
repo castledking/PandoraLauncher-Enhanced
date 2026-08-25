@@ -2,11 +2,12 @@
 
 use super::AsyncPredicate;
 use crate::BoxError;
+use futures_core::ready;
 use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tower_service::Service;
 
@@ -34,7 +35,7 @@ opaque_future! {
     /// [`Filter`]: crate::filter::Filter
     pub type ResponseFuture<R, F> =
         futures_util::future::Either<
-            std::future::Ready<Result<R, crate::BoxError>>,
+            futures_util::future::Ready<Result<R, crate::BoxError>>,
             futures_util::future::ErrInto<F, crate::BoxError>
         >;
 }

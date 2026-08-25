@@ -180,7 +180,7 @@ fn test_nested_display() {
 
 #[test]
 fn test_void() {
-    #[allow(clippy::empty_enums)]
+    #[allow(clippy::empty_enum)]
     #[derive(Error, Debug)]
     #[error("...")]
     pub enum Error {}

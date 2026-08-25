@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.2
+
+* Add MSRV to `Cargo.toml`
+
+## 1.1.1
+
+* Derive `Eq`, `Hash`, `Ord`, `PartialOrd` on `EventFilter`
+
+## 1.1.0
+
+* Update bitflags to 2.x
+* Bump Rust edition to 2021
+
 ## 1.0.4
 
 * #4: Adds support for iOS

@@ -19,7 +19,6 @@ include!("include.rs");
 //   - `repr(packed)`
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct Foo {
     a: u8,
@@ -28,7 +27,6 @@ struct Foo {
 util_assert_impl_all!(Foo: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct Bar {
     a: u8,
@@ -37,7 +35,6 @@ struct Bar {
 util_assert_impl_all!(Bar: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(packed)]
 struct Baz {
     // NOTE: The `u16` type is not guaranteed to have alignment 2, although it
@@ -53,7 +50,6 @@ struct Baz {
 util_assert_impl_all!(Baz: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, align(1))]
 struct FooAlign {
     a: u8,
@@ -62,7 +58,6 @@ struct FooAlign {
 util_assert_impl_all!(FooAlign: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct Unsized {
     a: [u8],
@@ -71,7 +66,6 @@ struct Unsized {
 util_assert_impl_all!(Unsized: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct TypeParams<'a, T: ?imp::Sized, I: imp::Iterator> {
     a: I::Item,
@@ -89,7 +83,6 @@ util_assert_impl_all!(TypeParams<'static, [::core::primitive::u8], imp::IntoIter
 // Deriving `Unaligned` should work if the struct has bounded parameters.
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct WithParams<'a: 'b, 'b: 'a, T: 'a + 'b + imp::Unaligned, const N: usize>(
     [T; N],

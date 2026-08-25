@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "kqueue"
-version = "1.1.1"
+version = "1.2.0"
 authors = ["William Orr <will@worrbase.com>"]
 build = false
 autolib = false
@@ -90,7 +90,7 @@ path = "benches/criterion_scaling.rs"
 harness = false
 
 [dependencies.kqueue-sys]
-version = "^1.0.4"
+version = "^1.1.1"
 
 [dependencies.libc]
 version = "^0.2.17"
@@ -108,3 +108,6 @@ version = "3.1.0"
 [lints.clippy]
 print_stderr = "deny"
 print_stdout = "deny"
+
+[profile.bench]
+debug = 2

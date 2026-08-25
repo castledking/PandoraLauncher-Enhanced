@@ -1,25 +1,23 @@
 [package]
 name = "unicode-ident"
-version = "1.0.24"
+version = "1.0.19"
 authors = ["David Tolnay <dtolnay@gmail.com>"]
 categories = ["development-tools::procedural-macro-helpers", "no-std", "no-std::no-alloc"]
 description = "Determine whether characters have the XID_Start or XID_Continue properties according to Unicode Standard Annex #31"
 documentation = "https://docs.rs/unicode-ident"
-edition = "2021"
+edition = "2018"
 keywords = ["unicode", "xid"]
 license = "(MIT OR Apache-2.0) AND Unicode-3.0"
 repository = "https://github.com/dtolnay/unicode-ident"
-rust-version = "1.71"
+rust-version = "1.31"
 
 [dev-dependencies]
+criterion = { version = "0.7", default-features = false }
 fst = "0.4"
-rand = "0.10"
+rand = "0.9"
 roaring = "0.11"
 ucd-trie = { version = "0.1", default-features = false }
 unicode-xid = "0.2.6"
-
-[target.'cfg(not(miri))'.dev-dependencies]
-criterion = { version = "0.8", default-features = false }
 
 [[bench]]
 name = "xid"
@@ -32,7 +30,6 @@ members = ["diagram", "generate"]
 targets = ["x86_64-unknown-linux-gnu"]
 rustdoc-args = [
     "--generate-link-to-definition",
-    "--generate-macro-expansion",
     "--extern-html-root-url=core=https://doc.rust-lang.org",
     "--extern-html-root-url=alloc=https://doc.rust-lang.org",
     "--extern-html-root-url=std=https://doc.rust-lang.org",

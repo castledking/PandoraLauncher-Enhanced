@@ -2,6 +2,8 @@
 use super::CompactLength;
 use crate::geometry::Rect;
 use crate::style_helpers::{FromLength, FromPercent, TaffyAuto, TaffyZero};
+#[cfg(feature = "parse")]
+use crate::util::parse::{from_str_from_css, CssParseResult, FromCss, Parser, Token};
 
 /// A unit of linear measurement
 ///
@@ -22,6 +24,20 @@ impl FromPercent for LengthPercentage {
         Self::percent(value.into())
     }
 }
+
+#[cfg(feature = "parse")]
+impl FromCss for LengthPercentage {
+    fn from_css<'i>(parser: &mut Parser<'i, '_>) -> CssParseResult<'i, Self> {
+        match parser.next()?.clone() {
+            Token::Percentage { unit_value, .. } => Ok(Self::percent(unit_value)),
+            Token::Dimension { unit, value, .. } if unit == "px" => Ok(Self::length(value)),
+            token => Err(parser.new_unexpected_token_error(token))?,
+        }
+    }
+}
+#[cfg(feature = "parse")]
+from_str_from_css!(LengthPercentage);
+
 impl LengthPercentage {
     /// An absolute length in some abstract units. Users of Taffy may define what they correspond
     /// to in their application (pixels, logical pixels, mm, etc) as they see fit.
@@ -52,12 +68,12 @@ impl LengthPercentage {
     /// # Safety
     /// CompactLength must represent a valid variant for LengthPercentage
     #[allow(unsafe_code)]
-    pub unsafe fn from_raw(val: CompactLength) -> Self {
+    pub const unsafe fn from_raw(val: CompactLength) -> Self {
         Self(val)
     }
 
     /// Get the underlying `CompactLength` representation of the value
-    pub fn into_raw(self) -> CompactLength {
+    pub const fn into_raw(self) -> CompactLength {
         self.0
     }
 }
@@ -106,6 +122,20 @@ impl From<LengthPercentage> for LengthPercentageAuto {
     }
 }
 
+#[cfg(feature = "parse")]
+impl FromCss for LengthPercentageAuto {
+    fn from_css<'i>(parser: &mut Parser<'i, '_>) -> CssParseResult<'i, Self> {
+        match parser.next()?.clone() {
+            Token::Percentage { unit_value, .. } => Ok(Self::percent(unit_value)),
+            Token::Dimension { unit, value, .. } if unit == "px" => Ok(Self::length(value)),
+            Token::Ident(ident) if ident == "auto" => Ok(Self::auto()),
+            token => Err(parser.new_unexpected_token_error(token))?,
+        }
+    }
+}
+#[cfg(feature = "parse")]
+from_str_from_css!(LengthPercentageAuto);
+
 impl LengthPercentageAuto {
     /// An absolute length in some abstract units. Users of Taffy may define what they correspond
     /// to in their application (pixels, logical pixels, mm, etc) as they see fit.
@@ -143,12 +173,12 @@ impl LengthPercentageAuto {
     /// # Safety
     /// CompactLength must represent a valid variant for LengthPercentageAuto
     #[allow(unsafe_code)]
-    pub unsafe fn from_raw(val: CompactLength) -> Self {
+    pub const unsafe fn from_raw(val: CompactLength) -> Self {
         Self(val)
     }
 
     /// Get the underlying `CompactLength` representation of the value
-    pub fn into_raw(self) -> CompactLength {
+    pub const fn into_raw(self) -> CompactLength {
         self.0
     }
 
@@ -224,6 +254,20 @@ impl From<LengthPercentageAuto> for Dimension {
     }
 }
 
+#[cfg(feature = "parse")]
+impl FromCss for Dimension {
+    fn from_css<'i>(parser: &mut Parser<'i, '_>) -> CssParseResult<'i, Self> {
+        match parser.next()?.clone() {
+            Token::Percentage { unit_value, .. } => Ok(Self::percent(unit_value)),
+            Token::Dimension { unit, value, .. } if unit == "px" => Ok(Self::length(value)),
+            Token::Ident(ident) if ident == "auto" => Ok(Self::auto()),
+            token => Err(parser.new_unexpected_token_error(token))?,
+        }
+    }
+}
+#[cfg(feature = "parse")]
+from_str_from_css!(Dimension);
+
 impl Dimension {
     /// An absolute length in some abstract units. Users of Taffy may define what they correspond
     /// to in their application (pixels, logical pixels, mm, etc) as they see fit.
@@ -261,12 +305,12 @@ impl Dimension {
     /// # Safety
     /// CompactLength must represent a valid variant for LengthPercentageAuto
     #[allow(unsafe_code)]
-    pub unsafe fn from_raw(val: CompactLength) -> Self {
+    pub const unsafe fn from_raw(val: CompactLength) -> Self {
         Self(val)
     }
 
     /// Get the underlying `CompactLength` representation of the value
-    pub fn into_raw(self) -> CompactLength {
+    pub const fn into_raw(self) -> CompactLength {
         self.0
     }
 

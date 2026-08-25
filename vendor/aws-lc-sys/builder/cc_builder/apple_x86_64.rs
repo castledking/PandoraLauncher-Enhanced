@@ -1,8 +1,16 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0 OR ISC
-// Wed Feb 11 20:55:20 UTC 2026
+// Mon Jun 29 12:41:07 UTC 2026
 
 pub(super) const CRYPTO_LIBRARY: &[&str] = &[
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/intt_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/nttunpack_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/ntt_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/pointwise_acc_l4_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/pointwise_acc_l5_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/pointwise_acc_l7_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/pointwise_avx2_asm.S",
+    "crypto/fipsmodule/ml_dsa/mldsa/native/x86_64/src/poly_caddq_avx2_asm.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/intt.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/mulcache_compute.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/ntt.S",
@@ -12,6 +20,14 @@ pub(super) const CRYPTO_LIBRARY: &[&str] = &[
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/polyvec_basemul_acc_montgomery_cached_asm_k2.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/polyvec_basemul_acc_montgomery_cached_asm_k3.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/polyvec_basemul_acc_montgomery_cached_asm_k4.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_compress_d10.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_compress_d11.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_compress_d4.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_compress_d5.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_decompress_d10.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_decompress_d11.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_decompress_d4.S",
+    "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/poly_decompress_d5.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/reduce.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/rej_uniform_asm.S",
     "crypto/fipsmodule/ml_kem/mlkem/native/x86_64/src/tomont.S",
@@ -56,6 +72,9 @@ pub(super) const CRYPTO_LIBRARY: &[&str] = &[
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/curve25519/edwards25519_scalarmulbase_alt.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/curve25519/edwards25519_scalarmuldouble.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/curve25519/edwards25519_scalarmuldouble_alt.S",
+    "third_party/s2n-bignum/s2n-bignum-imported/x86_att/mldsa/mldsa_intt.S",
+    "third_party/s2n-bignum/s2n-bignum-imported/x86_att/mldsa/mldsa_ntt.S",
+    "third_party/s2n-bignum/s2n-bignum-imported/x86_att/mldsa/mldsa_reduce.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/p256/bignum_montinv_p256.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/p256/p256_montjscalarmul.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/p256/p256_montjscalarmul_alt.S",
@@ -91,5 +110,7 @@ pub(super) const CRYPTO_LIBRARY: &[&str] = &[
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/p521/p521_jdouble_alt.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/p521/p521_jscalarmul.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/p521/p521_jscalarmul_alt.S",
+    "third_party/s2n-bignum/s2n-bignum-imported/x86_att/sha3/sha3_keccak4_f1600.S",
+    "third_party/s2n-bignum/s2n-bignum-imported/x86_att/sha3/sha3_keccak4_f1600_alt.S",
     "third_party/s2n-bignum/s2n-bignum-imported/x86_att/sha3/sha3_keccak_f1600.S",
 ];

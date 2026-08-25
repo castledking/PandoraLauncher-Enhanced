@@ -23,9 +23,9 @@ fn test_add_single() {
     drop(w);
 
     let stats = dhat::HeapStats::get();
+    dhat::assert_eq!(stats.total_bytes, 263);
     dhat::assert_eq!(stats.total_blocks, 2);
-    dhat::assert_eq!(stats.total_bytes, 219);
 
-    dhat::assert_eq!(stats.curr_blocks, 0);
     dhat::assert_eq!(stats.curr_bytes, 0);
+    dhat::assert_eq!(stats.curr_blocks, 0);
 }

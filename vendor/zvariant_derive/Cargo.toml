@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.87"
 name = "zvariant_derive"
-version = "5.10.0"
+version = "5.11.0"
 authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
 build = false
 autolib = false
@@ -36,6 +36,17 @@ categories = [
 ]
 license = "MIT"
 repository = "https://github.com/z-galaxy/zbus/"
+
+[package.metadata.docs.rs]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "aarch64-linux-android",
+]
 
 [features]
 default = []
@@ -71,7 +82,7 @@ features = [
 ]
 
 [dependencies.zvariant_utils]
-version = "3.3.0"
+version = "3.3.1"
 
 [dev-dependencies.enumflags2]
 version = "0.7.9"

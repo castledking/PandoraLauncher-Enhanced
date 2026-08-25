@@ -7,7 +7,7 @@ use core::fmt;
 use core::ops::{Add, AddAssign, Sub, SubAssign};
 
 use crate::common::FloatExt;
-use crate::Vec2;
+use crate::{Axis, Vec2};
 
 #[cfg(not(feature = "std"))]
 use crate::common::FloatFuncs;
@@ -59,7 +59,7 @@ impl Point {
 
     /// Determine the midpoint of two points.
     #[inline]
-    pub fn midpoint(self, other: Point) -> Point {
+    pub const fn midpoint(self, other: Point) -> Point {
         Point::new(0.5 * (self.x + other.x), 0.5 * (self.y + other.y))
     }
 
@@ -191,7 +191,7 @@ impl Point {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(self) -> bool {
+    pub const fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite()
     }
 
@@ -199,8 +199,35 @@ impl Point {
     ///
     /// [`NaN`]: f64::is_nan
     #[inline]
-    pub fn is_nan(self) -> bool {
+    pub const fn is_nan(self) -> bool {
         self.x.is_nan() || self.y.is_nan()
+    }
+
+    /// Get the member matching the given axis.
+    #[inline]
+    pub const fn get_coord(self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.x,
+            Axis::Vertical => self.y,
+        }
+    }
+
+    /// Get a mutable reference to the member matching the given axis.
+    #[inline]
+    pub const fn get_coord_mut(&mut self, axis: Axis) -> &mut f64 {
+        match axis {
+            Axis::Horizontal => &mut self.x,
+            Axis::Vertical => &mut self.y,
+        }
+    }
+
+    /// Set the member matching the given axis to the given value.
+    #[inline]
+    pub const fn set_coord(&mut self, axis: Axis, value: f64) {
+        match axis {
+            Axis::Horizontal => self.x = value,
+            Axis::Vertical => self.y = value,
+        }
     }
 }
 

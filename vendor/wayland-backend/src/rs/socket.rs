@@ -14,6 +14,7 @@ use rustix::net::{
 };
 
 use crate::protocol::{ArgumentType, Message};
+use crate::rs::DEFAULT_MAX_BUFFER_SIZE;
 
 use super::wire::{parse_message, write_to_buffers, MessageParseError, MessageWriteError};
 
@@ -41,9 +42,9 @@ impl Socket {
     /// slice should not be longer than `MAX_BYTES_OUT` otherwise the receiving
     /// end may lose some data.
     pub fn send_msg(&self, bytes: &[u8], fds: &[OwnedFd]) -> IoResult<usize> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "redox")))]
         let flags = SendFlags::DONTWAIT | SendFlags::NOSIGNAL;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "redox"))]
         let flags = SendFlags::DONTWAIT;
 
         if !fds.is_empty() {
@@ -72,9 +73,9 @@ impl Socket {
     /// slice `MAX_FDS_OUT` long, otherwise some data of the received message may
     /// be lost.
     pub fn rcv_msg(&self, buffer: &mut [u8], fds: &mut VecDeque<OwnedFd>) -> IoResult<usize> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "redox")))]
         let flags = RecvFlags::DONTWAIT | RecvFlags::CMSG_CLOEXEC;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "redox"))]
         let flags = RecvFlags::DONTWAIT;
 
         let mut cmsg_space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS_OUT))];
@@ -90,7 +91,7 @@ impl Socket {
             })
             .flatten();
         fds.extend(received_fds);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "redox"))]
         for fd in fds.iter() {
             if let Ok(flags) = rustix::io::fcntl_getfd(fd) {
                 let _ = rustix::io::fcntl_setfd(fd, flags | rustix::io::FdFlags::CLOEXEC);
@@ -134,17 +135,19 @@ pub struct BufferedSocket {
     in_fds: VecDeque<OwnedFd>,
     out_data: Buffer<u8>,
     out_fds: Vec<OwnedFd>,
+    max_buffer_size: Option<usize>,
 }
 
 impl BufferedSocket {
     /// Wrap a Socket into a Buffered Socket
-    pub fn new(socket: Socket) -> Self {
+    pub fn new(socket: Socket, max_buffer_size: Option<usize>) -> Self {
         Self {
             socket,
-            in_data: Buffer::new(2 * MAX_BYTES_OUT), // Incoming buffers are twice as big in order to be
-            in_fds: VecDeque::new(),                 // able to store leftover data if needed
-            out_data: Buffer::new(MAX_BYTES_OUT),
+            in_data: Buffer::new(DEFAULT_MAX_BUFFER_SIZE),
+            in_fds: VecDeque::new(),
+            out_data: Buffer::new(DEFAULT_MAX_BUFFER_SIZE),
             out_fds: Vec::new(),
+            max_buffer_size: max_buffer_size.map(round_max_buffer_size),
         }
     }
 
@@ -206,13 +209,24 @@ impl BufferedSocket {
     // if false is returned, it means there is not enough space
     // in the buffer
     fn attempt_write_message(&mut self, msg: &Message<u32, RawFd>) -> IoResult<bool> {
-        match write_to_buffers(msg, self.out_data.get_writable_storage(), &mut self.out_fds) {
-            Ok(bytes_out) => {
-                self.out_data.advance(bytes_out);
-                Ok(true)
+        let fds_len = self.out_fds.len();
+        loop {
+            match write_to_buffers(msg, self.out_data.get_writable_storage(), &mut self.out_fds) {
+                Ok(bytes_out) => {
+                    self.out_data.advance(bytes_out);
+                    return Ok(true);
+                }
+                Err(MessageWriteError::BufferTooSmall) => {
+                    self.out_fds.truncate(fds_len);
+                    if self.max_buffer_size.is_some_and(|s| s <= self.out_data.storage.len()) {
+                        return Ok(false);
+                    }
+                    self.out_data.increase_capacity();
+                }
+                Err(MessageWriteError::DupFdFailed(e)) => {
+                    return Err(e);
+                }
             }
-            Err(MessageWriteError::BufferTooSmall) => Ok(false),
-            Err(MessageWriteError::DupFdFailed(e)) => Err(e),
         }
     }
 
@@ -294,6 +308,11 @@ impl BufferedSocket {
 
         Ok(msg)
     }
+
+    pub fn set_max_buffer_size(&mut self, max_buffer_size: Option<usize>) {
+        // TODO: what if it decreases?
+        self.max_buffer_size = max_buffer_size.map(round_max_buffer_size);
+    }
 }
 
 impl AsRawFd for BufferedSocket {
@@ -333,6 +352,11 @@ impl<T: Copy + Default> Buffer<T> {
         self.offset += bytes;
     }
 
+    fn increase_capacity(&mut self) {
+        let new_len = self.storage.len() * 2;
+        self.storage.resize_with(new_len, Default::default);
+    }
+
     /// Clears the contents of the buffer
     ///
     /// This only sets the counter of occupied space back to zero,
@@ -362,6 +386,10 @@ impl<T: Copy + Default> Buffer<T> {
         self.occupied -= self.offset;
         self.offset = 0;
     }
+}
+
+fn round_max_buffer_size(max_buffer_size: usize) -> usize {
+    max_buffer_size.checked_next_power_of_two().unwrap_or(usize::MAX).max(DEFAULT_MAX_BUFFER_SIZE)
 }
 
 #[cfg(test)]
@@ -419,8 +447,8 @@ mod tests {
         };
 
         let (client, server) = ::std::os::unix::net::UnixStream::pair().unwrap();
-        let mut client = BufferedSocket::new(Socket::from(client));
-        let mut server = BufferedSocket::new(Socket::from(server));
+        let mut client = BufferedSocket::new(Socket::from(client), Some(DEFAULT_MAX_BUFFER_SIZE));
+        let mut server = BufferedSocket::new(Socket::from(server), Some(DEFAULT_MAX_BUFFER_SIZE));
 
         client.write_message(&msg).unwrap();
         client.flush().unwrap();
@@ -463,8 +491,8 @@ mod tests {
         };
 
         let (client, server) = ::std::os::unix::net::UnixStream::pair().unwrap();
-        let mut client = BufferedSocket::new(Socket::from(client));
-        let mut server = BufferedSocket::new(Socket::from(server));
+        let mut client = BufferedSocket::new(Socket::from(client), Some(DEFAULT_MAX_BUFFER_SIZE));
+        let mut server = BufferedSocket::new(Socket::from(server), Some(DEFAULT_MAX_BUFFER_SIZE));
 
         client.write_message(&msg).unwrap();
         client.flush().unwrap();
@@ -522,8 +550,8 @@ mod tests {
         ];
 
         let (client, server) = ::std::os::unix::net::UnixStream::pair().unwrap();
-        let mut client = BufferedSocket::new(Socket::from(client));
-        let mut server = BufferedSocket::new(Socket::from(server));
+        let mut client = BufferedSocket::new(Socket::from(client), Some(DEFAULT_MAX_BUFFER_SIZE));
+        let mut server = BufferedSocket::new(Socket::from(server), Some(DEFAULT_MAX_BUFFER_SIZE));
 
         for msg in &messages {
             client.write_message(msg).unwrap();
@@ -561,8 +589,8 @@ mod tests {
         };
 
         let (client, server) = ::std::os::unix::net::UnixStream::pair().unwrap();
-        let mut client = BufferedSocket::new(Socket::from(client));
-        let mut server = BufferedSocket::new(Socket::from(server));
+        let mut client = BufferedSocket::new(Socket::from(client), Some(DEFAULT_MAX_BUFFER_SIZE));
+        let mut server = BufferedSocket::new(Socket::from(server), Some(DEFAULT_MAX_BUFFER_SIZE));
 
         client.write_message(&msg).unwrap();
         client.flush().unwrap();

@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 // Test code
-#[expect(clippy::expect_used)]
+#[allow(clippy::expect_used)]
 fn check_equivalence<'a, K, V, S0, S1>(mut a: S0, mut b: S1)
 where
     K: Ord + Debug + PartialEq + 'a,
@@ -47,6 +47,7 @@ where
 }
 
 // Test code
+#[allow(clippy::expect_used)]
 fn check_into_iter_equivalence<K, V, S0, S1>(a: S0, b: S1)
 where
     K: Ord + Debug + PartialEq,
@@ -86,7 +87,8 @@ const RANDOM_DATA: &[(u32, u64)] = &[
 ];
 
 // Test code
-#[expect(clippy::panic)]
+#[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
 fn populate_litemap<S>(map: &mut LiteMap<u32, u64, S>)
 where
     S: StoreMut<u32, u64> + Debug,
@@ -94,12 +96,15 @@ where
     assert_eq!(0, map.len());
     assert!(map.is_empty());
     for (k, v) in SORTED_DATA.iter() {
-        if map.try_append(*k, *v).is_some() {
-            panic!("appending sorted data: {k:?} to {map:?}");
+        #[allow(clippy::single_match)] // for clarity
+        match map.try_append(*k, *v) {
+            Some(_) => panic!("appending sorted data: {k:?} to {map:?}"),
+            None => (), // OK
         };
     }
     assert_eq!(10, map.len());
     for (k, v) in RANDOM_DATA.iter() {
+        #[allow(clippy::single_match)] // for clarity
         match map.try_append(*k, *v) {
             Some(_) => (), // OK
             None => panic!("cannot append random data: {k:?} to{map:?}"),
@@ -117,7 +122,7 @@ where
 ///
 /// Call this function in a test with the store impl to test as a valid backend for LiteMap.
 // Test code
-#[expect(clippy::expect_used)]
+#[allow(clippy::expect_used)]
 pub fn check_store<'a, S>()
 where
     S: StoreConstEmpty<u32, u64>
@@ -159,7 +164,7 @@ where
 /// Similar to [`check_store`] function, but also checks the validitiy of [`StoreIterableMut`]
 /// and [`StoreBulkMut`] traits.
 // Test code
-#[expect(clippy::expect_used)]
+#[allow(clippy::expect_used)]
 pub fn check_store_full<'a, S>()
 where
     S: StoreConstEmpty<u32, u64>

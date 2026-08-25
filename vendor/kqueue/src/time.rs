@@ -1,5 +1,6 @@
-use libc::{c_long, time_t, timespec};
 use std::time::Duration;
+
+use libc::{c_long, time_t, timespec};
 
 #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
 type NSec = i64;
@@ -7,24 +8,26 @@ type NSec = i64;
 type NSec = c_long;
 
 pub(crate) fn duration_to_timespec(d: Duration) -> timespec {
+    // this is already checked below
+    #[allow(clippy::cast_possible_wrap)]
     let tv_sec = d.as_secs() as time_t;
-    let tv_nsec = d.subsec_nanos() as NSec;
+    #[allow(clippy::cast_lossless)] // this is necessary for i686 fbsd and similar targets
+    let tv_nanos = d.subsec_nanos() as NSec;
 
-    if tv_sec.is_negative() {
-        panic!("Duration seconds is negative");
+    assert!(!tv_sec.is_negative(), "Duration seconds is negative");
+    assert!(!tv_nanos.is_negative(), "Duration nsecs is negative");
+
+    timespec {
+        tv_sec,
+        tv_nsec: tv_nanos,
     }
-
-    if tv_nsec.is_negative() {
-        panic!("Duration nsecs is negative");
-    }
-
-    timespec { tv_sec, tv_nsec }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::duration_to_timespec;
     use std::time::Duration;
+
+    use super::duration_to_timespec;
 
     #[test]
     fn test_basic_duration_to_ts() {

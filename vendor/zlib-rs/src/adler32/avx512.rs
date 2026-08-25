@@ -31,12 +31,8 @@ const ZERO: __m512i = __m512i_literal([0u8; 64]);
 pub fn adler32_avx512(adler: u32, src: &[u8]) -> u32 {
     assert!(cfg!(target_feature = "avx512f"));
     assert!(cfg!(target_feature = "avx512bw"));
-    if cfg!(target_feature = "avx512vnni") {
-        super::avx512_vnni::adler32_avx512(adler, src)
-    } else {
-        // SAFETY: the assertion above ensures this code is not executed unless the CPU has avx512.
-        unsafe { adler32_avx512_help(adler, src) }
-    }
+    // SAFETY: the assertion above ensures this code is not executed unless the CPU has avx512.
+    unsafe { adler32_avx512_help(adler, src) }
 }
 
 #[target_feature(enable = "avx512f")]
@@ -101,7 +97,7 @@ unsafe fn helper_64_bytes(mut adler0: u32, mut adler1: u32, src: &[__m512i]) -> 
 }
 
 #[inline(always)]
-pub(super) unsafe fn _mm512_reduce_add_epu32(x: __m512i) -> u32 {
+unsafe fn _mm512_reduce_add_epu32(x: __m512i) -> u32 {
     unsafe {
         let a = _mm512_extracti64x4_epi64(x, 1);
         let b = _mm512_extracti64x4_epi64(x, 0);
@@ -121,7 +117,7 @@ pub(super) unsafe fn _mm512_reduce_add_epu32(x: __m512i) -> u32 {
 }
 
 #[inline(always)]
-pub(super) unsafe fn partial_hsum(x: __m512i) -> u32 {
+unsafe fn partial_hsum(x: __m512i) -> u32 {
     unsafe {
         // Permutation vector to extract every other integer.
         let perm_vec: __m512i =

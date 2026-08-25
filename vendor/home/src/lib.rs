@@ -69,13 +69,13 @@ pub fn home_dir() -> Option<PathBuf> {
 #[cfg(windows)]
 use windows::home_dir_inner;
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "redox"))]
 fn home_dir_inner() -> Option<PathBuf> {
     #[allow(deprecated)]
     std::env::home_dir()
 }
 
-/// Returns the storage directory used by Cargo, often known as
+/// Returns the storage directory used by Cargo, often knowns as
 /// `.cargo` or `CARGO_HOME`.
 ///
 /// It returns one of the following values, in this order of
@@ -112,7 +112,7 @@ pub fn cargo_home_with_cwd(cwd: &Path) -> io::Result<PathBuf> {
     env::cargo_home_with_cwd_env(&env::OS_ENV, cwd)
 }
 
-/// Returns the storage directory used by rustup, often known as
+/// Returns the storage directory used by rustup, often knowns as
 /// `.rustup` or `RUSTUP_HOME`.
 ///
 /// It returns one of the following values, in this order of

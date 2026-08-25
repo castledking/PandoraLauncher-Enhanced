@@ -1,4 +1,5 @@
 use super::Rate;
+use futures_core::ready;
 use std::{
     future::Future,
     pin::Pin,
@@ -70,7 +71,7 @@ where
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.state {
-            State::Ready { .. } => return self.inner.poll_ready(cx),
+            State::Ready { .. } => return Poll::Ready(ready!(self.inner.poll_ready(cx))),
             State::Limited => {
                 if Pin::new(&mut self.sleep).poll(cx).is_pending() {
                     tracing::trace!("rate limit exceeded; sleeping.");
@@ -84,7 +85,7 @@ where
             rem: self.rate.num(),
         };
 
-        self.inner.poll_ready(cx)
+        Poll::Ready(ready!(self.inner.poll_ready(cx)))
     }
 
     fn call(&mut self, request: Request) -> Self::Future {

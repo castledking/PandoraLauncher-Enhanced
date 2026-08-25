@@ -32,14 +32,49 @@ mod lut4_to_3;
 mod lut4_to_3_q0_15;
 mod rgb_xyz;
 mod rgb_xyz_opt;
-mod rgb_xyz_q2_13;
 mod rgb_xyz_q2_13_opt;
 mod t_lut3_to_3;
 mod t_lut3_to_3_q0_15;
 
+#[cfg(feature = "lut")]
+use crate::conversions::interpolator::BarycentricWeight;
+#[cfg(feature = "sse_luts")]
 pub(crate) use lut4_to_3::SseLut4x3Factory;
+#[cfg(feature = "sse_shaper_paths")]
 pub(crate) use rgb_xyz::TransformShaperRgbSse;
+#[cfg(feature = "sse_shaper_optimized_paths")]
 pub(crate) use rgb_xyz_opt::TransformShaperRgbOptSse;
-pub(crate) use rgb_xyz_q2_13::TransformShaperQ2_13Sse;
+#[cfg(feature = "sse_shaper_fixed_point_paths")]
 pub(crate) use rgb_xyz_q2_13_opt::TransformShaperQ2_13OptSse;
+#[cfg(feature = "sse_luts")]
 pub(crate) use t_lut3_to_3::SseLut3x3Factory;
+
+// this is required to ensure that interpolator never goes out of bounds
+#[cfg(feature = "lut")]
+fn assert_barycentric_lut_size_precondition<R, const GRID_SIZE: usize>(
+    lut: &[BarycentricWeight<R>],
+) {
+    let k = lut
+        .iter()
+        .max_by(|a, &b| a.x.cmp(&b.x))
+        .map(|x| x.x)
+        .unwrap_or(0);
+    let b = lut
+        .iter()
+        .max_by(|a, &b| a.x_n.cmp(&b.x_n))
+        .map(|x| x.x)
+        .unwrap_or(0);
+    let max_possible_product = (k as u32 * (GRID_SIZE as u32 * GRID_SIZE as u32)
+        + k as u32 * GRID_SIZE as u32
+        + k as u32) as usize;
+    let max_possible_product1 = (b as u32 * (GRID_SIZE as u32 * GRID_SIZE as u32)
+        + b as u32 * GRID_SIZE as u32
+        + b as u32) as usize;
+    let cube_size = GRID_SIZE * GRID_SIZE * GRID_SIZE;
+    assert!(max_possible_product < cube_size);
+    assert!(max_possible_product1 < cube_size);
+}
+
+#[allow(unused)]
+#[repr(align(16), C)]
+pub(crate) struct SseAlignedU16(pub(crate) [u16; 8]);

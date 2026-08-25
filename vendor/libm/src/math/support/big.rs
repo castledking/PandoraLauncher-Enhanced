@@ -11,10 +11,10 @@ const U128_LO_MASK: u128 = u64::MAX as u128;
 
 /// A 256-bit unsigned integer represented as two 128-bit native-endian limbs.
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct u256 {
-    pub hi: u128,
     pub lo: u128,
+    pub hi: u128,
 }
 
 impl u256 {
@@ -28,17 +28,17 @@ impl u256 {
     pub fn signed(self) -> i256 {
         i256 {
             lo: self.lo,
-            hi: self.hi as i128,
+            hi: self.hi,
         }
     }
 }
 
 /// A 256-bit signed integer represented as two 128-bit native-endian limbs.
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct i256 {
-    pub hi: i128,
     pub lo: u128,
+    pub hi: u128,
 }
 
 impl i256 {
@@ -47,7 +47,7 @@ impl i256 {
     pub fn unsigned(self) -> u256 {
         u256 {
             lo: self.lo,
-            hi: self.hi as u128,
+            hi: self.hi,
         }
     }
 }
@@ -73,17 +73,17 @@ impl MinInt for i256 {
 
     type Unsigned = u256;
 
-    const SIGNED: bool = true;
+    const SIGNED: bool = false;
     const BITS: u32 = 256;
     const ZERO: Self = Self { lo: 0, hi: 0 };
     const ONE: Self = Self { lo: 1, hi: 0 };
     const MIN: Self = Self {
-        lo: u128::MIN,
-        hi: i128::MIN,
+        lo: 0,
+        hi: 1 << 127,
     };
     const MAX: Self = Self {
         lo: u128::MAX,
-        hi: i128::MAX,
+        hi: u128::MAX << 1,
     };
 }
 
@@ -109,78 +109,11 @@ macro_rules! impl_common {
             }
         }
 
-        impl ops::Add<Self> for $ty {
-            type Output = Self;
-
-            fn add(self, rhs: Self) -> Self::Output {
-                let (lo, carry) = self.lo.overflowing_add(rhs.lo);
-                let (hi, of) = Int::carrying_add(self.hi, rhs.hi, carry);
-                debug_assert!(!of, "attempt to add with overflow");
-                Self { lo, hi }
-            }
-        }
-
-        impl ops::Sub<Self> for $ty {
-            type Output = Self;
-
-            fn sub(self, rhs: Self) -> Self::Output {
-                let (lo, borrow) = self.lo.overflowing_sub(rhs.lo);
-                let (hi, of) = Int::borrowing_sub(self.hi, rhs.hi, borrow);
-                debug_assert!(!of, "attempt to subtract with overflow");
-                Self { lo, hi }
-            }
-        }
-
         impl ops::Shl<u32> for $ty {
             type Output = Self;
 
-            fn shl(mut self, rhs: u32) -> Self::Output {
-                debug_assert!(rhs < Self::BITS, "attempt to shift left with overflow");
-
-                let half_bits = Self::BITS / 2;
-                let low_mask = half_bits - 1;
-                let s = rhs & low_mask;
-
-                let lo = self.lo;
-                let hi = self.hi;
-
-                self.lo = lo << s;
-
-                if rhs & half_bits == 0 {
-                    self.hi = (lo >> (low_mask ^ s) >> 1) as _;
-                    self.hi |= hi << s;
-                } else {
-                    self.hi = self.lo as _;
-                    self.lo = 0;
-                }
-                self
-            }
-        }
-
-        impl ops::Shr<u32> for $ty {
-            type Output = Self;
-
-            fn shr(mut self, rhs: u32) -> Self::Output {
-                debug_assert!(rhs < Self::BITS, "attempt to shift right with overflow");
-
-                let half_bits = Self::BITS / 2;
-                let low_mask = half_bits - 1;
-                let s = rhs & low_mask;
-
-                let lo = self.lo;
-                let hi = self.hi;
-
-                self.hi = hi >> s;
-
-                #[allow(unused_comparisons)]
-                if rhs & half_bits == 0 {
-                    self.lo = (hi << (low_mask ^ s) << 1) as _;
-                    self.lo |= lo >> s;
-                } else {
-                    self.lo = self.hi as _;
-                    self.hi = if hi < 0 { !0 } else { 0 };
-                }
-                self
+            fn shl(self, _rhs: u32) -> Self::Output {
+                unimplemented!("only used to meet trait bounds")
             }
         }
     };
@@ -188,6 +121,47 @@ macro_rules! impl_common {
 
 impl_common!(i256);
 impl_common!(u256);
+
+impl ops::Add<Self> for u256 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let (lo, carry) = self.lo.overflowing_add(rhs.lo);
+        let hi = self.hi.wrapping_add(carry as u128).wrapping_add(rhs.hi);
+
+        Self { lo, hi }
+    }
+}
+
+impl ops::Shr<u32> for u256 {
+    type Output = Self;
+
+    fn shr(mut self, rhs: u32) -> Self::Output {
+        debug_assert!(rhs < Self::BITS, "attempted to shift right with overflow");
+        if rhs >= Self::BITS {
+            return Self::ZERO;
+        }
+
+        if rhs == 0 {
+            return self;
+        }
+
+        if rhs < 128 {
+            self.lo >>= rhs;
+            self.lo |= self.hi << (128 - rhs);
+        } else {
+            self.lo = self.hi >> (rhs - 128);
+        }
+
+        if rhs < 128 {
+            self.hi >>= rhs;
+        } else {
+            self.hi = 0;
+        }
+
+        self
+    }
+}
 
 impl HInt for u128 {
     type D = u256;
@@ -226,7 +200,7 @@ impl HInt for u128 {
     }
 
     fn widen_hi(self) -> Self::D {
-        u256 { lo: 0, hi: self }
+        self.widen() << <Self as MinInt>::BITS
     }
 }
 
@@ -234,10 +208,11 @@ impl HInt for i128 {
     type D = i256;
 
     fn widen(self) -> Self::D {
-        i256 {
-            lo: self as u128,
-            hi: if self < 0 { -1 } else { 0 },
+        let mut ret = self.unsigned().zero_widen().signed();
+        if self.is_negative() {
+            ret.hi = u128::MAX;
         }
+        ret
     }
 
     fn zero_widen(self) -> Self::D {
@@ -253,7 +228,7 @@ impl HInt for i128 {
     }
 
     fn widen_hi(self) -> Self::D {
-        i256 { lo: 0, hi: self }
+        self.widen() << <Self as MinInt>::BITS
     }
 }
 
@@ -277,6 +252,6 @@ impl DInt for i256 {
     }
 
     fn hi(self) -> Self::H {
-        self.hi
+        self.hi as i128
     }
 }

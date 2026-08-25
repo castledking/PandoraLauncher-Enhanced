@@ -26,16 +26,13 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-use crate::conversions::{
-    LutBarycentricReduction, RgbXyzFactory, RgbXyzFactoryOpt, ToneReproductionRgbToGray,
-    TransformMatrixShaper, make_gray_to_unfused, make_gray_to_x, make_lut_transform,
-    make_rgb_to_gray,
-};
+use crate::conversions::*;
 use crate::err::CmsError;
+use crate::interceptors::{FromCmykaInterceptor, ToCmykaInterceptor};
 use crate::trc::GammaLutInterpolate;
 use crate::{ColorProfile, DataColorSpace, LutWarehouse, RenderingIntent, Vector3f, Xyzd};
 use num_traits::AsPrimitive;
-use std::marker::PhantomData;
+use std::sync::Arc;
 
 /// Transformation executor itself
 pub trait TransformExecutor<V: Copy + Default> {
@@ -52,6 +49,10 @@ pub trait Stage {
 /// Helper for intermediate transformation stages
 pub trait InPlaceStage {
     fn transform(&self, dst: &mut [f32]) -> Result<(), CmsError>;
+}
+
+pub trait InPlaceTransformExecutor<V: Copy + Default> {
+    fn transform(&self, in_out: &mut [V]) -> Result<(), CmsError>;
 }
 
 /// Barycentric interpolation weights size.
@@ -106,6 +107,7 @@ pub struct TransformOptions {
     /// If gamma function is found, then it will be used instead of LUT table.
     /// This allows to work with excellent precision with extended range,
     /// at a cost of execution time.
+    #[cfg(feature = "extended_range")]
     pub allow_extended_range_rgb_xyz: bool,
     // pub black_point_compensation: bool,
 }
@@ -141,6 +143,7 @@ impl Default for TransformOptions {
             prefer_fixed_point: true,
             interpolation_method: InterpolationMethod::default(),
             barycentric_weight_scale: BarycentricWeightScale::default(),
+            #[cfg(feature = "extended_range")]
             allow_extended_range_rgb_xyz: false,
             // black_point_compensation: false,
         }
@@ -149,8 +152,8 @@ impl Default for TransformOptions {
 
 pub type Transform8BitExecutor = dyn TransformExecutor<u8> + Send + Sync;
 pub type Transform16BitExecutor = dyn TransformExecutor<u16> + Send + Sync;
-pub type TransformF32BitExecutor = dyn TransformExecutor<f32> + Send + Sync;
-pub type TransformF64BitExecutor = dyn TransformExecutor<f64> + Send + Sync;
+pub type TransformF32Executor = dyn TransformExecutor<f32> + Send + Sync;
+pub type TransformF64Executor = dyn TransformExecutor<f64> + Send + Sync;
 
 /// Layout declares a data layout.
 /// For RGB it shows also the channel order.
@@ -160,6 +163,7 @@ pub type TransformF64BitExecutor = dyn TransformExecutor<f64> + Send + Sync;
 pub enum Layout {
     Rgb = 0,
     Rgba = 1,
+    Cmyka = 16,
     Gray = 2,
     GrayAlpha = 3,
     Inks5 = 4,
@@ -241,6 +245,7 @@ impl Layout {
             Layout::Rgba => 4,
             Layout::Gray => 1,
             Layout::GrayAlpha => 2,
+            Layout::Cmyka => 5,
             Layout::Inks5 => 5,
             Layout::Inks6 => 6,
             Layout::Inks7 => 7,
@@ -255,6 +260,7 @@ impl Layout {
         }
     }
 
+    #[cfg(feature = "any_to_any")]
     pub(crate) fn from_inks(inks: usize) -> Self {
         match inks {
             1 => Layout::Gray,
@@ -401,8 +407,41 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<Transform16BitExecutor>, CmsError> {
-        self.create_transform_nbit::<u16, 16, 65536, 65536>(src_layout, dst_pr, dst_layout, options)
+    ) -> Result<Arc<Transform16BitExecutor>, CmsError> {
+        let mut core_src_layout = src_layout;
+        if src_layout == Layout::Cmyka {
+            core_src_layout = Layout::Rgba;
+        }
+        let mut core_dst_layout = dst_layout;
+        if dst_layout == Layout::Cmyka {
+            core_dst_layout = Layout::Rgba;
+        }
+        let handle = self.create_transform_nbit::<u16, 16, 65536, 65536>(
+            core_src_layout,
+            dst_pr,
+            core_dst_layout,
+            options,
+        )?;
+        if core_src_layout == Layout::Cmyka {
+            return Ok(Arc::new(FromCmykaInterceptor::install(handle, dst_layout)));
+        } else if core_dst_layout == Layout::Cmyka {
+            return Ok(Arc::new(ToCmykaInterceptor::install(handle, dst_layout)));
+        }
+        Ok(handle)
+    }
+
+    /// Creates transform between source and destination profile
+    /// Use for 16 bit-depth data bit-depth only.
+    ///
+    /// In place transform only the same amount of channels, and only RGBX -> RGBX, or GrayX -> GrayX.
+    #[cfg(feature = "in_place")]
+    pub fn create_in_place_transform_16bit(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<u16> + Send + Sync>, CmsError> {
+        self.create_transform_in_place_nbit::<u16, 16, 65536, 65536>(layout, dst_pr, options)
     }
 
     /// Creates transform between source and destination profile
@@ -413,8 +452,41 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<Transform16BitExecutor>, CmsError> {
-        self.create_transform_nbit::<u16, 12, 65536, 16384>(src_layout, dst_pr, dst_layout, options)
+    ) -> Result<Arc<Transform16BitExecutor>, CmsError> {
+        let mut core_src_layout = src_layout;
+        if src_layout == Layout::Cmyka {
+            core_src_layout = Layout::Rgba;
+        }
+        let mut core_dst_layout = dst_layout;
+        if dst_layout == Layout::Cmyka {
+            core_dst_layout = Layout::Rgba;
+        }
+        let handle = self.create_transform_nbit::<u16, 12, 65536, 16384>(
+            core_src_layout,
+            dst_pr,
+            core_dst_layout,
+            options,
+        )?;
+        if core_src_layout == Layout::Cmyka {
+            return Ok(Arc::new(FromCmykaInterceptor::install(handle, dst_layout)));
+        } else if core_dst_layout == Layout::Cmyka {
+            return Ok(Arc::new(ToCmykaInterceptor::install(handle, dst_layout)));
+        }
+        Ok(handle)
+    }
+
+    /// Creates transform between source and destination profile
+    /// Use for 12 bit-depth data bit-depth only.
+    ///
+    /// In place transform only the same amount of channels, and only RGBX -> RGBX, or GrayX -> GrayX.
+    #[cfg(feature = "in_place")]
+    pub fn create_in_place_transform_12bit(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<u16> + Send + Sync>, CmsError> {
+        self.create_transform_in_place_nbit::<u16, 12, 65536, 16384>(layout, dst_pr, options)
     }
 
     /// Creates transform between source and destination profile
@@ -425,8 +497,41 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<Transform16BitExecutor>, CmsError> {
-        self.create_transform_nbit::<u16, 10, 65536, 8192>(src_layout, dst_pr, dst_layout, options)
+    ) -> Result<Arc<Transform16BitExecutor>, CmsError> {
+        let mut core_src_layout = src_layout;
+        if src_layout == Layout::Cmyka {
+            core_src_layout = Layout::Rgba;
+        }
+        let mut core_dst_layout = dst_layout;
+        if dst_layout == Layout::Cmyka {
+            core_dst_layout = Layout::Rgba;
+        }
+        let handle = self.create_transform_nbit::<u16, 10, 65536, 8192>(
+            core_src_layout,
+            dst_pr,
+            core_dst_layout,
+            options,
+        )?;
+        if core_src_layout == Layout::Cmyka {
+            return Ok(Arc::new(FromCmykaInterceptor::install(handle, dst_layout)));
+        } else if core_dst_layout == Layout::Cmyka {
+            return Ok(Arc::new(ToCmykaInterceptor::install(handle, dst_layout)));
+        }
+        Ok(handle)
+    }
+
+    /// Creates transform between source and destination profile
+    /// Use for 10 bit-depth data bit-depth only.
+    ///
+    /// In place transform only the same amount of channels, and only RGBX -> RGBX, or GrayX -> GrayX.
+    #[cfg(feature = "in_place")]
+    pub fn create_in_place_transform_10bit(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<u16> + Send + Sync>, CmsError> {
+        self.create_transform_in_place_nbit::<u16, 10, 65536, 8192>(layout, dst_pr, options)
     }
 
     /// Creates transform between source and destination profile
@@ -441,8 +546,45 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<TransformF32BitExecutor>, CmsError> {
-        self.create_transform_nbit::<f32, 1, 65536, 32768>(src_layout, dst_pr, dst_layout, options)
+    ) -> Result<Arc<TransformF32Executor>, CmsError> {
+        let mut core_src_layout = src_layout;
+        if src_layout == Layout::Cmyka {
+            core_src_layout = Layout::Rgba;
+        }
+        let mut core_dst_layout = dst_layout;
+        if dst_layout == Layout::Cmyka {
+            core_dst_layout = Layout::Rgba;
+        }
+        let handle = self.create_transform_nbit::<f32, 1, 65536, 32768>(
+            core_src_layout,
+            dst_pr,
+            core_dst_layout,
+            options,
+        )?;
+        if core_src_layout == Layout::Cmyka {
+            return Ok(Arc::new(FromCmykaInterceptor::install(handle, dst_layout)));
+        } else if core_dst_layout == Layout::Cmyka {
+            return Ok(Arc::new(ToCmykaInterceptor::install(handle, dst_layout)));
+        }
+        Ok(handle)
+    }
+
+    /// Creates transform between source and destination profile.
+    /// Data has to be normalized into [0, 1] range.
+    /// ICC profiles and LUT tables do not exist in infinite precision.
+    /// Thus, this implementation considers `f32` as 14-bit values.
+    /// Floating point transformer works in extended mode, that means returned data might be negative
+    /// or more than 1.
+    ///
+    /// In place transform only the same amount of channels, and only RGBX -> RGBX, or GrayX -> GrayX.
+    #[cfg(feature = "in_place")]
+    pub fn create_in_place_transform_f32(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<f32> + Send + Sync>, CmsError> {
+        self.create_transform_in_place_nbit::<f32, 1, 65536, 32768>(layout, dst_pr, options)
     }
 
     /// Creates transform between source and destination profile
@@ -457,8 +599,171 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<TransformF64BitExecutor>, CmsError> {
-        self.create_transform_nbit::<f64, 1, 65536, 65536>(src_layout, dst_pr, dst_layout, options)
+    ) -> Result<Arc<TransformF64Executor>, CmsError> {
+        let mut core_src_layout = src_layout;
+        if src_layout == Layout::Cmyka {
+            core_src_layout = Layout::Rgba;
+        }
+        let mut core_dst_layout = dst_layout;
+        if dst_layout == Layout::Cmyka {
+            core_dst_layout = Layout::Rgba;
+        }
+        let handle = self.create_transform_nbit::<f64, 1, 65536, 65536>(
+            core_src_layout,
+            dst_pr,
+            core_dst_layout,
+            options,
+        )?;
+        if core_src_layout == Layout::Cmyka {
+            return Ok(Arc::new(FromCmykaInterceptor::install(handle, dst_layout)));
+        } else if core_dst_layout == Layout::Cmyka {
+            return Ok(Arc::new(ToCmykaInterceptor::install(handle, dst_layout)));
+        }
+        Ok(handle)
+    }
+
+    /// Creates transform between source and destination profile
+    /// Data has to be normalized into [0, 1] range.
+    /// ICC profiles and LUT tables do not exist in infinite precision.
+    /// Thus, this implementation considers `f64` as 16-bit values.
+    /// Floating point transformer works in extended mode, that means returned data might be negative
+    /// or more than 1.
+    ///
+    /// In place transform only the same amount of channels, and only RGBX -> RGBX, or GrayX -> GrayX.
+    #[cfg(feature = "in_place")]
+    pub fn create_in_place_transform_f64(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<f64> + Send + Sync>, CmsError> {
+        self.create_transform_in_place_nbit::<f64, 1, 65536, 65536>(layout, dst_pr, options)
+    }
+
+    #[cfg(feature = "in_place")]
+    fn create_transform_in_place_nbit<
+        T: Copy
+            + Default
+            + AsPrimitive<usize>
+            + PointeeSizeExpressible
+            + Send
+            + Sync
+            + AsPrimitive<f32>
+            + RgbXyzFactory<T>
+            + RgbXyzFactoryOpt<T>
+            + GammaLutInterpolate,
+        const BIT_DEPTH: usize,
+        const LINEAR_CAP: usize,
+        const GAMMA_CAP: usize,
+    >(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<T> + Send + Sync>, CmsError>
+    where
+        f32: AsPrimitive<T>,
+        u32: AsPrimitive<T>,
+    {
+        // In-place transforms supports only matrix shaper transforms
+        let is_rgb_transform = self.color_space == DataColorSpace::Rgb
+            && dst_pr.pcs == DataColorSpace::Xyz
+            && dst_pr.color_space == DataColorSpace::Rgb
+            && self.pcs == DataColorSpace::Xyz
+            && self.is_matrix_shaper()
+            && dst_pr.is_matrix_shaper();
+        let is_gray_transform = (self.color_space == DataColorSpace::Gray
+            && self.gray_trc.is_some())
+            && (dst_pr.color_space == DataColorSpace::Gray && dst_pr.gray_trc.is_some())
+            && self.pcs == DataColorSpace::Xyz
+            && dst_pr.pcs == DataColorSpace::Xyz;
+
+        if is_rgb_transform {
+            let transform = self.transform_matrix(dst_pr);
+
+            if self.are_all_trc_the_same() && dst_pr.are_all_trc_the_same() {
+                let linear = self.build_r_linearize_table::<T, LINEAR_CAP, BIT_DEPTH>(
+                    options.allow_use_cicp_transfer,
+                )?;
+
+                let gamma = dst_pr.build_gamma_table::<T, 65536, GAMMA_CAP, BIT_DEPTH>(
+                    &dst_pr.red_trc,
+                    options.allow_use_cicp_transfer,
+                )?;
+
+                let profile_transform = TransformMatrixShaperOptimized {
+                    linear,
+                    gamma,
+                    adaptation_matrix: transform.to_f32(),
+                };
+
+                return T::make_in_place_optimized_transform::<LINEAR_CAP, GAMMA_CAP, BIT_DEPTH>(
+                    layout,
+                    profile_transform,
+                    options,
+                );
+            }
+
+            let lin_r = self.build_r_linearize_table::<T, LINEAR_CAP, BIT_DEPTH>(
+                options.allow_use_cicp_transfer,
+            )?;
+            let lin_g = self.build_g_linearize_table::<T, LINEAR_CAP, BIT_DEPTH>(
+                options.allow_use_cicp_transfer,
+            )?;
+            let lin_b = self.build_b_linearize_table::<T, LINEAR_CAP, BIT_DEPTH>(
+                options.allow_use_cicp_transfer,
+            )?;
+
+            let gamma_r = dst_pr.build_gamma_table::<T, 65536, GAMMA_CAP, BIT_DEPTH>(
+                &dst_pr.red_trc,
+                options.allow_use_cicp_transfer,
+            )?;
+            let gamma_g = dst_pr.build_gamma_table::<T, 65536, GAMMA_CAP, BIT_DEPTH>(
+                &dst_pr.green_trc,
+                options.allow_use_cicp_transfer,
+            )?;
+            let gamma_b = dst_pr.build_gamma_table::<T, 65536, GAMMA_CAP, BIT_DEPTH>(
+                &dst_pr.blue_trc,
+                options.allow_use_cicp_transfer,
+            )?;
+
+            let profile_transform = TransformMatrixShaper {
+                r_linear: lin_r,
+                g_linear: lin_g,
+                b_linear: lin_b,
+                r_gamma: gamma_r,
+                g_gamma: gamma_g,
+                b_gamma: gamma_b,
+                adaptation_matrix: transform.to_f32(),
+            };
+
+            return T::make_in_place_transform::<LINEAR_CAP, GAMMA_CAP, BIT_DEPTH>(
+                layout,
+                profile_transform,
+                options,
+            );
+        }
+
+        if is_gray_transform {
+            // Gray -> Gray case
+            let gray_linear = self.build_gray_linearize_table::<T, LINEAR_CAP, BIT_DEPTH>()?;
+
+            let gray_gamma = dst_pr.build_gamma_table::<T, 65536, GAMMA_CAP, BIT_DEPTH>(
+                &dst_pr.gray_trc,
+                options.allow_use_cicp_transfer,
+            )?;
+
+            use crate::conversions::make_gray_to_gray_in_place;
+            return make_gray_to_gray_in_place::<T, LINEAR_CAP>(
+                layout,
+                &gray_linear,
+                &gray_gamma,
+                BIT_DEPTH,
+                GAMMA_CAP,
+            );
+        }
+
+        Err(CmsError::UnsupportedProfileConnection)
     }
 
     fn create_transform_nbit<
@@ -481,7 +786,7 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<dyn TransformExecutor<T> + Send + Sync>, CmsError>
+    ) -> Result<Arc<dyn TransformExecutor<T> + Send + Sync>, CmsError>
     where
         f32: AsPrimitive<T>,
         u32: AsPrimitive<T>,
@@ -502,6 +807,7 @@ impl ColorProfile {
                 return Err(CmsError::InvalidLayout);
             }
 
+            #[cfg(feature = "lut")]
             if self.has_device_to_pcs_lut() || dst_pr.has_pcs_to_device_lut() {
                 return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
                     src_layout, self, dst_layout, dst_pr, options,
@@ -510,12 +816,14 @@ impl ColorProfile {
 
             let transform = self.transform_matrix(dst_pr);
 
+            #[cfg(feature = "extended_range")]
             if !T::FINITE && options.allow_extended_range_rgb_xyz {
                 if let Some(gamma_evaluator) = dst_pr.try_extended_gamma_evaluator() {
                     if let Some(linear_evaluator) = self.try_extended_linearizing_evaluator() {
                         use crate::conversions::{
                             TransformShaperFloatInOut, make_rgb_xyz_rgb_transform_float_in_out,
                         };
+                        use std::marker::PhantomData;
                         let p = TransformShaperFloatInOut {
                             linear_evaluator,
                             gamma_evaluator,
@@ -540,6 +848,7 @@ impl ColorProfile {
                     use crate::conversions::{
                         TransformShaperRgbFloat, make_rgb_xyz_rgb_transform_float,
                     };
+                    use std::marker::PhantomData;
                     let p = TransformShaperRgbFloat {
                         r_linear: lin_r,
                         g_linear: lin_g,
@@ -564,7 +873,7 @@ impl ColorProfile {
                     options.allow_use_cicp_transfer,
                 )?;
 
-                let profile_transform = crate::conversions::TransformMatrixShaperOptimized {
+                let profile_transform = TransformMatrixShaperOptimized {
                     linear,
                     gamma,
                     adaptation_matrix: transform.to_f32(),
@@ -627,6 +936,7 @@ impl ColorProfile {
                 return Err(CmsError::InvalidLayout);
             }
 
+            #[cfg(feature = "lut")]
             if self.has_device_to_pcs_lut() || dst_pr.has_pcs_to_device_lut() {
                 return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
                     src_layout, self, dst_layout, dst_pr, options,
@@ -636,6 +946,7 @@ impl ColorProfile {
             let gray_linear = self.build_gray_linearize_table::<T, LINEAR_CAP, BIT_DEPTH>()?;
 
             if dst_pr.color_space == DataColorSpace::Gray {
+                #[cfg(feature = "extended_range")]
                 if !T::FINITE && options.allow_extended_range_rgb_xyz {
                     if let Some(gamma_evaluator) = dst_pr.try_extended_gamma_evaluator() {
                         if let Some(linear_evaluator) = self.try_extended_linearizing_evaluator() {
@@ -669,6 +980,7 @@ impl ColorProfile {
             } else {
                 #[allow(clippy::collapsible_if)]
                 if dst_pr.are_all_trc_the_same() {
+                    #[cfg(feature = "extended_range")]
                     if !T::FINITE && options.allow_extended_range_rgb_xyz {
                         if let Some(gamma_evaluator) = dst_pr.try_extended_gamma_evaluator() {
                             if let Some(linear_evaluator) =
@@ -703,6 +1015,7 @@ impl ColorProfile {
                     )
                 } else {
                     // Gray -> RGB where all TRC is NOT the same
+                    #[cfg(feature = "extended_range")]
                     if !T::FINITE && options.allow_extended_range_rgb_xyz {
                         if let Some(gamma_evaluator) = dst_pr.try_extended_gamma_evaluator() {
                             if let Some(linear_evaluator) =
@@ -764,6 +1077,7 @@ impl ColorProfile {
                 return Err(CmsError::InvalidLayout);
             }
 
+            #[cfg(feature = "lut")]
             if self.has_device_to_pcs_lut() || dst_pr.has_pcs_to_device_lut() {
                 return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
                     src_layout, self, dst_layout, dst_pr, options,
@@ -776,6 +1090,7 @@ impl ColorProfile {
                 v: [transform.v[1][0], transform.v[1][1], transform.v[1][2]],
             };
 
+            #[cfg(feature = "extended_range")]
             if !T::FINITE && options.allow_extended_range_rgb_xyz {
                 if let Some(gamma_evaluator) = dst_pr.try_extended_gamma_evaluator() {
                     if let Some(linear_evaluator) = self.try_extended_linearizing_evaluator() {
@@ -825,19 +1140,33 @@ impl ColorProfile {
             && (dst_pr.pcs == DataColorSpace::Xyz || dst_pr.pcs == DataColorSpace::Lab)
             && (self.pcs == DataColorSpace::Xyz || self.pcs == DataColorSpace::Lab)
         {
-            if src_layout == Layout::Gray || src_layout == Layout::GrayAlpha {
-                return Err(CmsError::InvalidLayout);
+            #[cfg(feature = "lut")]
+            {
+                if src_layout == Layout::Gray || src_layout == Layout::GrayAlpha {
+                    return Err(CmsError::InvalidLayout);
+                }
+                if dst_layout == Layout::Gray || dst_layout == Layout::GrayAlpha {
+                    return Err(CmsError::InvalidLayout);
+                }
+                make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                    src_layout, self, dst_layout, dst_pr, options,
+                )
             }
-            if dst_layout == Layout::Gray || dst_layout == Layout::GrayAlpha {
-                return Err(CmsError::InvalidLayout);
+            #[cfg(not(feature = "lut"))]
+            {
+                Err(CmsError::UnsupportedProfileConnection)
             }
-            make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
-                src_layout, self, dst_layout, dst_pr, options,
-            )
         } else {
-            make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
-                src_layout, self, dst_layout, dst_pr, options,
-            )
+            #[cfg(feature = "lut")]
+            {
+                make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                    src_layout, self, dst_layout, dst_pr, options,
+                )
+            }
+            #[cfg(not(feature = "lut"))]
+            {
+                Err(CmsError::UnsupportedProfileConnection)
+            }
         }
     }
 
@@ -849,10 +1178,24 @@ impl ColorProfile {
         dst_pr: &ColorProfile,
         dst_layout: Layout,
         options: TransformOptions,
-    ) -> Result<Box<Transform8BitExecutor>, CmsError> {
+    ) -> Result<Arc<Transform8BitExecutor>, CmsError> {
         self.create_transform_nbit::<u8, 8, 256, 4096>(src_layout, dst_pr, dst_layout, options)
     }
 
+    /// Creates transform between source and destination profile
+    ///
+    /// In place transform only the same amount of channels, and only RGBX -> RGBX, or GrayX -> GrayX.
+    #[cfg(feature = "in_place")]
+    pub fn create_in_place_transform_8bit(
+        &self,
+        layout: Layout,
+        dst_pr: &ColorProfile,
+        options: TransformOptions,
+    ) -> Result<Arc<dyn InPlaceTransformExecutor<u8> + Send + Sync>, CmsError> {
+        self.create_transform_in_place_nbit::<u8, 8, 256, 4096>(layout, dst_pr, options)
+    }
+
+    #[allow(unused)]
     pub(crate) fn get_device_to_pcs(&self, intent: RenderingIntent) -> Option<&LutWarehouse> {
         match intent {
             RenderingIntent::AbsoluteColorimetric => self.lut_a_to_b_colorimetric.as_ref(),
@@ -862,6 +1205,7 @@ impl ColorProfile {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn get_pcs_to_device(&self, intent: RenderingIntent) -> Option<&LutWarehouse> {
         match intent {
             RenderingIntent::AbsoluteColorimetric => self.lut_b_to_a_colorimetric.as_ref(),
@@ -874,8 +1218,8 @@ impl ColorProfile {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ColorProfile, DataColorSpace, Layout, RenderingIntent, TransformOptions};
-    use rand::Rng;
+    use crate::*;
+    use rand::RngExt;
 
     #[test]
     fn test_transform_rgb8() {
@@ -1262,6 +1606,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "extended_range")]
     fn test_transform_rgb_to_gray_extended() {
         let srgb = ColorProfile::new_srgb();
         let mut gray_profile = ColorProfile::new_gray_with_gamma(1.0);
@@ -1330,5 +1675,64 @@ mod tests {
             .unwrap();
         cvt_inverse.transform(&dst, &mut inverse).unwrap();
         assert!((inverse[0] - 0.273002833) < 1e-4);
+    }
+
+    /// Test that multi-pixel RGB transforms produce consistent results for each pixel.
+    /// This catches bugs where SIMD implementations incorrectly share data between pixels.
+    /// Specifically tests the case where even/odd pixels should have independent blue channels.
+    #[test]
+    fn test_transform_rgb8_pixel_independence() {
+        let srgb_profile = ColorProfile::new_srgb();
+        let bt2020_profile = ColorProfile::new_bt2020();
+
+        let transform = bt2020_profile
+            .create_transform_8bit(
+                Layout::Rgb,
+                &srgb_profile,
+                Layout::Rgb,
+                TransformOptions {
+                    prefer_fixed_point: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        // Create 4 pixels with distinct colors - specifically testing that
+        // even/odd pixels don't share blue channel values
+        // Pixel 0: Red (255, 0, 0)
+        // Pixel 1: Green (0, 255, 0)
+        // Pixel 2: Blue (0, 0, 255)
+        // Pixel 3: Yellow (255, 255, 0)
+        let src: Vec<u8> = vec![
+            255, 0, 0, // Pixel 0: Red
+            0, 255, 0, // Pixel 1: Green
+            0, 0, 255, // Pixel 2: Blue
+            255, 255, 0, // Pixel 3: Yellow
+        ];
+        let mut dst = vec![0u8; 12];
+        transform.transform(&src, &mut dst).unwrap();
+
+        // Process same pixels individually for comparison
+        let mut single_pixel_results = Vec::new();
+        for pixel in src.chunks(3) {
+            let mut single_dst = vec![0u8; 3];
+            transform.transform(pixel, &mut single_dst).unwrap();
+            single_pixel_results.extend(single_dst);
+        }
+
+        // Each pixel in batch processing should match single-pixel processing
+        // This catches the vr0/vr1 bug where pixel 1's blue channel would get pixel 0's value
+        for (i, (batch, single)) in dst.iter().zip(single_pixel_results.iter()).enumerate() {
+            assert_eq!(
+                batch,
+                single,
+                "Mismatch at byte {} (pixel {}, channel {}): batch={}, single={}",
+                i,
+                i / 3,
+                i % 3,
+                batch,
+                single
+            );
+        }
     }
 }

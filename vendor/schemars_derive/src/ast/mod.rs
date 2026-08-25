@@ -2,7 +2,6 @@ mod from_serde;
 
 use crate::attr::{ContainerAttrs, FieldAttrs, VariantAttrs};
 use crate::idents::{GENERATOR, SCHEMA};
-use crate::schema_exprs::SchemaExpr;
 use from_serde::FromSerde;
 use proc_macro2::TokenStream;
 use serde_derive_internals::ast as serde_ast;
@@ -66,8 +65,8 @@ impl<'a> Container<'a> {
         None
     }
 
-    pub fn add_mutators(&self, expr: &mut SchemaExpr) {
-        self.attrs.common.add_mutators(expr);
+    pub fn add_mutators(&self, mutators: &mut Vec<TokenStream>) {
+        self.attrs.common.add_mutators(mutators);
     }
 
     pub fn name(&'a self) -> std::borrow::Cow<'a, str> {
@@ -82,7 +81,7 @@ impl<'a> Container<'a> {
 }
 
 impl Variant<'_> {
-    pub fn name(&self) -> Name<'_> {
+    pub fn name(&self) -> Name {
         Name(self.serde_attrs.name())
     }
 
@@ -90,8 +89,8 @@ impl Variant<'_> {
         matches!(self.style, serde_ast::Style::Unit)
     }
 
-    pub fn add_mutators(&self, expr: &mut SchemaExpr) {
-        self.attrs.common.add_mutators(expr);
+    pub fn add_mutators(&self, mutators: &mut Vec<TokenStream>) {
+        self.attrs.common.add_mutators(mutators);
     }
 
     pub fn with_contract_check(&self, action: TokenStream) -> TokenStream {
@@ -104,21 +103,21 @@ impl Variant<'_> {
 }
 
 impl Field<'_> {
-    pub fn name(&self) -> Name<'_> {
+    pub fn name(&self) -> Name {
         Name(self.serde_attrs.name())
     }
 
-    pub fn add_mutators(&self, expr: &mut SchemaExpr) {
-        self.attrs.common.add_mutators(expr);
-        self.attrs.validation.add_mutators(expr);
+    pub fn add_mutators(&self, mutators: &mut Vec<TokenStream>) {
+        self.attrs.common.add_mutators(mutators);
+        self.attrs.validation.add_mutators(mutators);
 
         if self.serde_attrs.skip_deserializing() {
-            expr.mutators.push(quote! {
+            mutators.push(quote! {
                 #SCHEMA.insert("readOnly".into(), true.into());
             });
         }
         if self.serde_attrs.skip_serializing() {
-            expr.mutators.push(quote! {
+            mutators.push(quote! {
                 #SCHEMA.insert("writeOnly".into(), true.into());
             });
         }

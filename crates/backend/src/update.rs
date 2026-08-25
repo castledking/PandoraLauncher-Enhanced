@@ -6,11 +6,7 @@ use std::{
 };
 
 use base64::Engine;
-use bridge::{
-    handle::FrontendHandle,
-    message::MessageToFrontend,
-    modal_action::{ModalAction, ProgressTracker},
-};
+use bridge::{handle::FrontendHandle, message::MessageToFrontend, modal_action::ModalAction};
 use rand::RngCore;
 use reqwest::StatusCode;
 use schema::pandora_update::{UpdateInstallType, UpdateManifest, UpdatePrompt};
@@ -185,7 +181,7 @@ pub async fn install_update(
     modal_action: ModalAction,
 ) {
     if let Err(error) = install_update_inner(http_client, &dirs, send.clone(), update, modal_action.clone()).await {
-        modal_action.set_error_message(error);
+        modal_action.set_finished_with_error(error);
     }
 
     modal_action.set_finished();
@@ -200,8 +196,7 @@ async fn install_update_inner(
     modal_action: ModalAction,
 ) -> Result<(), Arc<str>> {
     let title = format!("Downloading Pandora {}", update.new_version);
-    let tracker = ProgressTracker::new(title.into(), send.clone());
-    modal_action.trackers.push(tracker.clone());
+    let tracker = modal_action.push_tracker(title.into());
 
     let mut expected_hash = [0u8; 20];
     let Ok(_) = hex::decode_to_slice(&*update.exe.sha1, &mut expected_hash) else {
@@ -217,7 +212,6 @@ async fn install_update_inner(
     }
 
     tracker.set_total(update.exe.size);
-    tracker.notify();
 
     use futures::StreamExt;
     let mut stream = response.bytes_stream();
@@ -231,7 +225,6 @@ async fn install_update_inner(
 
         bytes.extend_from_slice(&*item);
         tracker.add_count(item.len());
-        tracker.notify();
     }
 
     let mut hasher = Sha1::new();

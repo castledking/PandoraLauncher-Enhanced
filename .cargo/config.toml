@@ -1,14 +1,14 @@
 [source.crates-io]
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/longbridge/gpui-component.git?rev=2f7c7445d8c55e4af95c2a22695184ea8df35a32"]
+[source."git+https://github.com/longbridge/gpui-component.git?rev=bbf7650abae59e3a984d48bd120a6f9094fed1f2"]
 git = "https://github.com/longbridge/gpui-component.git"
-rev = "2f7c7445d8c55e4af95c2a22695184ea8df35a32"
+rev = "bbf7650abae59e3a984d48bd120a6f9094fed1f2"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/zed-industries/font-kit?rev=110523127440aefb11ce0cf280ae7c5071337ec5"]
+[source."git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269"]
 git = "https://github.com/zed-industries/font-kit"
-rev = "110523127440aefb11ce0cf280ae7c5071337ec5"
+rev = "94b0f28166665e8fd2f53ff6d268a14955c82269"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/zed-industries/reqwest.git?rev=c15662463bda39148ba154100dd44d3fba5873a4"]
@@ -21,9 +21,9 @@ git = "https://github.com/zed-industries/scap"
 rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/zed-industries/wgpu.git?branch=v29"]
-git = "https://github.com/zed-industries/wgpu.git"
-branch = "v29"
+[source."git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937"]
+git = "https://github.com/zed-industries/wasm_thread"
+rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8"]

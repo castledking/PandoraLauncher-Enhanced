@@ -231,7 +231,6 @@ impl<'data> CodePointInversionListAndStringList<'data> {
 }
 
 #[cfg(feature = "alloc")]
-/// ✨ *Enabled with the `alloc` Cargo feature.*
 impl<'a> FromIterator<&'a str> for CodePointInversionListAndStringList<'_> {
     fn from_iter<I>(it: I) -> Self
     where

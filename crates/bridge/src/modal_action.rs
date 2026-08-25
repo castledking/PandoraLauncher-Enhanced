@@ -11,16 +11,12 @@ use atomic_time::AtomicOptionInstant;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::{handle::FrontendHandle, message::MessageToFrontend, serial::AtomicOptionSerial};
-
 #[derive(Default, Clone, Debug)]
-pub struct ModalAction {
-    inner: Arc<ModalActionInner>,
-}
+pub struct ModalAction(Arc<ModalActionInner>);
 
 impl ModalAction {
     pub fn refcnt(&self) -> usize {
-        Arc::strong_count(&self.inner)
+        Arc::strong_count(&self.0)
     }
 }
 
@@ -28,11 +24,11 @@ impl Deref for ModalAction {
     type Target = ModalActionInner;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.0
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ModalActionVisitUrl {
     pub message: Arc<str>,
     pub url: Arc<str>,
@@ -41,42 +37,79 @@ pub struct ModalActionVisitUrl {
 
 #[derive(Default)]
 pub struct ModalActionInner {
-    pub finished_at: AtomicOptionInstant,
-    pub error: RwLock<Option<Arc<str>>>,
-    pub visit_url: RwLock<Option<ModalActionVisitUrl>>,
-    pub trackers: ProgressTrackers,
+    notify: Arc<tokio::sync::Notify>,
+    finished_at: AtomicOptionInstant,
+    error: RwLock<Option<Arc<str>>>,
+    visit_url: RwLock<Option<ModalActionVisitUrl>>,
+    trackers: Arc<RwLock<Vec<ProgressTracker>>>,
     pub request_cancel: CancellationToken,
 }
 
 impl ModalActionInner {
+    pub fn get_notify(&self) -> Arc<tokio::sync::Notify> {
+        self.notify.clone()
+    }
+
     pub fn set_finished(&self) {
-        let _ = self
-            .finished_at
-            .compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        let _ = self.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        self.notify.notify_one();
     }
 
     pub fn get_finished_at(&self) -> Option<Instant> {
         self.finished_at.load(Ordering::SeqCst)
     }
 
-    pub fn set_error_message(&self, error: Arc<str>) {
+    pub fn set_finished_with_error(&self, error: Arc<str>) {
         *self.error.write() = Some(error);
+        self.set_finished();
+    }
+
+    pub fn get_error_message(&self) -> Option<Arc<str>> {
+        self.error.read().clone()
     }
 
     pub fn set_visit_url(&self, visit_url: ModalActionVisitUrl) {
         *self.visit_url.write() = Some(visit_url);
+        self.notify.notify_one();
     }
 
     pub fn unset_visit_url(&self) {
         *self.visit_url.write() = None;
+        self.notify.notify_one();
     }
 
-    pub fn request_cancel(&self) {
-        self.request_cancel.cancel();
+    pub fn get_visit_url(&self) -> Option<ModalActionVisitUrl> {
+        self.visit_url.read().clone()
     }
 
     pub fn has_requested_cancel(&self) -> bool {
         self.request_cancel.is_cancelled()
+    }
+
+    pub fn push_tracker(&self, title: Arc<str>) -> ProgressTracker {
+        let tracker = ProgressTracker(Arc::new(ProgressTrackerInner {
+            notify: self.notify.clone(),
+            count: AtomicUsize::new(0),
+            total: AtomicUsize::new(0),
+            finished_at: AtomicOptionInstant::none(),
+            finish_type: AtomicProgressTrackerFinishType::new(ProgressTrackerFinishType::Normal),
+            title: RwLock::new(title),
+        }));
+
+        self.trackers.write().push(tracker.clone());
+        self.notify.notify_one();
+
+        tracker
+    }
+
+    pub fn clear_trackers(&self) {
+        self.trackers.write().clear();
+        self.notify.notify_one();
+    }
+
+    pub fn write_trackers<R>(&self, f: impl FnOnce(&mut Vec<ProgressTracker>) -> R) -> R {
+        let mut guard = self.trackers.write();
+        (f)(&mut *guard)
     }
 }
 
@@ -92,29 +125,11 @@ impl std::fmt::Debug for ModalActionInner {
     }
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct ProgressTrackers {
-    pub trackers: Arc<RwLock<Vec<ProgressTracker>>>,
-}
-
-impl ProgressTrackers {
-    pub fn push(&self, tracker: ProgressTracker) {
-        self.trackers.write().push(tracker);
-    }
-
-    pub fn clear(&self) {
-        self.trackers.write().clear();
-    }
-}
-
 #[derive(Clone, Debug)]
-pub struct ProgressTracker {
-    inner: Arc<ProgressTrackerInner>,
-    sender: FrontendHandle,
-    notify_serial: AtomicOptionSerial,
-}
+pub struct ProgressTracker(Arc<ProgressTrackerInner>);
 
 struct ProgressTrackerInner {
+    notify: Arc<tokio::sync::Notify>,
     count: AtomicUsize,
     total: AtomicUsize,
     finished_at: AtomicOptionInstant,
@@ -147,30 +162,17 @@ impl std::fmt::Debug for ProgressTrackerInner {
 }
 
 impl ProgressTracker {
-    pub fn new(title: Arc<str>, sender: FrontendHandle) -> Self {
-        Self {
-            inner: Arc::new(ProgressTrackerInner {
-                count: AtomicUsize::new(0),
-                total: AtomicUsize::new(0),
-                finished_at: AtomicOptionInstant::none(),
-                finish_type: AtomicProgressTrackerFinishType::new(ProgressTrackerFinishType::Normal),
-                title: RwLock::new(title),
-            }),
-            sender,
-            notify_serial: AtomicOptionSerial::default(),
-        }
-    }
-
-    pub fn id(&self) -> usize {
-        Arc::as_ptr(&self.inner).addr()
-    }
+    // pub fn id(&self) -> usize {
+    //     Arc::as_ptr(&self.0).addr()
+    // }
 
     pub fn get_title(&self) -> Arc<str> {
-        self.inner.title.read().clone()
+        self.0.title.read().clone()
     }
 
     pub fn set_title(&self, title: Arc<str>) {
-        *self.inner.title.write() = title;
+        *self.0.title.write() = title;
+        self.0.notify.notify_one();
     }
 
     pub fn get_float(&self) -> Option<f32> {
@@ -183,42 +185,43 @@ impl ProgressTracker {
     }
 
     pub fn get(&self) -> (usize, usize) {
-        (self.inner.count.load(Ordering::SeqCst), self.inner.total.load(Ordering::SeqCst))
+        (
+            self.0.count.load(Ordering::SeqCst),
+            self.0.total.load(Ordering::SeqCst)
+        )
     }
 
     pub fn set_finished(&self, finish_type: ProgressTrackerFinishType) {
-        self.inner.finish_type.store(finish_type, Ordering::SeqCst);
-        let _ =
-            self.inner
-                .finished_at
-                .compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        self.0.finish_type.store(finish_type, Ordering::SeqCst);
+        let _ = self.0.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        self.0.notify.notify_one();
     }
 
     pub fn get_finished_at(&self) -> Option<Instant> {
-        self.inner.finished_at.load(Ordering::SeqCst)
+        self.0.finished_at.load(Ordering::SeqCst)
     }
 
     pub fn finish_type(&self) -> ProgressTrackerFinishType {
-        self.inner.finish_type.load(Ordering::SeqCst)
+        self.0.finish_type.load(Ordering::SeqCst)
     }
 
     pub fn add_count(&self, count: usize) {
-        self.inner.count.fetch_add(count, Ordering::SeqCst);
+        self.0.count.fetch_add(count, Ordering::SeqCst);
+        self.0.notify.notify_one();
     }
 
     pub fn set_count(&self, count: usize) {
-        self.inner.count.store(count, Ordering::SeqCst);
+        self.0.count.store(count, Ordering::SeqCst);
+        self.0.notify.notify_one();
     }
 
     pub fn add_total(&self, total: usize) {
-        self.inner.total.fetch_add(total, Ordering::SeqCst);
+        self.0.total.fetch_add(total, Ordering::SeqCst);
+        self.0.notify.notify_one();
     }
 
     pub fn set_total(&self, total: usize) {
-        self.inner.total.store(total, Ordering::SeqCst);
-    }
-
-    pub fn notify(&self) {
-        self.sender.send_with_serial(MessageToFrontend::Refresh, &self.notify_serial);
+        self.0.total.store(total, Ordering::SeqCst);
+        self.0.notify.notify_one();
     }
 }

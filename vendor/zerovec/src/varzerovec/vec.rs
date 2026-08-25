@@ -259,7 +259,6 @@ impl<'a, T: VarULE + ?Sized, F: VarZeroVecFormat> VarZeroVec<'a, T, F> {
 
     /// Convert this into a mutable vector of the owned `T` type, cloning if necessary.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Example
     ///
@@ -295,8 +294,6 @@ impl<'a, T: VarULE + ?Sized, F: VarZeroVecFormat> VarZeroVec<'a, T, F> {
     }
 
     /// Converts a borrowed ZeroVec to an owned ZeroVec. No-op if already owned.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Example
     ///
@@ -335,8 +332,6 @@ impl<'a, T: VarULE + ?Sized, F: VarZeroVecFormat> VarZeroVec<'a, T, F> {
     ///
     /// To get a reference to the bytes without moving, see [`VarZeroSlice::as_bytes()`].
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Example
     ///
     /// ```rust
@@ -352,6 +347,7 @@ impl<'a, T: VarULE + ?Sized, F: VarZeroVecFormat> VarZeroVec<'a, T, F> {
     #[cfg(feature = "alloc")]
     pub fn into_bytes(self) -> alloc::vec::Vec<u8> {
         match self.0 {
+            #[cfg(feature = "alloc")]
             VarZeroVecInner::Owned(vec) => vec.into_bytes(),
             VarZeroVecInner::Borrowed(vec) => vec.as_bytes().to_vec(),
         }

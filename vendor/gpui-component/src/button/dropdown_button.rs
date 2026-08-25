@@ -1,11 +1,11 @@
+use gpui::Corners;
 use gpui::{
-    App, Context, Corner, Corners, Edges, ElementId, InteractiveElement as _, IntoElement,
-    ParentElement, RenderOnce, SharedString, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder,
+    Anchor, App, Context, Edges, ElementId, InteractiveElement as _, IntoElement, ParentElement,
+    RenderOnce, SharedString, StyleRefinement, Styled, Window, div, prelude::FluentBuilder,
 };
 
 use crate::{
-    Disableable, IconName, Selectable, Sizable, Size, StyledExt as _,
+    Disableable, Selectable, Sizable, Size, StyledExt as _,
     menu::{DropdownMenu, PopupMenu},
     tooltip::ComponentTooltip,
 };
@@ -28,7 +28,7 @@ pub struct DropdownButton {
     variant: ButtonVariant,
     size: Size,
     rounded: ButtonRounded,
-    anchor: Corner,
+    anchor: Anchor,
     tooltip: ComponentTooltip,
 }
 
@@ -48,7 +48,7 @@ impl DropdownButton {
             variant: ButtonVariant::default(),
             size: Size::default(),
             rounded: ButtonRounded::default(),
-            anchor: Corner::TopRight,
+            anchor: Anchor::TopRight,
             tooltip: ComponentTooltip::default(),
         }
     }
@@ -77,7 +77,7 @@ impl DropdownButton {
     /// Set the dropdown menu of the button with anchor corner.
     pub fn dropdown_menu_with_anchor(
         mut self,
-        anchor: impl Into<Corner>,
+        anchor: impl Into<Anchor>,
         menu: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
     ) -> Self {
         self.menu = Some(Box::new(menu));
@@ -187,7 +187,7 @@ impl RenderOnce for DropdownButton {
                 .when_some(self.menu, |this, menu| {
                     this.child(
                         Button::new("popup")
-                            .icon(IconName::ChevronDown)
+                            .dropdown_caret(true)
                             .rounded(self.rounded)
                             .border_edges(Edges {
                                 left: rounded,
@@ -218,7 +218,6 @@ impl RenderOnce for DropdownButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Corner;
 
     #[gpui::test]
     fn test_dropdown_button_builder(_cx: &mut gpui::TestAppContext) {
@@ -233,7 +232,7 @@ mod tests {
             .disabled(false)
             .selected(false)
             .rounded(ButtonRounded::Medium)
-            .dropdown_menu_with_anchor(Corner::BottomLeft, |menu, _, _| menu);
+            .dropdown_menu_with_anchor(Anchor::BottomLeft, |menu, _, _| menu);
 
         assert!(dropdown.button.is_some());
         assert_eq!(dropdown.variant, ButtonVariant::Primary);
@@ -245,6 +244,6 @@ mod tests {
         assert!(!dropdown.selected);
         assert!(matches!(dropdown.rounded, ButtonRounded::Medium));
         assert!(dropdown.menu.is_some());
-        assert_eq!(dropdown.anchor, Corner::BottomLeft);
+        assert_eq!(dropdown.anchor, Anchor::BottomLeft);
     }
 }

@@ -2,8 +2,7 @@
 #[path = "../support.rs"]
 mod support;
 
-use std::future;
-
+use futures_util::future;
 use tokio_test::{assert_pending, assert_ready_err, assert_ready_ok, task};
 use tower::retry::Policy;
 use tower_test::{assert_request_eq, mock};

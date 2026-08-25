@@ -168,7 +168,9 @@ pub struct ItemSearchOptions {
     pub_key_hash: Option<CFData>,
     serial_number: Option<CFData>,
     app_label: Option<CFData>,
+    #[cfg(any(feature = "OSX_10_13", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
     authentication_context: Option<CFType>,
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
     skip_authenticated_items: bool,
 }
 
@@ -349,6 +351,7 @@ impl ItemSearchOptions {
 
     #[doc(hidden)]
     #[deprecated(note = "use local_authentication_context")]
+    #[cfg(any(feature = "OSX_10_13", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
     pub unsafe fn authentication_context(&mut self, authentication_context: *mut std::os::raw::c_void) -> &mut Self {
         self.authentication_context = unsafe { Some(CFType::wrap_under_create_rule(authentication_context)) };
         self
@@ -357,6 +360,7 @@ impl ItemSearchOptions {
     /// The corresponding value is of type LAContext, and represents a reusable
     /// local authentication context that should be used for keychain item authentication.
     #[inline(always)]
+    #[cfg(any(feature = "OSX_10_13", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
     pub fn local_authentication_context<LAContext: TCFType>(&mut self, authentication_context: Option<LAContext>) -> &mut Self {
         self.authentication_context = authentication_context.map(|la| la.into_CFType());
         self
@@ -364,6 +368,7 @@ impl ItemSearchOptions {
 
     /// Whether to skip items in the search that require authentication (default false)
     #[inline(always)]
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
     pub fn skip_authenticated_items(&mut self, do_skip: bool) -> &mut Self {
         self.skip_authenticated_items = do_skip;
         self
@@ -376,7 +381,7 @@ impl ItemSearchOptions {
         unsafe {
             let mut params = CFMutableDictionary::from_CFType_pairs(&[]);
 
-            if let Some(keychains) = &self.keychains {
+            if let Some(ref keychains) = self.keychains {
                 params.add(
                     &kSecMatchSearchList.to_void(),
                     &keychains.as_CFType().to_void(),
@@ -386,7 +391,7 @@ impl ItemSearchOptions {
                 params.add(
                     &kSecUseDataProtectionKeychain.to_void(),
                     &CFBoolean::true_value().to_void(),
-                );
+                )
             }
 
             if let Some(class) = self.class {
@@ -426,37 +431,37 @@ impl ItemSearchOptions {
                 params.add(&kSecMatchLimit.to_void(), &limit.to_value().to_void());
             }
 
-            if let Some(label) = &self.label {
+            if let Some(ref label) = self.label {
                 params.add(&kSecAttrLabel.to_void(), &label.to_void());
             }
 
-            if let Some(trusted_only) = &self.trusted_only {
+            if let Some(ref trusted_only) = self.trusted_only {
                 params.add(
                     &kSecMatchTrustedOnly.to_void(),
                     &CFBoolean::from(*trusted_only).to_void(),
                 );
             }
 
-            if let Some(service) = &self.service {
+            if let Some(ref service) = self.service {
                 params.add(&kSecAttrService.to_void(), &service.to_void());
             }
 
             #[cfg(target_os = "macos")]
             {
-                if let Some(subject) = &self.subject {
+                if let Some(ref subject) = self.subject {
                     params.add(&kSecMatchSubjectWholeString.to_void(), &subject.to_void());
                 }
             }
 
-            if let Some(account) = &self.account {
+            if let Some(ref account) = self.account {
                 params.add(&kSecAttrAccount.to_void(), &account.to_void());
             }
 
-            if let Some(access_group) = &self.access_group {
+            if let Some(ref access_group) = self.access_group {
                 params.add(&kSecAttrAccessGroup.to_void(), &access_group.to_void());
             }
 
-            if let Some(cloud_sync) = &self.cloud_sync {
+            if let Some(ref cloud_sync) = self.cloud_sync {
                 match cloud_sync {
                     CloudSync::MatchSyncYes => {
                         params.add(&kSecAttrSynchronizable.to_void(), &CFBoolean::true_value().to_void());
@@ -470,22 +475,24 @@ impl ItemSearchOptions {
                 }
             }
 
-            if let Some(pub_key_hash) = &self.pub_key_hash {
+            if let Some(ref pub_key_hash) = self.pub_key_hash {
                 params.add(&kSecAttrPublicKeyHash.to_void(), &pub_key_hash.to_void());
             }
 
-            if let Some(serial_number) = &self.serial_number {
+            if let Some(ref serial_number) = self.serial_number {
                 params.add(&kSecAttrSerialNumber.to_void(), &serial_number.to_void());
             }
 
-            if let Some(app_label) = &self.app_label {
+            if let Some(ref app_label) = self.app_label {
                 params.add(&kSecAttrApplicationLabel.to_void(), &app_label.to_void());
             }
 
-            if let Some(authentication_context) = &self.authentication_context {
+            #[cfg(any(feature = "OSX_10_13", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
+            if let Some(ref authentication_context) = self.authentication_context {
                 params.add(&kSecUseAuthenticationContext.to_void(), &authentication_context.to_void());
             }
 
+            #[cfg(any(feature = "OSX_10_12", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
             if self.skip_authenticated_items {
                 params.add(&kSecUseAuthenticationUI.to_void(), &kSecUseAuthenticationUISkip.to_void());
             }
@@ -536,7 +543,7 @@ impl ItemSearchOptions {
     }
 }
 
-unsafe fn get_item(item: CFTypeRef) -> SearchResult { unsafe {
+unsafe fn get_item(item: CFTypeRef) -> SearchResult {
     let type_id = CFGetTypeID(item);
 
     if type_id == CFData::type_id() {
@@ -571,7 +578,7 @@ unsafe fn get_item(item: CFTypeRef) -> SearchResult { unsafe {
     };
 
     SearchResult::Ref(reference)
-} }
+}
 
 /// An enum including all objects whose references can be returned from a search.
 ///
@@ -610,12 +617,12 @@ pub enum SearchResult {
 impl fmt::Debug for SearchResult {
     #[cold]
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Ref(reference) => fmt
+        match *self {
+            Self::Ref(ref reference) => fmt
                 .debug_struct("SearchResult::Ref")
                 .field("reference", reference)
                 .finish(),
-            Self::Data(buf) => fmt
+            Self::Data(ref buf) => fmt
                 .debug_struct("SearchResult::Data")
                 .field("data", buf)
                 .finish(),
@@ -638,8 +645,8 @@ impl SearchResult {
     /// value types.
     #[must_use]
     pub fn simplify_dict(&self) -> Option<HashMap<String, String>> {
-        match self {
-            Self::Dict(d) => unsafe {
+        match *self {
+            Self::Dict(ref d) => unsafe {
                 let mut retmap = HashMap::new();
                 let (keys, values) = d.get_keys_and_values();
                 for (k, v) in keys.iter().zip(values.iter()) {
@@ -780,7 +787,7 @@ impl ItemAddOptions {
 
         if let Some(location) = &self.location {
             match location {
-                #[cfg(any(feature = "OSX_10_15", not(target_os = "macos")))]
+                #[cfg(any(feature = "OSX_10_15", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
                 Location::DataProtectionKeychain => {
                     dict.add(
                         &unsafe { kSecUseDataProtectionKeychain }.to_void(),
@@ -974,7 +981,7 @@ impl ItemUpdateOptions {
     fn to_dictionary(&self) -> CFDictionary {
         let mut dict = CFMutableDictionary::from_CFType_pairs(&[]);
 
-        if let Some(value) = &self.value {
+        if let Some(ref value) = self.value {
             let class_opt = match value {
                 ItemUpdateValue::Ref(ref_) => ref_.class(),
                 ItemUpdateValue::Data(_) => None,
@@ -996,7 +1003,7 @@ impl ItemUpdateOptions {
         }
         if let Some(location) = &self.location {
             match location {
-                #[cfg(any(feature = "OSX_10_15", not(target_os = "macos")))]
+                #[cfg(any(feature = "OSX_10_15", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
                 Location::DataProtectionKeychain => {
                     dict.add(
                         &unsafe { kSecUseDataProtectionKeychain }.to_void(),
@@ -1057,7 +1064,7 @@ pub enum Location {
     /// This keychain requires the calling binary to be codesigned with
     /// entitlements for the `KeychainAccessGroups` it is supposed to
     /// access.
-    #[cfg(any(feature = "OSX_10_15", not(target_os = "macos")))]
+    #[cfg(any(feature = "OSX_10_15", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
     DataProtectionKeychain,
     /// Store the key in the default file-based keychain. On macOS, defaults to
     /// the Login keychain.
@@ -1071,7 +1078,7 @@ pub enum Location {
 impl fmt::Debug for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            #[cfg(any(feature = "OSX_10_15", not(target_os = "macos")))]
+            #[cfg(any(feature = "OSX_10_15", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))]
             Self::DataProtectionKeychain => "DataProtectionKeychain",
             #[cfg(target_os = "macos")]
             Self::DefaultFileKeychain => "DefaultFileKeychain",

@@ -1,16 +1,14 @@
 use crate::{debug_state, Executor, LocalExecutor, State};
-use alloc::boxed::Box;
 use async_task::{Builder, Runnable, Task};
-use core::{
+use slab::Slab;
+use std::{
     cell::UnsafeCell,
     fmt,
     future::Future,
     marker::PhantomData,
     panic::{RefUnwindSafe, UnwindSafe},
-    sync::atomic::Ordering,
+    sync::PoisonError,
 };
-use slab::Slab;
-use std::sync::PoisonError;
 
 impl Executor<'static> {
     /// Consumes the [`Executor`] and intentionally leaks it.
@@ -37,18 +35,13 @@ impl Executor<'static> {
     /// future::block_on(ex.run(task));
     /// ```
     pub fn leak(self) -> &'static StaticExecutor {
-        let ptr = self.state.load(Ordering::Relaxed);
+        let ptr = self.state_ptr();
+        // SAFETY: So long as an Executor lives, it's state pointer will always be valid
+        // when accessed through state_ptr. This executor will live for the full 'static
+        // lifetime so this isn't an arbitrary lifetime extension.
+        let state: &'static State = unsafe { &*ptr };
 
-        let state: &'static State = if ptr.is_null() {
-            Box::leak(Box::new(State::new()))
-        } else {
-            // SAFETY: So long as an Executor lives, it's state pointer will always be valid
-            // when accessed through state_ptr. This executor will live for the full 'static
-            // lifetime so this isn't an arbitrary lifetime extension.
-            unsafe { &*ptr }
-        };
-
-        core::mem::forget(self);
+        std::mem::forget(self);
 
         let mut active = state.active.lock().unwrap_or_else(PoisonError::into_inner);
         if !active.is_empty() {
@@ -62,7 +55,7 @@ impl Executor<'static> {
 
         // SAFETY: StaticExecutor has the same memory layout as State as it's repr(transparent).
         // The lifetime is not altered: 'static -> 'static.
-        let static_executor: &'static StaticExecutor = unsafe { core::mem::transmute(state) };
+        let static_executor: &'static StaticExecutor = unsafe { std::mem::transmute(state) };
         static_executor
     }
 }
@@ -92,18 +85,13 @@ impl LocalExecutor<'static> {
     /// future::block_on(ex.run(task));
     /// ```
     pub fn leak(self) -> &'static StaticLocalExecutor {
-        let ptr = self.inner.state.load(Ordering::Relaxed);
+        let ptr = self.inner.state_ptr();
+        // SAFETY: So long as a LocalExecutor lives, it's state pointer will always be valid
+        // when accessed through state_ptr. This executor will live for the full 'static
+        // lifetime so this isn't an arbitrary lifetime extension.
+        let state: &'static State = unsafe { &*ptr };
 
-        let state: &'static State = if ptr.is_null() {
-            Box::leak(Box::new(State::new()))
-        } else {
-            // SAFETY: So long as an Executor lives, it's state pointer will always be valid
-            // when accessed through state_ptr. This executor will live for the full 'static
-            // lifetime so this isn't an arbitrary lifetime extension.
-            unsafe { &*ptr }
-        };
-
-        core::mem::forget(self);
+        std::mem::forget(self);
 
         let mut active = state.active.lock().unwrap_or_else(PoisonError::into_inner);
         if !active.is_empty() {
@@ -117,7 +105,7 @@ impl LocalExecutor<'static> {
 
         // SAFETY: StaticLocalExecutor has the same memory layout as State as it's repr(transparent).
         // The lifetime is not altered: 'static -> 'static.
-        let static_executor: &'static StaticLocalExecutor = unsafe { core::mem::transmute(state) };
+        let static_executor: &'static StaticLocalExecutor = unsafe { std::mem::transmute(state) };
         static_executor
     }
 }
@@ -135,7 +123,7 @@ impl LocalExecutor<'static> {
 /// [`StaticExecutor::run`] will cause the all spawned tasks to permanently leak. Any
 /// tasks at the time will not be cancelled.
 ///
-/// [`static`]: https://doc.rust-lang.org/core/keyword.static.html
+/// [`static`]: https://doc.rust-lang.org/std/keyword.static.html
 #[repr(transparent)]
 pub struct StaticExecutor {
     state: State,

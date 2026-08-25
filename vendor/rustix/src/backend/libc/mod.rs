@@ -109,7 +109,7 @@ pub(crate) mod event;
 #[cfg(feature = "fs")]
 pub(crate) mod fs;
 pub(crate) mod io;
-#[cfg(all(linux_kernel, not(target_os = "android")))]
+#[cfg(linux_kernel)]
 #[cfg(feature = "io_uring")]
 pub(crate) mod io_uring;
 #[cfg(not(any(

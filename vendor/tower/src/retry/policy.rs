@@ -6,7 +6,7 @@ use std::future::Future;
 ///
 /// ```
 /// use tower::retry::Policy;
-/// use std::future;
+/// use futures_util::future;
 ///
 /// type Req = String;
 /// type Res = String;
@@ -91,4 +91,4 @@ pub trait Policy<Req, Res, E> {
 
 // Ensure `Policy` is object safe
 #[cfg(test)]
-fn _obj_safe(_: Box<dyn Policy<(), (), (), Future = std::future::Ready<()>>>) {}
+fn _obj_safe(_: Box<dyn Policy<(), (), (), Future = futures::future::Ready<()>>>) {}

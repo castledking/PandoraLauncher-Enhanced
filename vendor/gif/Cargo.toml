@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.62"
 name = "gif"
-version = "0.14.1"
+version = "0.14.2"
 authors = ["The image-rs Developers"]
 build = false
 include = [

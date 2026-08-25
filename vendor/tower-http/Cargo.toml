@@ -13,7 +13,7 @@
 edition = "2018"
 rust-version = "1.64"
 name = "tower-http"
-version = "0.6.8"
+version = "0.6.6"
 authors = ["Tower Maintainers <team@tower-rs.com>"]
 build = false
 autolib = false
@@ -40,6 +40,21 @@ license = "MIT"
 repository = "https://github.com/tower-rs/tower-http"
 resolver = "2"
 
+[package.metadata.cargo-public-api-crates]
+allowed = [
+    "bytes",
+    "http",
+    "http_body",
+    "mime",
+    "pin-project-lite",
+    "tokio",
+    "tower",
+    "tower_layer",
+    "tower_service",
+    "tracing",
+    "tracing_core",
+]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = [
@@ -49,20 +64,6 @@ rustdoc-args = [
 
 [package.metadata.playground]
 features = ["full"]
-
-[package.metadata.cargo_check_external_types]
-allowed_external_types = [
-    "bytes::*",
-    "http::*",
-    "http_body::*",
-    "mime::*",
-    "tokio::*",
-    "tower::*",
-    "tower_layer::*",
-    "tower_service::*",
-    "tracing::*",
-    "tracing_core::*",
-]
 
 [features]
 add-extension = []
@@ -326,8 +327,11 @@ version = "1.0"
 features = ["v4"]
 optional = true
 
+[dev-dependencies.async-trait]
+version = "0.1"
+
 [dev-dependencies.brotli]
-version = "8"
+version = "7"
 
 [dev-dependencies.bytes]
 version = "1"
@@ -377,6 +381,10 @@ features = [
 
 [dev-dependencies.tracing-subscriber]
 version = "0.3"
+
+[dev-dependencies.uuid]
+version = "1.0"
+features = ["v4"]
 
 [dev-dependencies.zstd]
 version = "0.13"

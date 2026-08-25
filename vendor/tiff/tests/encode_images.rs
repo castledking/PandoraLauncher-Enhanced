@@ -57,7 +57,7 @@ fn encode_decode() {
                 ),
                 (Tag::Compression, ifd::Value::Short(1)),
                 (Tag::PhotometricInterpretation, ifd::Value::Short(2)),
-                (Tag::StripOffsets, ifd::Value::Unsigned(47)),
+                (Tag::StripOffsets, ifd::Value::Unsigned(35)),
                 (Tag::SamplesPerPixel, ifd::Value::Short(3)),
                 (Tag::RowsPerStrip, ifd::Value::Unsigned(3334)),
                 (Tag::StripByteCounts, ifd::Value::Unsigned(30000)),
@@ -81,7 +81,10 @@ fn encode_decode() {
             decoder.get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
         );
-        if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+
+        let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+        let _layout = decoder.read_image_to_buffer(&mut buffer).unwrap();
+        if let tiff::decoder::DecodingResult::U8(img_res) = buffer {
             assert_eq!(image_data, img_res);
         } else {
             panic!("Wrong data type");
@@ -161,7 +164,9 @@ fn encode_decode_big() {
             decoder.get_tag(Tag::Artist).unwrap(),
             ifd::Value::Ascii("Image-tiff".into())
         );
-        if let DecodingResult::U8(img_res) = decoder.read_image().unwrap() {
+        let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+        let _layout = decoder.read_image_to_buffer(&mut buffer).unwrap();
+        if let DecodingResult::U8(img_res) = buffer {
             assert_eq!(image_data, img_res);
         } else {
             panic!("Wrong data type");
@@ -235,6 +240,7 @@ const TEST_IMAGE_DIR: &str = "./tests/images/";
 
 macro_rules! test_roundtrip {
     ($name:ident, $buffer:ident, $buffer_ty:ty) => {
+        #[track_caller]
         fn $name<C: colortype::ColorType<Inner = $buffer_ty>>(
             file: &str,
             expected_type: ColorType,
@@ -244,7 +250,10 @@ macro_rules! test_roundtrip {
             let mut decoder = Decoder::new(img_file).expect("Cannot create decoder");
             assert_eq!(decoder.colortype().unwrap(), expected_type);
 
-            let image_data = match decoder.read_image().unwrap() {
+            let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
+            decoder.read_image_to_buffer(&mut buffer).unwrap();
+
+            let image_data = match buffer {
                 DecodingResult::$buffer(res) => res,
                 _ => panic!("Wrong data type"),
             };
@@ -258,9 +267,11 @@ macro_rules! test_roundtrip {
             }
             file.seek(SeekFrom::Start(0)).unwrap();
             {
+                let mut buffer = tiff::decoder::DecodingResult::U8(vec![]);
                 let mut decoder = Decoder::new(&mut file).unwrap();
-                if let DecodingResult::$buffer(img_res) = decoder.read_image().unwrap() {
-                    assert_eq!(image_data, img_res);
+                decoder.read_image_to_buffer(&mut buffer).unwrap();
+                if let DecodingResult::$buffer(img_res) = buffer {
+                    assert_eq!(*image_data, img_res);
                 } else {
                     panic!("Wrong data type");
                 }

@@ -1,16 +1,5 @@
-/* Copyright (c) 2023, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+// Copyright (c) 2023, Google Inc.
+// SPDX-License-Identifier: ISC
 
 #ifndef OPENSSL_HEADER_TARGET_H
 #define OPENSSL_HEADER_TARGET_H
@@ -83,11 +72,16 @@
 #  if defined(OPENSSL_64_BIT)
 #    define OPENSSL_RISCV64
 #  endif
-#elif defined(__loongarch_lp64)
+#elif defined(__loongarch_lp64) || \
+      (defined(__loongarch__) && defined(OPENSSL_64_BIT))
 #define OPENSSL_LOONGARCH64
 #elif defined(__pnacl__)
 #define OPENSSL_PNACL
-#elif defined(__wasm__) // Allowed but no macro defined
+#elif defined(__wasm__)
+#define OPENSSL_WASM
+#  if defined(__wasi__)
+#    define OPENSSL_WASM_WASI
+#  endif
 #elif defined(__asmjs__) // Allowed but no macro defined
 #elif defined(__myriad2__) // Allowed but no macro defined
 #else
@@ -135,6 +129,7 @@
 #define OPENSSL_NO_FILESYSTEM
 #define OPENSSL_NO_POSIX_IO
 #define OPENSSL_NO_SOCK
+#define OPENSSL_NO_TTY
 #define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
 #endif
 
@@ -145,6 +140,7 @@
 #define OPENSSL_NO_FILESYSTEM
 #define OPENSSL_NO_POSIX_IO
 #define OPENSSL_NO_SOCK
+#define OPENSSL_NO_TTY
 #define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
 #endif
 
@@ -157,6 +153,7 @@
 #define OPENSSL_NO_FILESYSTEM
 #define OPENSSL_NO_POSIX_IO
 #define OPENSSL_NO_SOCK
+#define OPENSSL_NO_TTY
 #define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
 #endif
 
@@ -169,6 +166,20 @@
 #define OPENSSL_NO_FILESYSTEM
 #define OPENSSL_NO_POSIX_IO
 #define OPENSSL_NO_SOCK
+#define OPENSSL_NO_TTY
+#define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
+#endif
+
+// OPENSSL_WASM_WASI is set when building for WASI (WebAssembly System Interface).
+// WASI provides a standardized system interface for WebAssembly modules.
+// WASI Preview 2 does not support pthreads, BSD sockets, or terminal I/O,
+// so we disable threading, socket, and TTY support. WASI does provide
+// filesystem access and getentropy() for randomness.
+//
+// https://wasi.dev/
+#if defined(OPENSSL_WASM_WASI)
+#define OPENSSL_NO_SOCK
+#define OPENSSL_NO_TTY
 #define OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED
 #endif
 

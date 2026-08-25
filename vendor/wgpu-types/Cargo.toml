@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.87"
 name = "wgpu-types"
-version = "29.0.0"
+version = "29.0.4"
 authors = ["gfx-rs developers"]
 build = false
 autolib = false

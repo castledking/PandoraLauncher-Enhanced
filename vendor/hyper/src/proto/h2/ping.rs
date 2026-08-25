@@ -37,7 +37,7 @@ pub(super) fn disabled() -> Recorder {
     Recorder { shared: None }
 }
 
-pub(super) fn channel(ping_pong: PingPong, config: Config, timer: Time) -> (Recorder, Ponger) {
+pub(super) fn channel(ping_pong: PingPong, config: Config, __timer: Time) -> (Recorder, Ponger) {
     debug_assert!(
         config.is_enabled(),
         "ping channel requires bdp or keep-alive config",
@@ -51,10 +51,8 @@ pub(super) fn channel(ping_pong: PingPong, config: Config, timer: Time) -> (Reco
         stable_count: 0,
     });
 
-    let now = timer.now();
-
     let (bytes, next_bdp_at) = if bdp.is_some() {
-        (Some(0), Some(now))
+        (Some(0), Some(Instant::now()))
     } else {
         (None, None)
     };
@@ -63,12 +61,12 @@ pub(super) fn channel(ping_pong: PingPong, config: Config, timer: Time) -> (Reco
         interval,
         timeout: config.keep_alive_timeout,
         while_idle: config.keep_alive_while_idle,
-        sleep: timer.sleep(interval),
+        sleep: __timer.sleep(interval),
         state: KeepAliveState::Init,
-        timer: timer.clone(),
+        timer: __timer,
     });
 
-    let last_read_at = keep_alive.as_ref().map(|_| now);
+    let last_read_at = keep_alive.as_ref().map(|_| Instant::now());
 
     let shared = Arc::new(Mutex::new(Shared {
         bytes,
@@ -77,7 +75,6 @@ pub(super) fn channel(ping_pong: PingPong, config: Config, timer: Time) -> (Reco
         ping_pong,
         ping_sent_at: None,
         next_bdp_at,
-        timer,
     }));
 
     (
@@ -133,7 +130,6 @@ struct Shared {
     last_read_at: Option<Instant>,
 
     is_keep_alive_timed_out: bool,
-    timer: Time,
 }
 
 struct Bdp {
@@ -204,7 +200,7 @@ impl Recorder {
         // if not, we don't need to record bytes either
 
         if let Some(ref next_bdp_at) = locked.next_bdp_at {
-            if locked.timer.now() < *next_bdp_at {
+            if Instant::now() < *next_bdp_at {
                 return;
             } else {
                 locked.next_bdp_at = None;
@@ -263,8 +259,8 @@ impl Recorder {
 
 impl Ponger {
     pub(super) fn poll(&mut self, cx: &mut task::Context<'_>) -> Poll<Ponged> {
+        let now = Instant::now();
         let mut locked = self.shared.lock().unwrap();
-        let now = locked.timer.now(); // hoping this is fine to move within the lock
         let is_idle = self.is_idle();
 
         if let Some(ref mut ka) = self.keep_alive {
@@ -333,7 +329,7 @@ impl Shared {
     fn send_ping(&mut self) {
         match self.ping_pong.send_ping(Ping::opaque()) {
             Ok(()) => {
-                self.ping_sent_at = Some(self.timer.now());
+                self.ping_sent_at = Some(Instant::now());
                 trace!("sent ping");
             }
             Err(_err) => {
@@ -348,7 +344,7 @@ impl Shared {
 
     fn update_last_read_at(&mut self) {
         if self.last_read_at.is_some() {
-            self.last_read_at = Some(self.timer.now());
+            self.last_read_at = Some(Instant::now());
         }
     }
 
@@ -472,7 +468,7 @@ impl KeepAlive {
                 trace!("keep-alive interval ({:?}) reached", self.interval);
                 shared.send_ping();
                 self.state = KeepAliveState::PingSent;
-                let timeout = self.timer.now() + self.timeout;
+                let timeout = Instant::now() + self.timeout;
                 self.timer.reset(&mut self.sleep, timeout);
             }
             KeepAliveState::Init | KeepAliveState::PingSent => (),

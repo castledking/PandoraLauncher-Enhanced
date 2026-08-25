@@ -77,8 +77,9 @@ fn main() {
         println!("cargo:rustc-cfg=feature=\"std\"");
     }
 
-    let Some(rustc) = rustc else {
-        return;
+    let rustc = match rustc {
+        Some(rustc) => rustc,
+        None => return,
     };
 
     // std::backtrace::Backtrace stabilized in Rust 1.65

@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "libredox"
-version = "0.1.12"
+version = "0.1.10"
 authors = ["4lDO2 <4lDO2@protonmail.com>"]
 build = false
 exclude = ["target"]
@@ -51,5 +51,5 @@ optional = true
 version = "0.2"
 
 [dependencies.redox_syscall]
-version = "0.7"
+version = "0.5.16"
 optional = true

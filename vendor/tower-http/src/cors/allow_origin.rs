@@ -4,7 +4,7 @@ use http::{
 };
 use pin_project_lite::pin_project;
 use std::{
-    fmt,
+    array, fmt,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -203,7 +203,8 @@ impl From<HeaderValue> for AllowOrigin {
 
 impl<const N: usize> From<[HeaderValue; N]> for AllowOrigin {
     fn from(arr: [HeaderValue; N]) -> Self {
-        Self::list(arr)
+        #[allow(deprecated)] // Can be changed when MSRV >= 1.53
+        Self::list(array::IntoIter::new(arr))
     }
 }
 

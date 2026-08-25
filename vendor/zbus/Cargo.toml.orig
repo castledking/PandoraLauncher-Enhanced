@@ -1,6 +1,6 @@
 [package]
 name = "zbus"
-version = "5.14.0"
+version = "5.13.2"
 authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
 edition = { workspace = true }
 rust-version = { workspace = true }
@@ -48,10 +48,10 @@ serde_bytes = ["zvariant/serde_bytes"]
 async-fs = []
 
 [dependencies]
-zbus_macros = { path = "../zbus_macros", version = "5.14.0" }
+zbus_macros = { path = "../zbus_macros", version = "5.13.2" }
 zvariant = { path = "../zvariant", features = [
     "enumflags2",
-], version = "5.10.0" }
+], version = "5.9.2" }
 zbus_names = { path = "../zbus_names", version = "4.3.1" }
 
 serde.workspace = true
@@ -98,10 +98,9 @@ uds_windows.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
 libc.workspace = true
-async-recursion.workspace = true
 
-[target.'cfg(windows)'.dependencies.async-recursion]
-workspace = true
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+async-recursion.workspace = true
 
 [dev-dependencies]
 zbus_xml.workspace = true

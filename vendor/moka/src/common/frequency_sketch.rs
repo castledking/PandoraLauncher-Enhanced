@@ -207,7 +207,7 @@ impl FrequencySketch {
 mod tests {
     use super::FrequencySketch;
     use once_cell::sync::Lazy;
-    use std::hash::{BuildHasher, Hash};
+    use std::hash::{BuildHasher, Hash, Hasher};
 
     static ITEM: Lazy<u32> = Lazy::new(|| {
         let mut buf = [0; 4];
@@ -322,7 +322,11 @@ mod tests {
 
     fn hasher<K: Hash>() -> impl Fn(K) -> u64 {
         let build_hasher = std::collections::hash_map::RandomState::default();
-        move |key| build_hasher.hash_one(&key)
+        move |key| {
+            let mut hasher = build_hasher.build_hasher();
+            key.hash(&mut hasher);
+            hasher.finish()
+        }
     }
 }
 

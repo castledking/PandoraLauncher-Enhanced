@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.56"
+edition = "2024"
+rust-version = "1.85"
 name = "inout"
-version = "0.1.4"
+version = "0.2.2"
 authors = ["RustCrypto Developers"]
 build = false
 autolib = false
@@ -23,28 +23,26 @@ autotests = false
 autobenches = false
 description = "Custom reference types for code generic over in-place and buffer-to-buffer modes of operation."
 documentation = "https://docs.rs/inout"
-readme = false
+readme = "README.md"
 keywords = ["custom-reference"]
+categories = ["no-std"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/RustCrypto/utils"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = [
-    "--cfg",
-    "docsrs",
-]
-
-[features]
-std = ["block-padding/std"]
 
 [lib]
 name = "inout"
 path = "src/lib.rs"
 
+[[test]]
+name = "split-inout"
+path = "tests/split-inout.rs"
+
 [dependencies.block-padding]
-version = "0.3"
+version = "0.4.2"
 optional = true
 
-[dependencies.generic-array]
-version = "0.14"
+[dependencies.hybrid-array]
+version = "0.4"

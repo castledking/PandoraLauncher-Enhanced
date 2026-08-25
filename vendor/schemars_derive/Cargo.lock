@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.1"
+version = "1.0.4"
 dependencies = [
  "pretty_assertions",
  "proc-macro2",

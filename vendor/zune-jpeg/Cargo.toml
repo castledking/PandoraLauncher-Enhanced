@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.75.0"
 name = "zune-jpeg"
-version = "0.5.12"
+version = "0.5.15"
 authors = ["caleb <etemesicaleb@gmail.com>"]
 build = false
 exclude = [

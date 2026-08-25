@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{array, fmt};
 
 use http::{
     header::{self, HeaderName, HeaderValue},
@@ -108,7 +108,8 @@ impl From<Method> for AllowMethods {
 
 impl<const N: usize> From<[Method; N]> for AllowMethods {
     fn from(arr: [Method; N]) -> Self {
-        Self::list(arr)
+        #[allow(deprecated)] // Can be changed when MSRV >= 1.53
+        Self::list(array::IntoIter::new(arr))
     }
 }
 

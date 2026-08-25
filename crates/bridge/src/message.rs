@@ -67,7 +67,10 @@ pub struct ExportOptions {
     pub include_saves: bool,
     pub include_mods: bool,
     pub include_resourcepacks: bool,
+    pub include_shaders: bool,
     pub include_configs: bool,
+    pub include_screenshots: bool,
+    pub include_backups: bool,
     pub include_logs: bool,
     pub include_cache: bool,
     pub include_synced: bool,
@@ -89,15 +92,17 @@ pub enum MessageToBackend {
     DeleteInstance {
         id: InstanceID,
     },
+    DuplicateInstance {
+        id: InstanceID,
+        name: Ustr,
+        modal_action: ModalAction,
+    },
     ExportInstance {
         id: InstanceID,
         format: ExportFormat,
         options: ExportOptions,
         output: PathBuf,
         modal_action: ModalAction,
-    },
-    DuplicateInstance {
-        id: InstanceID,
     },
     RenameInstance {
         id: InstanceID,
@@ -165,6 +170,7 @@ pub enum MessageToBackend {
     StartInstance {
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
         modal_action: ModalAction,
     },
     RequestLoadWorlds {
@@ -221,6 +227,11 @@ pub enum MessageToBackend {
     },
     UpdateContent {
         instance: InstanceID,
+        content_id: InstanceContentID,
+        modal_action: ModalAction,
+    },
+    UnzipModpack {
+        id: InstanceID,
         content_id: InstanceContentID,
         modal_action: ModalAction,
     },
@@ -377,9 +388,6 @@ pub enum MessageToFrontend {
         id: InstanceID,
         content_folder: ContentFolder,
         content: Arc<[InstanceContentSummary]>,
-    },
-    CreateGameOutputWindow {
-        receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>,
     },
     AddNotification {
         notification_type: BridgeNotificationType,

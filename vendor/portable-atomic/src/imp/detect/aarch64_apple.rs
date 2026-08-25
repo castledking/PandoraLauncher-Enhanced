@@ -8,7 +8,7 @@ instructions that were not available on the M1 but are now available on the
 latest Apple hardware and this library currently wants to use:
 
 ```console
-$ LC_ALL=C comm -23 <(rustc --print cfg --target aarch64-apple-darwin -C target-cpu=apple-m4 | grep -F target_feature) <(rustc --print cfg --target aarch64-apple-darwin | grep -F target_feature)
+$ comm -23 <(rustc --print cfg --target aarch64-apple-darwin -C target-cpu=apple-m4 | grep -F target_feature) <(rustc --print cfg --target aarch64-apple-darwin | grep -F target_feature)
 target_feature="bf16"
 target_feature="bti"
 target_feature="ecv"
@@ -100,10 +100,6 @@ fn _detect(info: &mut CpuInfo) {
     check!(lse128, "hw.optional.arm.FEAT_LSE128");
     #[cfg(test)]
     check!(lsfe, "hw.optional.arm.FEAT_LSFE");
-    #[cfg(test)]
-    check!(rcpc, "hw.optional.arm.FEAT_LRCPC");
-    #[cfg(test)]
-    check!(rcpc2, "hw.optional.arm.FEAT_LRCPC2");
     check!(rcpc3, "hw.optional.arm.FEAT_LRCPC3");
 }
 
@@ -129,16 +125,14 @@ mod tests {
         // (And they actually changed it: https://go-review.googlesource.com/c/go/+/25495)
         //
         // This is currently used only for testing.
+        #[cfg(target_pointer_width = "64")]
         fn sysctlbyname32_no_libc(name: &CStr) -> Result<u32, c_int> {
             #[cfg(not(portable_atomic_no_asm))]
             use std::arch::asm;
             use std::mem;
-
             use test_helper::sys;
 
-            use crate::utils::{RegISize, RegSize};
-
-            // Refs: https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/custom/SYS.h#L427
+            // https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/kern/syscalls.master#L298
             #[inline]
             unsafe fn sysctl(
                 name: *const c_int,
@@ -157,36 +151,29 @@ mod tests {
                     const SYSCALL_NUMBER_MASK: u64 = !SYSCALL_CLASS_MASK;
                     (SYSCALL_CLASS_UNIX << SYSCALL_CLASS_SHIFT) | (SYSCALL_NUMBER_MASK & n)
                 }
-                // https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/kern/syscalls.master#L298
-                let mut n = syscall_construct_unix(202);
-                let arg1 = ptr_reg!(name);
-                let arg2 = name_len as RegSize;
-                let arg3 = ptr_reg!(old_p);
-                let arg4 = ptr_reg!(old_len_p);
-                let arg5 = ptr_reg!(new_p);
-                let arg6 = new_len as RegSize;
-                let r: RegISize;
+                #[allow(clippy::cast_possible_truncation)]
                 // SAFETY: the caller must uphold the safety contract.
                 unsafe {
+                    // https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/kern/syscalls.master#L4
+                    let mut n = syscall_construct_unix(202);
+                    let r: i64;
                     asm!(
-                        "svc 0x80", // #SWI_SYSCALL https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/mach/arm/vm_param.h#L417
+                        "svc 0",
                         "b.cc 2f",
                         "mov x16, x0",
                         "mov x0, #-1",
                         "2:",
                         inout("x16") n,
-                        inout("x0") arg1 => r,
-                        inout("x1") arg2 => _,
-                        in("x2") arg3,
-                        in("x3") arg4,
-                        in("x4") arg5,
-                        in("x5") arg6,
-                        // Do not use `preserves_flags` because AArch64 Darwin syscalls modify the condition flags.
+                        inout("x0") ptr_reg!(name) => r,
+                        inout("x1") name_len as u64 => _,
+                        in("x2") ptr_reg!(old_p),
+                        in("x3") ptr_reg!(old_len_p),
+                        in("x4") ptr_reg!(new_p),
+                        in("x5") new_len as u64,
                         options(nostack),
                     );
+                    if r as c_int == -1 { Err(n as c_int) } else { Ok(r as c_int) }
                 }
-                #[allow(clippy::cast_possible_truncation)]
-                if r as c_int == -1 { Err(n as c_int) } else { Ok(r as c_int) }
             }
             // https://github.com/apple-oss-distributions/Libc/blob/af11da5ca9d527ea2f48bb7efbd0f0f2a4ea4812/gen/FreeBSD/sysctlbyname.c
             unsafe fn sysctlbyname(
@@ -282,17 +269,14 @@ mod tests {
                 assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::NotFound);
             }
             if cfg!(any(target_os = "macos", target_abi = "macabi")) {
-                assert_eq!(
-                    res,
-                    expected_on_macos,
-                    "{}",
-                    str::from_utf8(name.to_bytes_with_nul()).unwrap()
-                );
+                assert_eq!(res, expected_on_macos);
             }
             if let Some(res) = res {
+                #[cfg(target_pointer_width = "64")]
                 assert_eq!(res, sysctlbyname32_no_libc(name).unwrap());
                 assert_eq!(res, sysctl_output.field(name).unwrap());
             } else {
+                #[cfg(target_pointer_width = "64")]
                 assert_eq!(sysctlbyname32_no_libc(name).unwrap_err(), libc::ENOENT);
                 assert!(sysctl_output.field(name).is_none());
             }

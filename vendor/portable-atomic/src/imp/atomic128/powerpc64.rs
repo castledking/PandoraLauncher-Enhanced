@@ -29,7 +29,9 @@ Refs:
 - atomic-maybe-uninit
   https://github.com/taiki-e/atomic-maybe-uninit
 
-See tests/asm-test/asm/portable-atomic for generated assembly.
+Generated asm:
+- powerpc64 (pwr8) https://godbolt.org/z/TjKsPbWc6
+- powerpc64le https://godbolt.org/z/5WqPGhb3Y
 */
 
 include!("macros.rs");
@@ -1030,7 +1032,6 @@ const IS_ALWAYS_LOCK_FREE: bool = cfg!(any(
 atomic128!(AtomicI128, i128, atomic_max, atomic_min);
 atomic128!(AtomicU128, u128, atomic_umax, atomic_umin);
 
-#[cfg(not(valgrind))] // TODO(powerpc64): Hang (as of Valgrind 3.26)
 #[cfg(test)]
 mod tests {
     use super::*;

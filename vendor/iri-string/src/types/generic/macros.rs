@@ -285,7 +285,7 @@ macro_rules! define_custom_string_slice {
         impl<S: crate::spec::Spec> PartialOrd for $ty<S> {
             #[inline]
             fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-                Some(self.cmp(&other))
+                Some(self.inner.cmp(&other.inner))
             }
         }
 
@@ -368,9 +368,7 @@ macro_rules! define_custom_string_slice {
 
             #[inline]
             fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
-                let s = core::str::from_utf8(bytes).map_err(|_| {
-                    crate::validate::Error::with_kind(crate::validate::ErrorKind::InvalidUtf8)
-                })?;
+                let s = core::str::from_utf8(bytes).map_err(|_| crate::validate::Error::new())?;
                 match $validate::<S>(s) {
                     // SAFETY: just checked `s` is valid as `$ty`.
                     Ok(()) => Ok(unsafe { $ty::new_always_unchecked(s) }),
@@ -781,9 +779,7 @@ macro_rules! define_custom_string_owned {
 
             #[inline]
             fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-                let s = core::str::from_utf8(bytes).map_err(|_| {
-                    crate::validate::Error::with_kind(crate::validate::ErrorKind::InvalidUtf8)
-                })?;
+                let s = core::str::from_utf8(bytes).map_err(|_| crate::validate::Error::new())?;
                 <&$slice<S>>::try_from(s).map(Into::into)
             }
         }

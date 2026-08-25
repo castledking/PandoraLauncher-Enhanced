@@ -40,7 +40,7 @@ pub mod __internal {
 /// Helper functions for sets.
 pub mod set {
     use crate::__internal::EnumSetConstHelper;
-    use crate::{EnumSet, EnumSetType};
+    use crate::{set::MixedEnumSet, EnumSet, EnumSetType};
 
     /// Retrieves the helper used in constant time operations.
     #[inline(always)]
@@ -52,6 +52,11 @@ pub mod set {
     #[inline(always)]
     pub const fn init_helper<T: EnumSetConstHelper>(_: &T) -> T::ConstInitHelper {
         T::CONST_INIT_HELPER
+    }
+
+    /// Converts an enumset to a MixedEnumSet
+    pub const fn convert_mixed<T: crate::EnumSetTypeWithRepr>(a: EnumSet<T>) -> MixedEnumSet<T> {
+        MixedEnumSet { repr: a.repr }
     }
 
     /// Gets the underlying repr from an EnumSet
@@ -67,7 +72,7 @@ pub mod set {
     }
 }
 
-/// Creates a EnumSet literal, which can be used in const contexts.
+/// Creates an [`EnumSet`](crate::EnumSet) literal, which can be used in const contexts.
 ///
 /// The syntax used is `enum_set!(Type::A | Type::B | Type::C)`. Each variant must be of the same
 /// type, or an error will occur at compile-time.
@@ -113,7 +118,40 @@ macro_rules! enum_set {
     };
 }
 
-/// Computes the union of multiple enums or constants enumset at compile time.
+/// Creates a [`MixedEnumSet`](crate::set::MixedEnumSet) literal, which can be used in const
+/// contexts.
+///
+/// The syntax used is `mixed_enum_set!(Type::A | Type::B | Type::C)`. Each variant must be of the same
+/// type, or an error will occur at compile-time.
+///
+/// This macro accepts trailing `|`s to allow easier use in other macros.
+///
+/// # Examples
+///
+/// ```rust
+/// # use enumset::{set::*, *};
+/// # #[derive(EnumSetType, Debug)] #[enumset(repr = "u32")] enum Enum { A, B, C }
+/// const CONST_SET: MixedEnumSet<Enum> = mixed_enum_set!(Enum::A | Enum::B);
+/// assert_eq!(CONST_SET, MixedEnumSet::from(Enum::A | Enum::B));
+/// ```
+///
+/// This macro is strongly typed. For example, the following will not compile:
+///
+/// ```compile_fail
+/// # use enumset::*;
+/// # #[derive(EnumSetType, Debug)] enum Enum { A, B, C }
+/// # #[derive(EnumSetType, Debug)] enum Enum2 { A, B, C }
+/// let type_error = enum_set!(Enum::A | Enum2::B);
+/// ```
+#[macro_export]
+macro_rules! mixed_enum_set {
+    ($($internal:tt)*) => {
+        $crate::__internal::set::convert_mixed($crate::enum_set!($($internal)*))
+    };
+}
+
+/// Computes the union of multiple enum variants or const [`EnumSet`](crate::EnumSet) values at
+/// compile time.
 ///
 /// The syntax used is `enum_set_union!(ENUM_A, ENUM_B, ENUM_C)`, computing the equivalent of
 /// `ENUM_A | ENUM_B | ENUM_C` at compile time. Each variant must be of the same type, or an error
@@ -152,7 +190,8 @@ macro_rules! enum_set_union {
     };
 }
 
-/// Computes the intersection of multiple enums or constants enumset at compile time.
+/// Computes the intersection of multiple enum variants or const [`EnumSet`](crate::EnumSet) values at
+/// compile time.
 ///
 /// The syntax used is `enum_set_intersection!(ENUM_A, ENUM_B, ENUM_C)`, computing the equivalent
 /// of `ENUM_A & ENUM_B & ENUM_C` at compile time. Each variant must be of the same type, or an
@@ -193,7 +232,8 @@ macro_rules! enum_set_intersection {
     };
 }
 
-/// Computes the complement of an enums or constants enumset at compile time.
+/// Computes the complement of an enum variant or const [`EnumSet`](crate::EnumSet) values at
+/// compile time.
 ///
 /// # Performance
 ///
@@ -222,7 +262,8 @@ macro_rules! enum_set_complement {
     }};
 }
 
-/// Computes the difference of multiple enums or constants enumset at compile time.
+/// Computes the difference of multiple enum variants or const [`EnumSet`](crate::EnumSet) values
+/// at compile time.
 ///
 /// The syntax used is `enum_set_difference!(ENUM_A, ENUM_B, ENUM_C)`, computing the equivalent
 /// of `ENUM_A - ENUM_B - ENUM_C` at compile time. Each variant must be of the same type, or an
@@ -240,10 +281,10 @@ macro_rules! enum_set_complement {
 /// ```rust
 /// # use enumset::*;
 /// # #[derive(EnumSetType, Debug)] enum Enum { A, B, C, D }
-/// const SET_A: EnumSet<Enum> = enum_set!(Enum::A | Enum::B | Enum::D);
+/// const SET_A: EnumSet<Enum> = EnumSet::all();
 /// const SET_B: EnumSet<Enum> = enum_set!(Enum::B | Enum::C);
-/// const CONST_SET: EnumSet<Enum> = enum_set_symmetric_difference!(SET_A, SET_B);
-/// assert_eq!(CONST_SET, Enum::A | Enum::C | Enum::D);
+/// const CONST_SET: EnumSet<Enum> = enum_set_difference!(SET_A, SET_B);
+/// assert_eq!(CONST_SET, Enum::A | Enum::D);
 /// ```
 #[macro_export]
 macro_rules! enum_set_difference {
@@ -263,7 +304,8 @@ macro_rules! enum_set_difference {
     };
 }
 
-/// Computes the symmetric difference of multiple enums or constants enumset at compile time.
+/// Computes the symmetric difference of multiple enum variants or const
+/// [`EnumSet`](crate::EnumSet) values at compile time.
 ///
 /// The syntax used is `enum_set_symmetric_difference!(ENUM_A, ENUM_B, ENUM_C)`, computing the
 /// equivalent of `ENUM_A ^ ENUM_B ^ ENUM_C` at compile time. Each variant must be of the same
@@ -281,10 +323,10 @@ macro_rules! enum_set_difference {
 /// ```rust
 /// # use enumset::*;
 /// # #[derive(EnumSetType, Debug)] enum Enum { A, B, C, D }
-/// const SET_A: EnumSet<Enum> = EnumSet::all();
+/// const SET_A: EnumSet<Enum> = enum_set!(Enum::A | Enum::B | Enum::D);
 /// const SET_B: EnumSet<Enum> = enum_set!(Enum::B | Enum::C);
-/// const CONST_SET: EnumSet<Enum> = enum_set_difference!(SET_A, SET_B);
-/// assert_eq!(CONST_SET, Enum::A | Enum::D);
+/// const CONST_SET: EnumSet<Enum> = enum_set_symmetric_difference!(SET_A, SET_B);
+/// assert_eq!(CONST_SET, Enum::A | Enum::C | Enum::D);
 /// ```
 #[macro_export]
 macro_rules! enum_set_symmetric_difference {

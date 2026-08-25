@@ -1,12 +1,11 @@
 #![forbid(unsafe_code)]
 
-use super::flush_block;
 use crate::deflate::hash_calc::StandardHashCalc;
 use crate::{
     deflate::{
         fill_window, BlockState, DeflateStream, MIN_LOOKAHEAD, STD_MIN_MATCH, WANT_MIN_MATCH,
     },
-    DeflateFlush,
+    flush_block, DeflateFlush,
 };
 
 pub fn deflate_fast(stream: &mut DeflateStream, flush: DeflateFlush) -> BlockState {

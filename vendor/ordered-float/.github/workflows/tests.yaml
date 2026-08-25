@@ -10,7 +10,7 @@ jobs:
       matrix:
         rust:
           - stable
-          - 1.63.0
+          - 1.60.0
     steps:
       - uses: r7kamura/rust-problem-matchers@v1
 
@@ -21,6 +21,14 @@ jobs:
         run: |
           rustup toolchain install ${{ matrix.rust }} --profile=minimal
           rustup override set ${{ matrix.rust }}
+
+      - name: Install rustfmt + clippy
+        if: matrix.rust == 'stable'
+        run: |
+          # remove non-rustup-managed versions already present in default image
+          rm -f /home/runner/.cargo/bin/{rustfmt,cargo-fmt}
+
+          rustup toolchain install ${{ matrix.rust }} --profile=minimal --component=clippy,rustfmt
 
       - name: Check Fmt
         if: matrix.rust == 'stable'
@@ -35,9 +43,6 @@ jobs:
 
       - name: Test (no default features)
         run: cargo test --no-default-features
-
-      - name: Test (libm only)
-        run: cargo test --no-default-features --features "libm"
 
       - name: Test (schema features subset)
         if: matrix.rust == 'stable'

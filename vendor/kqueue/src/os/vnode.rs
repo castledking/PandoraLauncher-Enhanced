@@ -3,19 +3,21 @@ use kqueue_sys::constants::FilterFlag;
 use super::super::Vnode;
 
 #[cfg(target_os = "freebsd")]
-pub(crate) fn handle_vnode_extras(ff: FilterFlag) -> Vnode {
+pub(crate) fn handle_vnode_extras(ff: FilterFlag) -> Option<Vnode> {
     if ff.contains(FilterFlag::NOTE_CLOSE_WRITE) {
-        Vnode::CloseWrite
+        Some(Vnode::CloseWrite)
     } else if ff.contains(FilterFlag::NOTE_CLOSE) {
-        Vnode::Close
+        Some(Vnode::Close)
     } else if ff.contains(FilterFlag::NOTE_OPEN) {
-        Vnode::Open
+        Some(Vnode::Open)
+    } else if ff.contains(FilterFlag::NOTE_READ) {
+        Some(Vnode::Read)
     } else {
-        panic!("vnode filterflag not supported: {ff:?}")
+        None
     }
 }
 
 #[cfg(not(target_os = "freebsd"))]
-pub(crate) fn handle_vnode_extras(ff: FilterFlag) -> Vnode {
-    panic!("vnode filterflag not supported: {ff:?}")
+pub(crate) fn handle_vnode_extras(_ff: FilterFlag) -> Option<Vnode> {
+    None
 }

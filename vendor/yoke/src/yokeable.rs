@@ -71,7 +71,16 @@ use core::{marker::PhantomData, mem};
 ///     }
 ///
 ///     unsafe fn make(from: Bar<'a>) -> Self {
-///         unsafe { mem::transmute(from) }
+///         // We're just doing mem::transmute() here, however Rust is
+///         // not smart enough to realize that Bar<'a> and Bar<'static> are of
+///         // the same size, so instead we use transmute_copy
+///
+///         // This assert will be optimized out, but is included for additional
+///         // peace of mind as we are using transmute_copy
+///         debug_assert!(mem::size_of::<Bar<'a>>() == mem::size_of::<Self>());
+///         let ptr: *const Self = (&from as *const Self::Output).cast();
+///         mem::forget(from);
+///         ptr::read(ptr)
 ///     }
 ///
 ///     fn transform_mut<F>(&'a mut self, f: F)
@@ -214,7 +223,7 @@ pub unsafe trait Yokeable<'a>: 'static {
     ///     cow: Cow<'static, str>,
     /// }
     ///
-    /// fn sound(foo: &mut Foo) {
+    /// fn sound<'a>(foo: &'a mut Foo) {
     ///     foo.cow.transform_mut(move |cow| cow.to_mut().push('a'));
     /// }
     /// ```

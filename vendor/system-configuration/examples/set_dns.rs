@@ -14,9 +14,7 @@ use system_configuration::{
 // network interface to 8.8.8.8 and 8.8.4.4
 
 fn main() {
-    let store = SCDynamicStoreBuilder::new("my-test-dyn-store")
-        .build()
-        .expect("Unable to create DynamicStore");
+    let store = SCDynamicStoreBuilder::new("my-test-dyn-store").build();
     let primary_service_uuid = get_primary_service_uuid(&store).expect("No PrimaryService active");
     println!("PrimaryService UUID: {}", primary_service_uuid);
 

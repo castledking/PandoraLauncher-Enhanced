@@ -9,9 +9,9 @@ use reqwest::RequestBuilder;
 use schema::{
     assets_index::AssetsIndex,
     curseforge::{
-        CURSEFORGE_SEARCH_URL, CurseforgeFingerprintRequest, CurseforgeFingerprintResponse, CurseforgeGetFilesRequest,
-        CurseforgeGetModFilesRequest, CurseforgeGetModFilesResult, CurseforgeSearchRequest, CurseforgeSearchResult,
-        MINECRAFT_GAME_ID,
+        CURSEFORGE_API_KEY, CURSEFORGE_SEARCH_URL, CurseforgeFingerprintRequest, CurseforgeFingerprintResponse,
+        CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeGetModFilesResult, CurseforgeSearchRequest,
+        CurseforgeSearchResult, MINECRAFT_GAME_ID,
     },
     fabric_launch::FabricLaunch,
     fabric_loader_manifest::{FABRIC_LOADER_MANIFEST_URL, FabricLoaderManifest},
@@ -124,7 +124,7 @@ impl<'v> MetadataItem for MinecraftVersionMetadataItem<'v> {
     }
 
     fn cache_file(&self, metadata_manager: &MetadataManager) -> Option<impl AsRef<Path> + Send + Sync + 'static> {
-        if !crate::is_single_component_path_str(&self.0.sha1) {
+        if !crate::fs::is_single_component_path_str(&self.0.sha1) {
             panic!("Invalid sha1 {}, possible directory traversal attack?", self.0.sha1);
         }
         let mut path = metadata_manager.metadata_cache.join("version_info");
@@ -603,7 +603,7 @@ impl<'a> MetadataItem for CurseforgeSearchMetadataItem<'a> {
             .query(self.0)
             .query(&[("gameId", MINECRAFT_GAME_ID)])
             .query(&[("sortOrder", "desc")])
-            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS")
+            .header("x-api-key", CURSEFORGE_API_KEY)
     }
 
     fn expires(&self) -> bool {
@@ -629,7 +629,7 @@ impl<'a> MetadataItem for CurseforgeFingerprintMetadataItem<'a> {
         client
             .post("https://api.curseforge.com/v1/fingerprints")
             .json(self.0)
-            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS")
+            .header("x-api-key", CURSEFORGE_API_KEY)
     }
 
     fn expires(&self) -> bool {
@@ -655,7 +655,7 @@ impl<'a> MetadataItem for CurseforgeGetModFilesMetadataItem<'a> {
         let mut req = client
             .get(format!("https://api.curseforge.com/v1/mods/{}/files", self.0.mod_id))
             .query(&[("gameId", MINECRAFT_GAME_ID)])
-            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS");
+            .header("x-api-key", CURSEFORGE_API_KEY);
 
         if let Some(mod_loader_type) = self.0.mod_loader_type {
             req = req.query(&[("modLoaderType", mod_loader_type)]);
@@ -693,7 +693,7 @@ impl<'a> MetadataItem for CurseforgeGetFilesMetadataItem<'a> {
         client
             .post("https://api.curseforge.com/v1/mods/files")
             .json(self.0)
-            .header("x-api-key", "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS")
+            .header("x-api-key", CURSEFORGE_API_KEY)
     }
 
     fn expires(&self) -> bool {

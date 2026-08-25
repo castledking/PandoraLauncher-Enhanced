@@ -32,14 +32,14 @@ pub struct Length {
 impl Length {
     /// Constructs a new length.
     #[inline]
-    pub fn new(number: f64, unit: LengthUnit) -> Length {
-        Length { number, unit }
+    pub fn new(number: f64, unit: LengthUnit) -> Self {
+        Self { number, unit }
     }
 
     /// Constructs a new length with `LengthUnit::None`.
     #[inline]
-    pub fn new_number(number: f64) -> Length {
-        Length {
+    pub fn new_number(number: f64) -> Self {
+        Self {
             number,
             unit: LengthUnit::None,
         }
@@ -49,8 +49,8 @@ impl Length {
     ///
     /// Shorthand for: `Length::new(0.0, Unit::None)`.
     #[inline]
-    pub fn zero() -> Length {
-        Length {
+    pub fn zero() -> Self {
+        Self {
             number: 0.0,
             unit: LengthUnit::None,
         }
@@ -60,11 +60,11 @@ impl Length {
 impl Default for Length {
     #[inline]
     fn default() -> Self {
-        Length::zero()
+        Self::zero()
     }
 }
 
-impl std::str::FromStr for Length {
+impl core::str::FromStr for Length {
     type Err = Error;
 
     #[inline]
@@ -76,7 +76,7 @@ impl std::str::FromStr for Length {
             return Err(Error::UnexpectedData(s.calc_char_pos()));
         }
 
-        Ok(Length::new(l.number, l.unit))
+        Ok(Self::new(l.number, l.unit))
     }
 }
 
@@ -187,7 +187,8 @@ impl Iterator for LengthListParser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use alloc::string::ToString;
+    use core::str::FromStr;
 
     macro_rules! test_p {
         ($name:ident, $text:expr, $result:expr) => (

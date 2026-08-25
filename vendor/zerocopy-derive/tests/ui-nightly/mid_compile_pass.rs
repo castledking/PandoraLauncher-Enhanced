@@ -6,9 +6,9 @@
 // This file may not be copied, modified, or distributed except according to
 // those terms.
 
-extern crate zerocopy_renamed;
+extern crate zerocopy;
 
-use zerocopy_renamed::KnownLayout;
+use zerocopy::KnownLayout;
 
 fn main() {}
 
@@ -25,7 +25,6 @@ fn assert_kl<T: ?Sized + KnownLayout>(_: &T) {}
 // | `repr(C)`? | generic? | `KnownLayout`? | `Sized`? | Type Name |
 // |          N |        Y |              N |        N |      KL04 |
 #[derive(KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct KL04<T: ?Sized>(u8, T);
 
 fn test_kl04<T: ?Sized>(kl: &KL04<T>) {
@@ -35,7 +34,6 @@ fn test_kl04<T: ?Sized>(kl: &KL04<T>) {
 // | `repr(C)`? | generic? | `KnownLayout`? | `Sized`? | Type Name |
 // |          N |        Y |              Y |        N |      KL06 |
 #[derive(KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct KL06<T: ?Sized + KnownLayout>(u8, T);
 
 fn test_kl06<T: ?Sized + KnownLayout>(kl: &KL06<T>) {
@@ -45,7 +43,6 @@ fn test_kl06<T: ?Sized + KnownLayout>(kl: &KL06<T>) {
 // | `repr(C)`? | generic? | `KnownLayout`? | `Sized`? | Type Name |
 // |          Y |        Y |              N |        N |      KL12 |
 #[derive(KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct KL12<T: ?Sized>(u8, T);
 
@@ -56,7 +53,6 @@ fn test_kl12<T: ?Sized>(kl: &KL12<T>) {
 // | `repr(C)`? | generic? | `KnownLayout`? | `Sized`? | Type Name |
 // |          Y |        Y |              N |        Y |      KL13 |
 #[derive(KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct KL13<T>(u8, T);
 

@@ -1,6 +1,6 @@
 [package]
 name = "wayland-sys"
-version = "0.31.8"
+version = "0.31.11"
 repository = "https://github.com/smithay/wayland-rs"
 documentation = "https://docs.rs/wayland-sys/"
 authors = ["Elinor Berger <elinor@safaradeg.net>"]
@@ -8,11 +8,11 @@ description = "FFI bindings to the various libwayland-*.so libraries. You should
 license = "MIT"
 categories = ["external-ffi-bindings"]
 edition = "2021"
-rust-version = "1.65"
+rust-version = "1.71"
 readme = "README.md"
 
 [dependencies]
-dlib = { version = "0.5.1", optional = true }
+dlib = { version = "0.5.3", optional = true }
 libc = { version = "0.2", optional = true }
 once_cell = { version = "1.0", optional = true }
 memoffset = { version = "0.9", optional = true }
@@ -27,6 +27,9 @@ client = ["dep:dlib", "dep:log"]
 cursor = ["client"]
 egl = ["client"]
 server = ["libc", "memoffset", "dep:dlib", "dep:log"]
+libwayland_client_1_23 = []
+libwayland_server_1_22 = []
+libwayland_server_1_23 = ["libwayland_server_1_22"]
 
 [package.metadata.docs.rs]
 all-features = true

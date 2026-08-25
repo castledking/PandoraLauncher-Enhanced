@@ -8,12 +8,32 @@ Subheadings to categorize changes are `added, changed, deprecated, removed, fixe
 
 -->
 
-The latest published SVG Types release is [0.15.3](#0153-2025-01-20) which was released on 2025-01-20.
-You can find its changes [documented below](#0153-2025-01-20).
+The latest published SVG Types release is [0.16.1](#0160-2026-01-09) which was released on 2026-01-09.
+You can find its changes [documented below](#0161-2026-01-09).
 
 ## [Unreleased]
 
-This release has an [MSRV][] of 1.65.
+This release has an [MSRV][] of 1.85.
+
+## [0.16.1][] (2026-01-09)
+
+This release has an [MSRV][] of 1.85.
+
+### Changed
+
+- Update Kurbo to v0.13. ([#60][] by [@nicoburns][])
+
+## [0.16.0][] (2025-10-26)
+
+This release has an [MSRV][] of 1.82.
+
+### Added
+
+- Add helper functions to PathSegment ([#37][] by [@LaurenzV][])
+
+### Changed
+
+- Update Kurbo to v0.12. ([#56][] by [@HaHa421][])
 
 ## [0.15.3][] (2025-01-20)
 
@@ -272,16 +292,20 @@ Many thanks to Yevhenii Reizner for the years of hard work that he has poured in
 [#40]: https://github.com/linebender/svgtypes/pull/40
 [#43]: https://github.com/linebender/svgtypes/pull/43
 [#44]: https://github.com/linebender/svgtypes/pull/44
+[#56]: https://github.com/linebender/svgtypes/pull/56
 
 [@demurgos]: https://github.com/demurgos
 [@erxclau]: https://github.com/erxclau
+[@HaHa421]: https://github.com/HaHa421
 [@Laurenzv]: https://github.com/LaurenzV
 [@romanzes]: https://github.com/romanzes
 [@tomcur]: https://github.com/tomcur
 [@waywardmonkeys]: https://github.com/waywardmonkeys
 [@yisibl]: https://github.com/yisibl
 
-[Unreleased]: https://github.com/RazrFalcon/svgtypes/compare/v0.15.3...HEAD
+[Unreleased]: https://github.com/RazrFalcon/svgtypes/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/RazrFalcon/svgtypes/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/RazrFalcon/svgtypes/compare/v0.15.3...v0.16.0
 [0.15.3]: https://github.com/RazrFalcon/svgtypes/compare/v0.15.2...v0.15.3
 [0.15.2]: https://github.com/RazrFalcon/svgtypes/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/RazrFalcon/svgtypes/compare/v0.15.0...v0.15.1

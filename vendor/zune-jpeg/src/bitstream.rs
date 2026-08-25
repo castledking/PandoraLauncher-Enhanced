@@ -48,6 +48,7 @@
 //! Knock yourself out.
 use alloc::format;
 use alloc::string::ToString;
+use zune_core::log::warn;
 use core::cmp::min;
 
 use zune_core::bytestream::{ZByteReaderTrait, ZReader};
@@ -238,7 +239,7 @@ impl BitStream {
 
         // 32 bits is enough for a decode(16 bits) and receive_extend(max 16 bits)
         if self.bits_left < 32 {
-            if self.marker.is_some() || self.overread_by > 0 || self.seen_eoi {
+            if self.marker.is_some() || self.seen_eoi {
                 // found a marker, or we are in EOI
                 // also we are in over-reading mode, where we fill it with zeroes
 
@@ -246,6 +247,15 @@ impl BitStream {
                 self.buffer <<= 32;
                 self.bits_left += 32;
                 self.aligned_buffer = self.buffer << (64 - self.bits_left);
+                return Ok(true);
+            }
+
+            if self.overread_by > 0 {
+                if self.bits_left == 0 {
+                    return Err(DecodeErrors::ExhaustedData);
+                }
+                // We already hit EOF while refilling. Continue consuming the buffered bits
+                // but don't synthesize additional bytes from zero-fill.
                 return Ok(true);
             }
 
@@ -651,10 +661,9 @@ impl BitStream {
                         break 'no_eob;
                     }
                 } else {
+                    // libjpeg-turbo also doesn't return an error here, so let's also warn.
                     if symbol != 1 {
-                        return Err(DecodeErrors::HuffmanDecode(
-                            "Bad Huffman code, corrupt JPEG?".to_string()
-                        ));
+                        warn!("Bad Huffman code, corrupt JPEG?");
                     }
                     // get sign bit
                     // We assume we have enough bits, which should be correct for sane images
@@ -685,9 +694,9 @@ impl BitStream {
                             }
                             if self.get_bit() == 1 && (*coefficient & bit) == 0 {
                                 if *coefficient > 0 {
-                                    *coefficient += bit;
+                                    *coefficient = coefficient.wrapping_add(bit);
                                 } else {
-                                    *coefficient -= bit;
+                                    *coefficient = coefficient.wrapping_sub(bit);
                                 }
                             }
                         } else {

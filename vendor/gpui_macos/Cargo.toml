@@ -39,18 +39,26 @@ path = "../gpui"
 default-features = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
-async-task = "4.7"
-block = "0.1"
-core-graphics = "0.24"
-core-text = "21"
 dispatch2 = "0.3.1"
-etagere = "0.2"
-foreign-types = "0.5"
-pathfinder_geometry = "0.5"
-raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies.accesskit]
+version = "0.24.0"
+features = ["enumn"]
+
+[target.'cfg(target_os = "macos")'.dependencies.accesskit_macos]
+version = "0.26.0"
 
 [target.'cfg(target_os = "macos")'.dependencies.anyhow]
 version = "1.0.86"
+
+[target.'cfg(target_os = "macos")'.dependencies.async-task]
+version = "4.7"
+
+[target.'cfg(target_os = "macos")'.dependencies.block]
+version = "0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies.block2]
+version = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies.cocoa]
 version = "=0.26.0"
@@ -60,17 +68,23 @@ version = "0.1.0"
 path = "../collections"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation]
-version = "=0.10.0"
+version = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation-sys]
 version = "0.8.6"
+
+[target.'cfg(target_os = "macos")'.dependencies.core-graphics]
+version = "0.24"
+
+[target.'cfg(target_os = "macos")'.dependencies.core-text]
+version = "21"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-video]
 version = "0.5.2"
 features = ["metal"]
 
 [target.'cfg(target_os = "macos")'.dependencies.ctor]
-version = "0.4.0"
+version = "1.0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies.derive_more]
 version = "2.1.1"
@@ -86,18 +100,45 @@ features = [
     "not",
 ]
 
+[target.'cfg(target_os = "macos")'.dependencies.etagere]
+version = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies.font-kit]
 version = "0.14.1-zed"
 git = "https://github.com/zed-industries/font-kit"
-rev = "110523127440aefb11ce0cf280ae7c5071337ec5"
+rev = "94b0f28166665e8fd2f53ff6d268a14955c82269"
 optional = true
 package = "zed-font-kit"
+
+[target.'cfg(target_os = "macos")'.dependencies.foreign-types]
+version = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies.futures]
 version = "0.3.32"
 
+[target.'cfg(target_os = "macos")'.dependencies.gpui_util]
+path = "../gpui_util"
+
 [target.'cfg(target_os = "macos")'.dependencies.image]
 version = "0.25.1"
+features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "rayon",
+    "tga",
+    "tiff",
+    "webp",
+]
+default-features = false
 
 [target.'cfg(target_os = "macos")'.dependencies.itertools]
 version = "0.14.0"
@@ -124,13 +165,63 @@ version = "0.33"
 [target.'cfg(target_os = "macos")'.dependencies.objc]
 version = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies.objc2]
+version = "0.6"
+
 [target.'cfg(target_os = "macos")'.dependencies.objc2-app-kit]
-version = "0.3"
-features = ["NSGraphics"]
+version = "0.3.2"
+features = [
+    "NSButton",
+    "NSControl",
+    "NSGraphics",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+    "objc2-core-foundation",
+]
 default-features = false
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-foundation]
+version = "=0.3.2"
+features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSCoder",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSNull",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSSet",
+    "NSString",
+    "NSURL",
+    "NSUndoManager",
+    "NSValue",
+    "objc2-core-foundation",
+    "std",
+]
+default-features = false
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-user-notifications]
+version = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies.parking_lot]
 version = "0.12.1"
+
+[target.'cfg(target_os = "macos")'.dependencies.pathfinder_geometry]
+version = "0.5"
+
+[target.'cfg(target_os = "macos")'.dependencies.raw-window-handle]
+version = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies.semver]
 version = "1.0"
@@ -147,9 +238,6 @@ features = [
 version = "0.27.2"
 features = ["derive"]
 
-[target.'cfg(target_os = "macos")'.dependencies.util]
-path = "../util"
-
 [target.'cfg(target_os = "macos")'.dependencies.uuid]
 version = "1.1.2"
 features = [
@@ -165,6 +253,11 @@ default-features = false
 
 [target.'cfg(target_os = "macos")'.build-dependencies.gpui]
 path = "../gpui"
+default-features = false
+
+[target.'cfg(target_os = "macos")'.dev-dependencies.gpui]
+path = "../gpui"
+features = ["test-support"]
 default-features = false
 
 [lints.clippy]

@@ -3,9 +3,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::PollSemaphore;
 use tower_service::Service;
 
+use futures_core::ready;
 use std::{
     sync::Arc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 
 /// Enforces a limit on the concurrent number of requests the underlying

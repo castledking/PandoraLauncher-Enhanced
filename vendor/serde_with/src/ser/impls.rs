@@ -6,6 +6,8 @@ use hashbrown_0_14::{HashMap as HashbrownMap014, HashSet as HashbrownSet014};
 use hashbrown_0_15::{HashMap as HashbrownMap015, HashSet as HashbrownSet015};
 #[cfg(feature = "hashbrown_0_16")]
 use hashbrown_0_16::{HashMap as HashbrownMap016, HashSet as HashbrownSet016};
+#[cfg(feature = "hashbrown_0_17")]
+use hashbrown_0_17::{HashMap as HashbrownMap017, HashSet as HashbrownSet017};
 #[cfg(feature = "indexmap_1")]
 use indexmap_1::{IndexMap, IndexSet};
 #[cfg(feature = "indexmap_2")]
@@ -39,6 +41,8 @@ pub(crate) mod macros {
         $m!(HashbrownMap015<K, V, H: Sized>);
         #[cfg(feature = "hashbrown_0_16")]
         $m!(HashbrownMap016<K, V, H: Sized>);
+        #[cfg(feature = "hashbrown_0_17")]
+        $m!(HashbrownMap017<K, V, H: Sized>);
         #[cfg(feature = "indexmap_1")]
         $m!(IndexMap<K, V, H: Sized>);
         #[cfg(feature = "indexmap_2")]
@@ -58,6 +62,8 @@ pub(crate) mod macros {
         $m!(HashbrownSet015<$T, H: Sized>);
         #[cfg(feature = "hashbrown_0_16")]
         $m!(HashbrownSet016<$T, H: Sized>);
+        #[cfg(feature = "hashbrown_0_17")]
+        $m!(HashbrownSet017<$T, H: Sized>);
         #[cfg(feature = "indexmap_1")]
         $m!(IndexSet<$T, H: Sized>);
         #[cfg(feature = "indexmap_2")]
@@ -936,34 +942,43 @@ impl<'a, const N: usize> SerializeAs<Cow<'a, [u8; N]>> for Bytes {
 }
 
 #[cfg(feature = "alloc")]
-impl<T, U> SerializeAs<Vec<T>> for OneOrMany<U, formats::PreferOne>
-where
-    U: SerializeAs<T>,
-{
-    fn serialize_as<S>(source: &Vec<T>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match source.len() {
-            1 => SerializeAsWrap::<T, U>::new(source.iter().next().expect("Cannot be empty"))
-                .serialize(serializer),
-            _ => SerializeAsWrap::<Vec<T>, Vec<U>>::new(source).serialize(serializer),
+macro_rules! one_or_many_impl {
+    ($ty:ident < T $(: $tbound1:ident $(+ $tbound2:ident)*)* $(, $typaram:ident : $bound:ident )* >) => {
+        impl<T, U $(, $typaram)*> SerializeAs<$ty<T $(, $typaram)*>> for OneOrMany<U, formats::PreferOne>
+        where
+            U: SerializeAs<T>,
+            $(T: ?Sized + $tbound1 $(+ $tbound2)*,)*
+            $($typaram: ?Sized + $bound,)*
+        {
+            fn serialize_as<S>(source: &$ty<T $(, $typaram)*>, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                match source.len() {
+                    1 => SerializeAsWrap::<T, U>::new(source.iter().next().expect("Cannot be empty"))
+                        .serialize(serializer),
+                    _ => serializer.collect_seq(source.iter().map(|item| SerializeAsWrap::<T, U>::new(item))),
+                }
+            }
+        }
+
+        impl<T, U $(, $typaram)*> SerializeAs<$ty<T $(, $typaram)*>> for OneOrMany<U, formats::PreferMany>
+        where
+            U: SerializeAs<T>,
+            $(T: ?Sized + $tbound1 $(+ $tbound2)*,)*
+            $($typaram: ?Sized + $bound,)*
+        {
+            fn serialize_as<S>(source: &$ty<T $(, $typaram)*>, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                serializer.collect_seq(source.iter().map(|item| SerializeAsWrap::<T, U>::new(item)))
+            }
         }
     }
 }
-
 #[cfg(feature = "alloc")]
-impl<T, U> SerializeAs<Vec<T>> for OneOrMany<U, formats::PreferMany>
-where
-    U: SerializeAs<T>,
-{
-    fn serialize_as<S>(source: &Vec<T>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        SerializeAsWrap::<Vec<T>, Vec<U>>::new(source).serialize(serializer)
-    }
-}
+foreach_seq!(one_or_many_impl);
 
 #[cfg(all(feature = "alloc", feature = "smallvec_1"))]
 impl<T, TAs, A> SerializeAs<smallvec_1::SmallVec<A>> for OneOrMany<TAs, formats::PreferOne>

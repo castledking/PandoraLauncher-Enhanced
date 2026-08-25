@@ -13,7 +13,6 @@
 include!("include.rs");
 
 #[derive(imp::KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 enum Foo {
     A,
 }
@@ -21,7 +20,6 @@ enum Foo {
 util_assert_impl_all!(Foo: imp::KnownLayout);
 
 #[derive(imp::KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 enum Bar {
     A = 0,
 }
@@ -29,7 +27,6 @@ enum Bar {
 util_assert_impl_all!(Bar: imp::KnownLayout);
 
 #[derive(imp::KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 enum Baz {
     A = 1,
     B = 0,
@@ -40,7 +37,6 @@ util_assert_impl_all!(Baz: imp::KnownLayout);
 // Deriving `KnownLayout` should work if the enum has bounded parameters.
 
 #[derive(imp::KnownLayout)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 enum WithParams<'a: 'b, 'b: 'a, T: 'a + 'b + imp::KnownLayout, const N: usize>
 where

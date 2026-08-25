@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use endi::NATIVE_ENDIAN;
 use zvariant::{
-    DeserializeDict, Dict, SerializeDict, Str, Type, Value, as_value::optional,
+    DeserializeDict, Dict, OwnedObjectPath, SerializeDict, Str, Type, Value, as_value::optional,
     serialized::Context, to_bytes,
 };
 
@@ -241,4 +241,140 @@ fn dict_value() {
     let data = to_bytes(ctxt, &TestEmpty::default()).unwrap();
 
     assert_eq!(data.bytes(), &[0, 0, 0, 0, 0, 0, 0, 0]);
+}
+
+#[test]
+fn struct_with_object_path_keys() {
+    let ctxt = Context::new_dbus(NATIVE_ENDIAN, 0);
+
+    #[derive(serde::Deserialize, Type, PartialEq, Debug, Default)]
+    #[zvariant(signature = "a{ou}")]
+    #[serde(default)]
+    struct Mapped {
+        #[serde(rename = "/foo")]
+        foo: u32,
+        #[serde(rename = "/bar")]
+        bar: u32,
+    }
+
+    let mut wire: HashMap<OwnedObjectPath, u32> = HashMap::new();
+    wire.insert(OwnedObjectPath::try_from("/foo").unwrap(), 1);
+    wire.insert(OwnedObjectPath::try_from("/bar").unwrap(), 2);
+
+    let encoded = to_bytes(ctxt, &wire).unwrap();
+    let decoded: Mapped = encoded.deserialize().unwrap().0;
+    assert_eq!(decoded, Mapped { foo: 1, bar: 2 });
+}
+
+#[test]
+fn nested_dict_value() {
+    let ctxt = Context::new_dbus(NATIVE_ENDIAN, 0);
+
+    #[derive(DeserializeDict, SerializeDict, Type, PartialEq, Debug, Default, Clone)]
+    #[zvariant(signature = "a{sv}", rename_all = "PascalCase")]
+    struct Adapter {
+        address: Option<String>,
+        name: Option<String>,
+        powered: bool,
+    }
+
+    #[derive(DeserializeDict, SerializeDict, Type, PartialEq, Debug, Default, Clone)]
+    #[zvariant(signature = "a{sv}", rename_all = "PascalCase")]
+    struct Media {
+        supported_features: Vec<String>,
+        #[zvariant(rename = "SupportedUUIDs")]
+        supported_uuids: Vec<String>,
+    }
+
+    #[derive(DeserializeDict, SerializeDict, Type, PartialEq, Debug, Default)]
+    #[zvariant(signature = "a{sa{sv}}")]
+    struct Interfaces {
+        #[zvariant(rename = "org.bluez.Adapter1")]
+        adapter: Option<Adapter>,
+        #[zvariant(rename = "org.bluez.Media1")]
+        media: Media,
+    }
+
+    let media = Media {
+        // The UUIDs aren't value but it doens't matter for this test.
+        supported_uuids: vec!["001-233-22333".to_string(), "222-222-222".to_string()],
+        supported_features: vec!["tx-timestamping".to_string()],
+    };
+    let interfaces = Interfaces {
+        adapter: Some(Adapter {
+            address: Some("00:11:22:33:44:55".to_string()),
+            name: Some("test-adapter".to_string()),
+            powered: true,
+        }),
+        media: media.clone(),
+    };
+
+    let encoded = to_bytes(ctxt, &interfaces).unwrap();
+    let decoded: Interfaces = encoded.deserialize().unwrap().0;
+    assert_eq!(decoded, interfaces);
+
+    let mut outer: HashMap<&str, HashMap<&str, Value<'_>>> = HashMap::new();
+    let mut adapter_props: HashMap<&str, Value<'_>> = HashMap::new();
+    adapter_props.insert("Address", Value::new("00:11:22:33:44:55"));
+    adapter_props.insert("Name", Value::new("test-adapter"));
+    adapter_props.insert("Powered", Value::new(true));
+    outer.insert("org.bluez.Adapter1", adapter_props);
+    let mut media_props: HashMap<&str, Value<'_>> = HashMap::new();
+    media_props.insert("SupportedFeatures", Value::new(vec!["tx-timestamping"]));
+    media_props.insert(
+        "SupportedUUIDs",
+        Value::new(vec!["001-233-22333", "222-222-222"]),
+    );
+    outer.insert("org.bluez.Media1", media_props);
+
+    let map_encoded = to_bytes(ctxt, &outer).unwrap();
+    let from_map: Interfaces = map_encoded.deserialize().unwrap().0;
+    assert_eq!(from_map, interfaces);
+
+    outer.remove("org.bluez.Adapter1").unwrap();
+    let encoded = to_bytes(ctxt, &outer).unwrap();
+    let decoded: Interfaces = encoded.deserialize().unwrap().0;
+    assert_eq!(
+        decoded,
+        Interfaces {
+            adapter: None,
+            media,
+        }
+    );
+}
+
+#[test]
+fn nested_dict_object_path_keys() {
+    let ctxt = Context::new_dbus(NATIVE_ENDIAN, 0);
+
+    #[derive(DeserializeDict, SerializeDict, Type, PartialEq, Debug, Default)]
+    #[zvariant(signature = "a{sv}", rename_all = "PascalCase")]
+    struct Props {
+        value: Option<u32>,
+    }
+
+    #[derive(DeserializeDict, SerializeDict, Type, PartialEq, Debug, Default)]
+    #[zvariant(signature = "a{oa{sv}}")]
+    struct ByPath {
+        #[zvariant(rename = "/org/example/A")]
+        a: Option<Props>,
+        #[zvariant(rename = "/org/example/B")]
+        b: Option<Props>,
+    }
+
+    let by_path = ByPath {
+        a: Some(Props { value: Some(7) }),
+        b: None,
+    };
+    let encoded = to_bytes(ctxt, &by_path).unwrap();
+    let decoded: ByPath = encoded.deserialize().unwrap().0;
+    assert_eq!(decoded, by_path);
+
+    let mut props: HashMap<&str, Value<'_>> = HashMap::new();
+    props.insert("Value", Value::new(7u32));
+    let mut outer: HashMap<OwnedObjectPath, HashMap<&str, Value<'_>>> = HashMap::new();
+    outer.insert(OwnedObjectPath::try_from("/org/example/A").unwrap(), props);
+    let map_encoded = to_bytes(ctxt, &outer).unwrap();
+    let from_map: ByPath = map_encoded.deserialize().unwrap().0;
+    assert_eq!(from_map, by_path);
 }

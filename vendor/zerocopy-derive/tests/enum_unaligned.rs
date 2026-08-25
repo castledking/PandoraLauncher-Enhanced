@@ -17,7 +17,6 @@ include!("include.rs");
 // - `repr(u8)` or `repr(i8)`
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(u8)]
 enum Foo {
     A,
@@ -26,7 +25,6 @@ enum Foo {
 util_assert_impl_all!(Foo: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(i8)]
 enum Bar {
     A,
@@ -35,7 +33,6 @@ enum Bar {
 util_assert_impl_all!(Bar: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(u8, align(1))]
 enum Baz {
     A,
@@ -44,7 +41,6 @@ enum Baz {
 util_assert_impl_all!(Baz: imp::Unaligned);
 
 #[derive(imp::Unaligned)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(i8, align(1))]
 enum Blah {
     B,

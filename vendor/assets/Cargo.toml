@@ -13,7 +13,8 @@
 edition = "2024"
 name = "gpui-component-assets"
 version = "0.5.1"
-build = false
+build = "build.rs"
+links = "gpui-component-default-icons"
 publish = true
 autolib = false
 autobins = false

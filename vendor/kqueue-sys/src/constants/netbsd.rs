@@ -2,7 +2,7 @@ use bitflags::bitflags;
 
 #[allow(non_camel_case_types)]
 #[repr(u32)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum EventFilter {
     EVFILT_READ = 0,
     EVFILT_WRITE = 1,
@@ -15,6 +15,8 @@ pub enum EventFilter {
 }
 
 bitflags! {
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Ord, PartialOrd)]
     pub struct EventFlag: u32 {
         const EV_ADD       = 0x0001;
         const EV_DELETE    = 0x0002;
@@ -32,7 +34,27 @@ bitflags! {
     }
 }
 
+impl EventFlag {
+    /// Convert from underlying bit representation, preserving all
+    /// bits (even those not corresponding to a defined flag).
+    ///
+    /// # Safety
+    ///
+    /// The caller of the `bitflags!` macro can chose to allow or
+    /// disallow extra bits for their bitflags type.
+    ///
+    /// The caller of `from_bits_unchecked()` has to ensure that
+    /// all bits correspond to a defined flag or that extra bits
+    /// are valid for this bitflags type.
+    #[deprecated = "use the safe `from_bits_retain` method instead"]
+    pub const unsafe fn from_bits_unchecked(bits: u32) -> Self {
+        Self::from_bits_retain(bits)
+    }
+}
+
 bitflags! {
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Ord, PartialOrd)]
     pub struct FilterFlag: u32 {
         const NOTE_LOWAT                           = 0x00000001;
         const NOTE_DELETE                          = 0x00000001;
@@ -51,5 +73,23 @@ bitflags! {
         const NOTE_TRACK                           = 0x00000001;
         const NOTE_TRACKERR                        = 0x00000002;
         const NOTE_CHILD                           = 0x00000004;
+    }
+}
+
+impl FilterFlag {
+    /// Convert from underlying bit representation, preserving all
+    /// bits (even those not corresponding to a defined flag).
+    ///
+    /// # Safety
+    ///
+    /// The caller of the `bitflags!` macro can chose to allow or
+    /// disallow extra bits for their bitflags type.
+    ///
+    /// The caller of `from_bits_unchecked()` has to ensure that
+    /// all bits correspond to a defined flag or that extra bits
+    /// are valid for this bitflags type.
+    #[deprecated = "use the safe `from_bits_retain` method instead"]
+    pub const unsafe fn from_bits_unchecked(bits: u32) -> Self {
+        Self::from_bits_retain(bits)
     }
 }

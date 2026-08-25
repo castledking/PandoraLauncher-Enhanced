@@ -30,25 +30,12 @@ pub struct Flock {
 #[cfg(not(target_os = "horizon"))]
 impl Flock {
     pub(crate) const unsafe fn from_raw_unchecked(raw_fl: c::flock) -> Self {
-        #[cfg(not(all(target_os = "hurd", target_arch = "x86")))]
-        {
-            Self {
-                start: raw_fl.l_start as _,
-                length: raw_fl.l_len as _,
-                pid: Pid::from_raw(raw_fl.l_pid),
-                typ: transmute::<i16, FlockType>(raw_fl.l_type),
-                offset_type: transmute::<i16, FlockOffsetType>(raw_fl.l_whence),
-            }
-        }
-        #[cfg(all(target_os = "hurd", target_arch = "x86"))]
-        {
-            Self {
-                start: raw_fl.l_start as _,
-                length: raw_fl.l_len as _,
-                pid: Pid::from_raw(raw_fl.l_pid),
-                typ: transmute::<i32, FlockType>(raw_fl.l_type),
-                offset_type: transmute::<i32, FlockOffsetType>(raw_fl.l_whence),
-            }
+        Self {
+            start: raw_fl.l_start as _,
+            length: raw_fl.l_len as _,
+            pid: Pid::from_raw(raw_fl.l_pid),
+            typ: transmute::<i16, FlockType>(raw_fl.l_type),
+            offset_type: transmute::<i16, FlockOffsetType>(raw_fl.l_whence),
         }
     }
 
@@ -81,8 +68,7 @@ impl From<FlockType> for Flock {
 /// [`fcntl_getlk`]: crate::process::fcntl_getlk()
 #[cfg(not(target_os = "horizon"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(all(target_os = "hurd", target_arch = "x86")), repr(i16))]
-#[cfg_attr(all(target_os = "hurd", target_arch = "x86"), repr(i32))]
+#[repr(i16)]
 pub enum FlockType {
     /// `F_RDLCK`
     ReadLock = c::F_RDLCK as _,
@@ -97,8 +83,7 @@ pub enum FlockType {
 /// [`fcntl_getlk`]: crate::process::fcntl_getlk()
 #[cfg(not(target_os = "horizon"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(all(target_os = "hurd", target_arch = "x86")), repr(i16))]
-#[cfg_attr(all(target_os = "hurd", target_arch = "x86"), repr(i32))]
+#[repr(i16)]
 pub enum FlockOffsetType {
     /// `F_SEEK_SET`
     Set = c::SEEK_SET as _,

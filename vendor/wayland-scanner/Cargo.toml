@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.65"
 name = "wayland-scanner"
-version = "0.31.8"
+version = "0.31.7"
 authors = ["Elinor Berger <elinor@safaradeg.net>"]
 build = false
 autolib = false
@@ -51,7 +51,7 @@ proc-macro = true
 version = "1.0.11"
 
 [dependencies.quick-xml]
-version = "0.38.3"
+version = "0.37.0"
 
 [dependencies.quote]
 version = "1.0"

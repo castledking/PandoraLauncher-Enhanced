@@ -1,6 +1,14 @@
 #![warn(rust_2018_idioms)]
-#![cfg(all(feature = "full", not(target_os = "wasi"), not(miri)))] // Wasi doesn't support bind
-                                                                   // No `socket` on miri.
+// WASIp1 doesn't support bind
+// No `socket` on miri.
+#![cfg(all(
+    feature = "net",
+    feature = "macros",
+    feature = "rt",
+    feature = "io-util",
+    not(all(target_os = "wasi", target_env = "p1")),
+    not(miri)
+))]
 
 use std::time::Duration;
 use tokio::net::TcpSocket;
@@ -61,8 +69,8 @@ async fn bind_before_connect() {
     let _ = assert_ok!(srv.accept().await);
 }
 
+#[cfg_attr(target_os = "wasi", ignore = "WASI does not yet support `SO_LINGER`")]
 #[tokio::test]
-#[expect(deprecated)] // set_linger is deprecated
 async fn basic_linger() {
     // Create server
     let addr = assert_ok!("127.0.0.1:0".parse());
@@ -71,7 +79,7 @@ async fn basic_linger() {
 
     assert!(srv.linger().unwrap().is_none());
 
-    srv.set_linger(Some(Duration::new(0, 0))).unwrap();
+    srv.set_zero_linger().unwrap();
     assert_eq!(srv.linger().unwrap(), Some(Duration::new(0, 0)));
 }
 
@@ -124,10 +132,10 @@ const SET_BUF_SIZE: u32 = 4096;
 // Linux doubles the buffer size for kernel usage, and exposes that when
 // retrieving the buffer size.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
 const GET_BUF_SIZE: u32 = SET_BUF_SIZE;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "android", target_os = "linux"))]
 const GET_BUF_SIZE: u32 = 2 * SET_BUF_SIZE;
 
 test!(keepalive, set_keepalive(true));
@@ -155,6 +163,7 @@ test!(
 );
 
 test!(
+    #[cfg_attr(target_os = "wasi", ignore = "WASI does not yet support `SO_LINGER`")]
     #[expect(deprecated, reason = "set_linger is deprecated")]
     linger,
     set_linger(Some(Duration::from_secs(10)))
@@ -180,6 +189,7 @@ test!(IPv6 tclass_v6, set_tclass_v6(96));
     target_os = "redox",
     target_os = "solaris",
     target_os = "illumos",
-    target_os = "haiku"
+    target_os = "haiku",
+    target_os = "wasi"
 )))]
 test!(IPv4 tos_v4, set_tos_v4(96));

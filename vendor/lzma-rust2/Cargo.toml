@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.85"
 name = "lzma-rust2"
-version = "0.16.2"
+version = "0.16.5"
 build = false
 exclude = ["/tests/data"]
 autolib = false
@@ -175,7 +175,7 @@ path = "benches/comparison.rs"
 harness = false
 
 [dependencies.sha2]
-version = "0.10"
+version = "0.11"
 optional = true
 
 [dev-dependencies.criterion]

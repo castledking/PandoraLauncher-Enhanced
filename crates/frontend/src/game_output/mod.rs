@@ -766,25 +766,6 @@ fn paint_lines<'a, const REVERSE: bool>(
 
         let line_count = lines.len().max(1);
 
-        /*
-        let item_bounds = Bounds {
-            origin: if REVERSE {
-                let mut item_origin = line_origin.clone();
-                item_origin.y -= (line_count - 1) * line_height;
-                item_origin
-            } else {
-                line_origin
-            },
-            size: Size::new(wrap_width, line_count * line_height),
-        };
-        let item_background_color = if item.index & 1 == 0 {
-            Hsla { h: 0.0, s: 0.0, l: 0.06, a: 0.5 }
-        } else {
-            Hsla { h: 0.0, s: 0.0, l: 0.12, a: 0.5 }
-        };
-        window.paint_quad(fill(item_bounds,item_background_color));
-        */
-
         let mut line_origin = text_origin;
         line_origin.x += *time_column_width + level_column_width;
         if REVERSE {
@@ -1014,7 +995,7 @@ impl GameOutputRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let InputEvent::PressEnter { secondary: false } = event else {
+        let InputEvent::PressEnter { secondary: false, shift: _ } = event else {
             return;
         };
 

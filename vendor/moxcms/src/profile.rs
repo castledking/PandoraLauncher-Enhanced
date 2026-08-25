@@ -88,18 +88,62 @@ pub enum ProfileVersion {
 impl TryFrom<u32> for ProfileVersion {
     type Error = CmsError;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
+        // First try exact match for known versions
         match value {
-            0x02000000 => Ok(ProfileVersion::V2_0),
-            0x02100000 => Ok(ProfileVersion::V2_1),
-            0x02200000 => Ok(ProfileVersion::V2_2),
-            0x02300000 => Ok(ProfileVersion::V2_3),
-            0x02400000 => Ok(ProfileVersion::V2_4),
-            0x04000000 => Ok(ProfileVersion::V4_0),
-            0x04100000 => Ok(ProfileVersion::V4_1),
-            0x04200000 => Ok(ProfileVersion::V4_2),
-            0x04300000 => Ok(ProfileVersion::V4_3),
-            0x04400000 => Ok(ProfileVersion::V4_3),
-            _ => Err(CmsError::InvalidProfile),
+            0x02000000 => return Ok(ProfileVersion::V2_0),
+            0x02100000 => return Ok(ProfileVersion::V2_1),
+            0x02200000 => return Ok(ProfileVersion::V2_2),
+            0x02300000 => return Ok(ProfileVersion::V2_3),
+            0x02400000 => return Ok(ProfileVersion::V2_4),
+            0x04000000 => return Ok(ProfileVersion::V4_0),
+            0x04100000 => return Ok(ProfileVersion::V4_1),
+            0x04200000 => return Ok(ProfileVersion::V4_2),
+            0x04300000 => return Ok(ProfileVersion::V4_3),
+            0x04400000 => return Ok(ProfileVersion::V4_4),
+            _ => {}
+        }
+
+        // Extract major version (first byte) for range matching
+        // ICC version format: major.minor.bugfix.zero in bytes [0][1][2][3]
+        let major = (value >> 24) & 0xFF;
+        let minor = (value >> 20) & 0x0F;
+
+        // Accept profiles with patch versions (e.g., v2.0.2, v3.4, v4.2.9)
+        // but reject invalid versions (v0.x) and unsupported versions (v5.x+ / ICC MAX)
+        match major {
+            0 => {
+                // Version 0.x is invalid - reject
+                Err(CmsError::InvalidProfile)
+            }
+            2 => {
+                // v2.x - map to the appropriate v2 minor version or highest known
+                match minor {
+                    0 => Ok(ProfileVersion::V2_0),
+                    1 => Ok(ProfileVersion::V2_1),
+                    2 => Ok(ProfileVersion::V2_2),
+                    3 => Ok(ProfileVersion::V2_3),
+                    _ => Ok(ProfileVersion::V2_4), // Higher minor versions -> v2.4
+                }
+            }
+            3 => {
+                // v3.x (rare but exists) - treat as v2.4 (functionally similar)
+                Ok(ProfileVersion::V2_4)
+            }
+            4 => {
+                // v4.x - map to the appropriate v4 minor version or highest known
+                match minor {
+                    0 => Ok(ProfileVersion::V4_0),
+                    1 => Ok(ProfileVersion::V4_1),
+                    2 => Ok(ProfileVersion::V4_2),
+                    3 => Ok(ProfileVersion::V4_3),
+                    _ => Ok(ProfileVersion::V4_4), // Higher minor versions -> v4.4
+                }
+            }
+            _ => {
+                // v5.x+ (ICC MAX) and other unknown versions - reject
+                // ICC MAX has different white point requirements and would produce wrong colors
+                Err(CmsError::InvalidProfile)
+            }
         }
     }
 }
@@ -559,12 +603,18 @@ impl TryFrom<u32> for RenderingIntent {
 
     #[inline]
     fn try_from(value: u32) -> Result<Self, Self::Error> {
+        // Rendering intent is a big-endian u32 at bytes 64-67 with valid
+        // values 0-3. Non-conforming profiles (e.g. old Linotype "Lino"
+        // v2.1 profiles with byte-swapped values) may have invalid values.
+        // Default to Perceptual rather than rejecting the entire profile,
+        // since this field is advisory — moxcms uses TransformOptions for
+        // actual LUT selection.
         match value {
             0 => Ok(RenderingIntent::Perceptual),
             1 => Ok(RenderingIntent::RelativeColorimetric),
             2 => Ok(RenderingIntent::Saturation),
             3 => Ok(RenderingIntent::AbsoluteColorimetric),
-            _ => Err(CmsError::InvalidRenderingIntent),
+            _ => Ok(RenderingIntent::Perceptual),
         }
     }
 }
@@ -893,8 +943,9 @@ pub struct ColorProfile {
     pub viewing_conditions_description: Option<ProfileText>,
     pub technology: Option<TechnologySignatures>,
     pub calibration_date: Option<ColorDateTime>,
+    pub creation_date_time: ColorDateTime,
     /// Version for internal and viewing purposes only.
-    /// On encoding added value to profile will always be V4.
+    /// On encoding this is computable property which will set at least V4.
     pub(crate) version_internal: ProfileVersion,
 }
 
@@ -951,6 +1002,7 @@ impl ColorProfile {
             color_space: header.data_color_space,
             white_point: header.illuminant.to_xyzd(),
             version_internal: header.version,
+            creation_date_time: header.creation_date_time,
             ..Default::default()
         };
         let color_space = profile.color_space;
@@ -1170,7 +1222,9 @@ impl ColorProfile {
     }
 
     /// Updates RGB triple colorimetry from 3 [Chromaticity] and white point
+    /// This will nullify CICP.
     pub const fn update_rgb_colorimetry(&mut self, white_point: XyY, primaries: ColorPrimaries) {
+        self.cicp = None;
         let red_xyz = primaries.red.to_xyzd();
         let green_xyz = primaries.green.to_xyzd();
         let blue_xyz = primaries.blue.to_xyzd();
@@ -1183,6 +1237,8 @@ impl ColorProfile {
     ///
     /// To work on `const` context this method does have restrictions.
     /// If invalid values were provided it may return invalid matrix or NaNs.
+    ///
+    /// This will void CICP tag.
     pub const fn update_rgb_colorimetry_triplet(
         &mut self,
         white_point: XyY,
@@ -1190,6 +1246,7 @@ impl ColorProfile {
         green_xyz: Xyzd,
         blue_xyz: Xyzd,
     ) {
+        self.cicp = None;
         let xyz_matrix = Matrix3d {
             v: [
                 [red_xyz.x, green_xyz.x, blue_xyz.x],
@@ -1218,7 +1275,6 @@ impl ColorProfile {
 
     /// Updates RGB triple colorimetry from CICP
     pub fn update_rgb_colorimetry_from_cicp(&mut self, cicp: CicpProfile) -> bool {
-        self.cicp = Some(cicp);
         if !cicp.color_primaries.has_chromaticity()
             || !cicp.transfer_characteristics.has_transfer_curve()
         {
@@ -1233,6 +1289,7 @@ impl ColorProfile {
             Err(_) => return false,
         };
         self.update_rgb_colorimetry(white_point.to_xyyb(), primaries_xy);
+        self.cicp = Some(cicp);
 
         let red_trc: ToneReprCurve = match cicp.transfer_characteristics.try_into() {
             Ok(trc) => trc,
@@ -1244,16 +1301,7 @@ impl ColorProfile {
         false
     }
 
-    pub const fn rgb_to_xyz(&self, xyz_matrix: Matrix3f, wp: Xyz) -> Matrix3f {
-        let xyz_inverse = xyz_matrix.inverse();
-        let s = xyz_inverse.mul_vector(wp.to_vector());
-        let mut v = xyz_matrix.mul_row_vector::<0>(s);
-        v = v.mul_row_vector::<1>(s);
-        v.mul_row_vector::<2>(s)
-    }
-
-    ///TODO: make primary instead of [rgb_to_xyz] in the next major version
-    pub(crate) const fn rgb_to_xyz_static(xyz_matrix: Matrix3f, wp: Xyz) -> Matrix3f {
+    pub const fn rgb_to_xyz(xyz_matrix: Matrix3f, wp: Xyz) -> Matrix3f {
         let xyz_inverse = xyz_matrix.inverse();
         let s = xyz_inverse.mul_vector(wp.to_vector());
         let mut v = xyz_matrix.mul_row_vector::<0>(s);
@@ -1272,10 +1320,15 @@ impl ColorProfile {
         v
     }
 
+    /// Returns the RGB to XYZ transformation matrix.
+    ///
+    /// Per ICC.1:2022-05 Section F.3, the computational model is:
+    ///   connection = colorantMatrix × linear_rgb
+    ///
+    /// The colorant tags (rXYZ, gXYZ, bXYZ) are used directly as matrix columns.
+    /// This matches skcms and lcms2 behavior.
     pub fn rgb_to_xyz_matrix(&self) -> Matrix3d {
-        let xyz_matrix = self.colorant_matrix();
-        let white_point = Chromaticity::D50.to_xyzd();
-        ColorProfile::rgb_to_xyz_d(xyz_matrix, white_point)
+        self.colorant_matrix()
     }
 
     /// Computes transform matrix RGB -> XYZ -> RGB
@@ -1303,12 +1356,14 @@ impl ColorProfile {
         Some((det / 6.0f64) as f32)
     }
 
+    #[allow(unused)]
     pub(crate) fn has_device_to_pcs_lut(&self) -> bool {
         self.lut_a_to_b_perceptual.is_some()
             || self.lut_a_to_b_saturation.is_some()
             || self.lut_a_to_b_colorimetric.is_some()
     }
 
+    #[allow(unused)]
     pub(crate) fn has_pcs_to_device_lut(&self) -> bool {
         self.lut_b_to_a_perceptual.is_some()
             || self.lut_b_to_a_saturation.is_some()
@@ -1381,5 +1436,226 @@ mod tests {
             assert!(f_p.copyright.is_some());
             assert!(f_p.description.is_some());
         }
+    }
+
+    /// Verify rgb_to_xyz_matrix returns colorant_matrix directly per ICC.1:2022-05 F.3.
+    ///
+    /// SM245B.icc is a V2 Samsung monitor profile with D65 colorants and no CHAD tag.
+    /// Source: https://skia.googlesource.com/skcms/+/refs/heads/main/profiles/misc/SM245B.icc
+    #[test]
+    fn test_rgb_to_xyz_matrix_equals_colorant_matrix() {
+        // Test with SM245B.icc (D65 colorants, no CHAD tag)
+        if let Ok(icc_data) = fs::read("./assets/SM245B.icc") {
+            if let Ok(profile) = ColorProfile::new_from_slice(&icc_data) {
+                let rgb_to_xyz = profile.rgb_to_xyz_matrix();
+                let colorants = profile.colorant_matrix();
+
+                for i in 0..3 {
+                    for j in 0..3 {
+                        assert!(
+                            (rgb_to_xyz.v[i][j] - colorants.v[i][j]).abs() < 1e-10,
+                            "rgb_to_xyz_matrix should equal colorant_matrix at [{i}][{j}]"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Also verify with sRGB
+        let srgb = ColorProfile::new_srgb();
+        let rgb_to_xyz = srgb.rgb_to_xyz_matrix();
+        let colorants = srgb.colorant_matrix();
+
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (rgb_to_xyz.v[i][j] - colorants.v[i][j]).abs() < 1e-10,
+                    "sRGB: rgb_to_xyz_matrix should equal colorant_matrix at [{i}][{j}]"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_profile_version_parsing_standard() {
+        // Standard versions should work
+        assert_eq!(
+            ProfileVersion::try_from(0x02000000).unwrap(),
+            ProfileVersion::V2_0
+        );
+        assert_eq!(
+            ProfileVersion::try_from(0x02400000).unwrap(),
+            ProfileVersion::V2_4
+        );
+        assert_eq!(
+            ProfileVersion::try_from(0x04000000).unwrap(),
+            ProfileVersion::V4_0
+        );
+        assert_eq!(
+            ProfileVersion::try_from(0x04400000).unwrap(),
+            ProfileVersion::V4_4
+        );
+    }
+
+    #[test]
+    fn test_profile_version_parsing_patch_versions() {
+        // Patch versions found in real ICC profiles should be accepted
+
+        // v2.0.2 (SM245B.icc) - minor bugfix version
+        assert!(
+            ProfileVersion::try_from(0x02020000).is_ok(),
+            "v2.0.2 should be accepted"
+        );
+
+        // v3.4 (ibm-t61.icc, new.icc) - intermediate version
+        assert!(
+            ProfileVersion::try_from(0x03400000).is_ok(),
+            "v3.4 should be accepted"
+        );
+
+        // v4.2.9 (lcms_samsung_syncmaster.icc) - patch version
+        assert!(
+            ProfileVersion::try_from(0x04290000).is_ok(),
+            "v4.2.9 should be accepted"
+        );
+    }
+
+    #[test]
+    fn test_profile_version_parsing_rejected() {
+        // Invalid and unsupported versions should be rejected
+
+        // v0.0 - invalid version (no such ICC spec exists)
+        assert!(
+            ProfileVersion::try_from(0x00000000).is_err(),
+            "v0.0 should be rejected"
+        );
+
+        // v5.0 (iccMAX) - reject because it has different white point requirements
+        assert!(
+            ProfileVersion::try_from(0x05000000).is_err(),
+            "v5.0 should be rejected"
+        );
+
+        // v6.0 - future/unknown version
+        assert!(
+            ProfileVersion::try_from(0x06000000).is_err(),
+            "v6.0 should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_profile_version_v4_4_mapping() {
+        // V4.4 should map to V4_4, not V4_3 (regression test for typo)
+        assert_eq!(
+            ProfileVersion::try_from(0x04400000).unwrap(),
+            ProfileVersion::V4_4
+        );
+    }
+
+    #[test]
+    fn test_rendering_intent_invalid_defaults_to_perceptual() {
+        // Valid values are 0-3. Invalid values default to Perceptual
+        // rather than rejecting the profile.
+        assert_eq!(
+            RenderingIntent::try_from(0x01000000).unwrap(),
+            RenderingIntent::Perceptual
+        );
+        assert_eq!(
+            RenderingIntent::try_from(0x04000000).unwrap(),
+            RenderingIntent::Perceptual
+        );
+        assert_eq!(
+            RenderingIntent::try_from(0xFFFFFFFF).unwrap(),
+            RenderingIntent::Perceptual
+        );
+    }
+
+    /// Parse a profile with a non-conforming rendering intent value.
+    /// Synthesized from SM245B.icc with bytes 64-67 set to 0x01000000
+    /// (byte-swapped, as found in old Linotype "Lino" profiles).
+    /// The invalid value should default to Perceptual per our policy.
+    #[test]
+    fn test_invalid_rendering_intent_defaults_to_perceptual() {
+        let icc_data =
+            fs::read("./assets/swapped_intent.icc").expect("swapped_intent.icc test asset");
+        let profile = ColorProfile::new_from_slice(&icc_data)
+            .expect("Profile with invalid rendering intent should parse");
+        assert_eq!(profile.rendering_intent, RenderingIntent::Perceptual);
+        // Verify the rest of the profile parsed correctly
+        assert_eq!(profile.color_space, DataColorSpace::Rgb);
+        assert!(profile.red_trc.is_some());
+        assert!(profile.green_trc.is_some());
+        assert!(profile.blue_trc.is_some());
+        let dst = ColorProfile::new_srgb();
+        let transform = profile
+            .create_transform_8bit(Layout::Rgba, &dst, Layout::Rgba, Default::default())
+            .expect("Should create transform from profile with defaulted intent");
+        let src = [128u8, 128, 128, 255];
+        let mut out = [0u8; 4];
+        transform.transform(&src, &mut out).unwrap();
+        assert_eq!(out[3], 255, "Alpha should be preserved");
+    }
+
+    /// v4 profile with correct mluc description tag should parse as
+    /// Localizable (regression: ensure desc-tolerance doesn't break mluc).
+    #[test]
+    fn test_v4_mluc_description_parses_as_localizable() {
+        let icc_data = fs::read("./assets/Display P3.icc").expect("Display P3.icc test asset");
+        let profile =
+            ColorProfile::new_from_slice(&icc_data).expect("Display P3 profile should parse");
+        assert_eq!(profile.version(), ProfileVersion::V4_0);
+        let desc = profile
+            .description
+            .clone()
+            .expect("description should be present");
+        match desc {
+            super::ProfileText::Localizable(records) => {
+                assert!(!records.is_empty(), "mluc should have at least one record");
+                assert!(
+                    records[0].value.contains("Display P3"),
+                    "mluc should contain 'Display P3', got: {}",
+                    records[0].value
+                );
+            }
+            other => panic!("v4 mluc should parse as Localizable, got {:?}", other),
+        }
+    }
+
+    /// v4 profile with non-conforming truncated desc tag should parse.
+    /// Synthesized from Display P3.icc with the mluc tag replaced by a
+    /// minimal desc tag (ASCII only, no Unicode/ScriptCode sections).
+    #[test]
+    fn test_v4_truncated_desc_tag() {
+        let icc_data =
+            fs::read("./assets/truncated_desc_v4.icc").expect("truncated_desc_v4.icc test asset");
+        let profile = ColorProfile::new_from_slice(&icc_data)
+            .expect("v4 profile with truncated desc should parse");
+        assert_eq!(profile.version(), ProfileVersion::V4_0);
+        assert_eq!(profile.color_space, DataColorSpace::Rgb);
+        let desc = profile
+            .description
+            .clone()
+            .expect("description should be present");
+        match desc {
+            ProfileText::Description(d) => {
+                assert!(
+                    d.ascii_string.contains("Display P3"),
+                    "desc should contain 'Display P3', got: {}",
+                    d.ascii_string
+                );
+            }
+            other => panic!(
+                "v4 truncated desc should parse as Description, got {:?}",
+                other
+            ),
+        }
+        let dst = ColorProfile::new_srgb();
+        let transform = profile
+            .create_transform_8bit(Layout::Rgba, &dst, Layout::Rgba, Default::default())
+            .expect("Should create transform from v4 profile with truncated desc");
+        let src = [128u8, 128, 128, 255];
+        let mut out = [0u8; 4];
+        transform.transform(&src, &mut out).unwrap();
+        assert_eq!(out[3], 255, "Alpha should be preserved");
     }
 }

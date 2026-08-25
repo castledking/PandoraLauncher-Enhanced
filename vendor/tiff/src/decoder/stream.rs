@@ -1,14 +1,9 @@
 //! All IO functionality needed for TIFF decoding
+#[cfg(feature = "webp")]
+use std::io::Cursor;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
-/// Byte order of the TIFF file.
-#[derive(Clone, Copy, Debug)]
-pub enum ByteOrder {
-    /// little endian byte order
-    LittleEndian,
-    /// big endian byte order
-    BigEndian,
-}
+pub use crate::tags::ByteOrder;
 
 /// Reader that is aware of the byte order.
 #[derive(Debug)]
@@ -42,17 +37,6 @@ impl<R: Read> EndianReader<R> {
         Ok(match self.byte_order {
             ByteOrder::LittleEndian => u16::from_le_bytes(n),
             ByteOrder::BigEndian => u16::from_be_bytes(n),
-        })
-    }
-
-    /// Reads an i8
-    #[inline(always)]
-    pub fn read_i8(&mut self) -> Result<i8, io::Error> {
-        let mut n = [0u8; 1];
-        self.reader.read_exact(&mut n)?;
-        Ok(match self.byte_order {
-            ByteOrder::LittleEndian => i8::from_le_bytes(n),
-            ByteOrder::BigEndian => i8::from_be_bytes(n),
         })
     }
 
@@ -186,9 +170,6 @@ impl<R: Read> Read for LZWReader<R> {
                     }
                 }
                 Ok(weezl::LzwStatus::NoProgress) => {
-                    assert_eq!(result.consumed_in, 0);
-                    assert_eq!(result.consumed_out, 0);
-                    assert!(self.reader.buffer().is_empty());
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "no lzw end code found",
@@ -372,6 +353,61 @@ impl<R: Read> Read for Group4Reader<R> {
         }
 
         self.line_buf.read(buf)
+    }
+}
+
+#[cfg(feature = "webp")]
+pub struct WebPReader {
+    inner: Cursor<Vec<u8>>,
+}
+
+#[cfg(feature = "webp")]
+impl WebPReader {
+    pub fn new<R: Read + Seek>(
+        reader: R,
+        compressed_length: u64,
+        samples: u16,
+    ) -> crate::TiffResult<Self> {
+        let mut decoder =
+            image_webp::WebPDecoder::new(io::BufReader::new(reader.take(compressed_length)))
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        if !(samples == 4 || (samples == 3 && !decoder.has_alpha())) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad sample count for WebP compressed data",
+            )
+            .into());
+        }
+
+        let total_bytes =
+            samples as usize * decoder.dimensions().0 as usize * decoder.dimensions().1 as usize;
+        let mut data = vec![0; total_bytes];
+
+        decoder
+            .read_image(&mut data)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        // Add a fully opaque alpha channel if needed
+        if samples == 4 && !decoder.has_alpha() {
+            for i in (0..(total_bytes / 4)).rev() {
+                data[i * 4 + 3] = 255;
+                data[i * 4 + 2] = data[i * 3 + 2];
+                data[i * 4 + 1] = data[i * 3 + 1];
+                data[i * 4] = data[i * 3];
+            }
+        }
+
+        Ok(Self {
+            inner: Cursor::new(data),
+        })
+    }
+}
+
+#[cfg(feature = "webp")]
+impl Read for WebPReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
     }
 }
 

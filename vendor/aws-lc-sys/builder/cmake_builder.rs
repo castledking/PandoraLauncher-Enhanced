@@ -4,16 +4,34 @@
 use crate::cc_builder::CcBuilder;
 use crate::OutputLib::{Crypto, Ssl};
 use crate::{
-    allow_prebuilt_nasm, cargo_env, disable_jitter_entropy, effective_target, emit_warning,
-    execute_command, get_crate_cflags, is_crt_static, is_no_asm, is_no_pregenerated_src,
-    optional_env, optional_env_optional_crate_target, set_env, set_env_for_target, target_arch,
-    target_env, target_os, test_clang_cl_command, test_nasm_command, use_prebuilt_nasm,
-    OutputLibType,
+    allow_prebuilt_nasm, cargo_env, effective_target, emit_warning, execute_command,
+    get_crate_cflags, is_crt_static, is_fips_build, is_no_asm, is_no_pregenerated_src,
+    optional_env, optional_env_optional_crate_target, sanitizer, set_env, set_env_for_target,
+    should_build_jitter_entropy, target, target_arch, target_env, target_is_msvc, target_os,
+    test_clang_cl_command, test_nasm_command, use_prebuilt_nasm, OutputLibType,
 };
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+use crate::is_lto_flag;
+
+/// Strip LTO-related flags from a CFLAGS string. LTO flags interfere with the
+/// FIPS delocator pipeline, which compiles C to assembly (`-S`) and processes it
+/// with a Go tool. The combination of `-S` and `-flto` causes GCC to produce
+/// GIMPLE-annotated output that the delocator cannot handle. Additionally, LTO
+/// object files mixed with hand-written assembly in static libraries can cause
+/// linker errors (e.g. `R_X86_64_32` relocations incompatible with PIE).
+/// See also: aws-lc `CMakeLists.txt` which disables assembly when LTO is active.
+fn strip_lto_flags(cflags: &str) -> String {
+    cflags
+        .split_whitespace()
+        .filter(|flag| !is_lto_flag(flag))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 pub(crate) struct CmakeBuilder {
     manifest_dir: PathBuf,
@@ -79,16 +97,51 @@ impl CmakeBuilder {
             self.output_lib_type,
         );
         let cc_build = cc::Build::new();
-        let (is_like_msvc, build_options) =
+        let (is_cl_like, build_options) =
             cc_builder.collect_universal_build_options(&cc_build, true);
         for option in &build_options {
-            option.apply_cmake(cmake_cfg, is_like_msvc);
+            option.apply_cmake(cmake_cfg, is_cl_like);
         }
+
+        // CMake seeds `CMAKE_C_FLAGS` and `CMAKE_ASM_FLAGS` separately, so the
+        // C-side prefix-map does not cover `.S` sources. In release-style
+        // builds, mirror it with `asmflag()` when the compiler accepts
+        // `-Wa,--debug-prefix-map=...`, and skip paths with spaces because the
+        // flag must survive CMake and the assembler as one bare token.
+        let opt_level = cargo_env("OPT_LEVEL");
+        if !is_cl_like
+            && (target_os() == "linux" || target_os().ends_with("bsd"))
+            && !matches!(opt_level.as_str(), "0" | "1" | "2")
+            && !self.manifest_dir.to_string_lossy().contains(' ')
+        {
+            let path_str = self.manifest_dir.display().to_string();
+            let asm_flag = format!("-Wa,--debug-prefix-map={path_str}=");
+            if cc_build.is_flag_supported(&asm_flag).unwrap_or(false) {
+                cmake_cfg.asmflag(asm_flag);
+            }
+        }
+
         cmake_cfg
     }
 
+    const GOCACHE_DIR_NAME: &'static str = "go-cache";
+
     #[allow(clippy::too_many_lines)]
     fn prepare_cmake_build(&self) -> cmake::Config {
+        if is_fips_build() {
+            unsafe {
+                env::set_var("GOFLAGS", "-buildvcs=false");
+            }
+            if env::var("GOCACHE").is_err() {
+                unsafe {
+                    env::set_var(
+                        "GOCACHE",
+                        self.out_dir.join(Self::GOCACHE_DIR_NAME).as_os_str(),
+                    );
+                }
+            }
+        }
+
         let mut cmake_cfg = self.get_cmake_config();
         if let Some(generator) = optional_env_optional_crate_target("CMAKE_GENERATOR") {
             set_env("CMAKE_GENERATOR", generator);
@@ -96,6 +149,11 @@ impl CmakeBuilder {
 
         if OutputLibType::default() == OutputLibType::Dynamic {
             cmake_cfg.define("BUILD_SHARED_LIBS", "1");
+            if is_fips_build() {
+                // The default flags include `-ffunction-sections` that can result in
+                // dead code elimination dropping functions.
+                cmake_cfg.no_default_flags(true);
+            }
         } else {
             cmake_cfg.define("BUILD_SHARED_LIBS", "0");
         }
@@ -118,17 +176,25 @@ impl CmakeBuilder {
         } else {
             cmake_cfg.define("BUILD_LIBSSL", "OFF");
         }
-        if is_no_pregenerated_src() {
-            // Go and Perl will be required.
-            cmake_cfg.define("DISABLE_PERL", "OFF");
-            cmake_cfg.define("DISABLE_GO", "OFF");
+        if is_fips_build() {
+            cmake_cfg.define("FIPS", "1");
         } else {
-            // Build flags that minimize our dependencies.
-            cmake_cfg.define("DISABLE_PERL", "ON");
-            cmake_cfg.define("DISABLE_GO", "ON");
-        }
-        if Some(true) == disable_jitter_entropy() {
-            cmake_cfg.define("DISABLE_CPU_JITTER_ENTROPY", "ON");
+            if is_no_pregenerated_src() {
+                // Go and Perl will be required.
+                cmake_cfg.define("DISABLE_PERL", "OFF");
+                cmake_cfg.define("DISABLE_GO", "OFF");
+            } else {
+                // Build flags that minimize our dependencies.
+                cmake_cfg.define("DISABLE_PERL", "ON");
+                cmake_cfg.define("DISABLE_GO", "ON");
+            }
+            if !should_build_jitter_entropy() {
+                cmake_cfg.define("DISABLE_CPU_JITTER_ENTROPY", "ON");
+            }
+
+            if target_env() == "ohos" {
+                Self::configure_open_harmony(&mut cmake_cfg);
+            }
         }
 
         if is_no_asm() {
@@ -140,20 +206,18 @@ impl CmakeBuilder {
             }
         }
 
-        if cfg!(feature = "asan") {
-            set_env_for_target("CC", "clang");
-            set_env_for_target("CXX", "clang++");
-
-            cmake_cfg.define("ASAN", "1");
-        }
+        Self::configure_sanitizer(&mut cmake_cfg);
 
         if let Some(cflags) = get_crate_cflags() {
-            set_env_for_target("CFLAGS", cflags);
-        }
-
-        if target_env() == "ohos" {
-            Self::configure_open_harmony(&mut cmake_cfg);
-            return cmake_cfg;
+            let cflags = if is_fips_build() {
+                strip_lto_flags(&cflags)
+            } else {
+                cflags
+            };
+            // Set both the target-specific and base CFLAGS. cmake-rs reads
+            // the base CFLAGS env var directly, so we must override it too.
+            set_env_for_target("CFLAGS", &cflags);
+            set_env("CFLAGS", &cflags);
         }
 
         // cmake-rs has logic that strips Optimization/Debug options that are passed via CFLAGS:
@@ -163,10 +227,18 @@ impl CmakeBuilder {
         Self::preserve_cflag_optimization_flags(&mut cmake_cfg);
 
         if target_os() == "windows" {
-            if use_prebuilt_nasm() {
+            if is_fips_build() {
+                let opt_level = cargo_env("OPT_LEVEL");
+                let build_type = if opt_level.eq("0") || opt_level.eq("1") || opt_level.eq("2") {
+                    "RELWITHDEBINFO"
+                } else {
+                    "RELEASE"
+                };
+                cmake_cfg.define("CMAKE_BUILD_TYPE", build_type);
+            } else if use_prebuilt_nasm() {
                 self.configure_prebuilt_nasm(&mut cmake_cfg);
             }
-            if target_env().as_str() == "msvc" {
+            if target_is_msvc() {
                 let mut msvcrt = String::from_str("MultiThreaded").unwrap();
                 if is_crt_static() {
                     cmake_cfg.static_crt(true);
@@ -263,16 +335,23 @@ impl CmakeBuilder {
             );
             bat_script
         } else {
-            // Fallback to current logic if neither can execute
+            // Neither script could be verified as executable. This can happen in sandboxed or
+            // restricted build environments where trial execution is blocked. We fall back to
+            // selecting a script based on the host OS, which matches the behavior prior to
+            // execution-based detection. If this fallback is incorrect, the build will fail
+            // when CMake attempts to invoke the selected script.
             let fallback_script = if cfg!(target_os = "windows") {
                 bat_script
             } else {
                 sh_script
             };
-            emit_warning(
-                format!(
-                    "Neither script could be tested for execution, falling back to target-based selection: {}",
-                    fallback_script.file_name().unwrap().to_str().unwrap()));
+            emit_warning(format!(
+                "WARNING: Neither prebuilt-nasm.sh nor prebuilt-nasm.bat could be verified as \
+                     executable. Falling back to target-based selection: {}. If the build fails \
+                     during assembly, verify that the selected script is appropriate for your \
+                     build environment.",
+                fallback_script.file_name().unwrap().to_str().unwrap()
+            ));
             fallback_script
         }
     }
@@ -303,6 +382,17 @@ impl CmakeBuilder {
 
     #[allow(clippy::unused_self)]
     fn configure_windows(&self, cmake_cfg: &mut cmake::Config) {
+        if is_fips_build() {
+            cmake_cfg.generator("Ninja");
+            let env_map = self
+                .collect_vcvarsall_bat()
+                .map_err(|x| panic!("{}", x))
+                .unwrap();
+            for (key, value) in env_map {
+                cmake_cfg.env(key, value);
+            }
+        }
+
         match (target_env().as_str(), target_arch().as_str()) {
             ("msvc", "aarch64") => {
                 // If CMAKE_GENERATOR is either not set or not set to "Ninja"
@@ -330,6 +420,62 @@ impl CmakeBuilder {
                 cmake_cfg.define("CMAKE_SYSTEM_PROCESSOR", arch);
             }
         }
+
+        // Workaround for win7-windows-gnu targets: the upstream C source gates the
+        // Win7 compat path with `!defined(__MINGW32__)`. CMakeLists.txt already sets
+        // _WIN32_WINNT for MinGW, but we must force AWSLC_WINDOWS_7_COMPAT until the
+        // upstream fix lands: https://github.com/aws/aws-lc/pull/3239
+        if target().contains("-win7-windows-gnu") {
+            cmake_cfg.cflag("-DAWSLC_WINDOWS_7_COMPAT");
+        }
+    }
+
+    /// Returns the architecture argument for `vcvarsall.bat`.
+    ///
+    /// In a Cargo build-script, `cfg!(target_arch)` is the **host** architecture
+    /// (the machine running the build), while `target_arch()` (backed by
+    /// `CARGO_CFG_TARGET_ARCH`) is the **target** architecture we are compiling for.
+    ///
+    /// `vcvarsall.bat` accepts a single token that encodes both:
+    ///   - native   : `x64`, `arm64`, `x86`
+    ///   - cross    : `<host>_<target>`, e.g. `x64_arm64`
+    fn vcvarsall_arch() -> &'static str {
+        let target = target_arch();
+        match (
+            cfg!(target_arch = "x86_64"),
+            cfg!(target_arch = "aarch64"),
+            target.as_str(),
+        ) {
+            // Host x64
+            (true, _, "x86_64") => "x64",
+            (true, _, "aarch64") => "x64_arm64",
+            (true, _, "x86") => "x64_x86",
+            // Host arm64
+            (_, true, "aarch64") => "arm64",
+            (_, true, "x86_64") => "arm64_x64",
+            (_, true, "x86") => "arm64_x86",
+            // Fallback
+            _ => "x64",
+        }
+    }
+
+    fn collect_vcvarsall_bat(&self) -> Result<HashMap<String, String>, String> {
+        let mut map: HashMap<String, String> = HashMap::new();
+        let script_path = self.manifest_dir.join("builder").join("printenv.bat");
+        let arch = OsString::from(Self::vcvarsall_arch());
+        let result = execute_command(script_path.as_os_str(), &[arch.as_os_str()]);
+        if !result.status {
+            eprintln!("{}", result.stdout);
+            return Err("Failed to run vcvarsall.bat.".to_owned());
+        }
+        eprintln!("{}", result.stdout);
+        let lines = result.stdout.lines();
+        for line in lines {
+            if let Some((var, val)) = line.split_once('=') {
+                map.insert(var.to_string(), val.to_string());
+            }
+        }
+        Ok(map)
     }
 
     fn configure_prebuilt_nasm(&self, cmake_cfg: &mut cmake::Config) {
@@ -366,6 +512,77 @@ impl CmakeBuilder {
             "CMAKE_ASM_NASM_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_ProgramDatabase",
             "",
         );
+    }
+
+    /// Configure the `CMake` build for sanitizer instrumentation.
+    ///
+    /// Resolves the active sanitizer from either the `asan` Cargo feature flag
+    /// (kept for backward compatibility) or the `AWS_LC_SYS_SANITIZER` /
+    /// `AWS_LC_FIPS_SYS_SANITIZER` environment variable (preferred). Supported
+    /// values: `asan`, `msan`, `tsan`.
+    fn configure_sanitizer(cmake_cfg: &mut cmake::Config) {
+        let feature_sanitizer = if cfg!(feature = "asan") {
+            Some("asan")
+        } else {
+            None
+        };
+        let env_sanitizer = sanitizer();
+        let env_sanitizer = env_sanitizer.as_deref();
+
+        let active_sanitizer = match (feature_sanitizer, env_sanitizer) {
+            (Some(f), Some(e)) if f != e => {
+                panic!(
+                    "Conflicting sanitizer configuration: feature flag '{f}' and \
+                     AWS_LC_SYS_SANITIZER='{e}'. Remove one to resolve the conflict."
+                );
+            }
+            (Some(f), _) => Some(f),
+            (_, Some(e)) => Some(e),
+            _ => None,
+        };
+
+        if let Some(san) = active_sanitizer {
+            set_env_for_target("CC", "clang");
+            set_env_for_target("CXX", "clang++");
+
+            match san {
+                "asan" => {
+                    cmake_cfg.define("ASAN", "1");
+                }
+                "msan" => {
+                    // AWS-LC's CMakeLists.txt correctly skips the FIPS
+                    // delocator when MSAN is set, but bcm.c guards the
+                    // integrity-test symbols with `#if !defined(OPENSSL_ASAN)`
+                    // only — it does not check OPENSSL_MSAN. Until the
+                    // upstream C guard is broadened, MSAN + FIPS will produce
+                    // undefined-symbol link errors for BORINGSSL_bcm_text_*.
+                    assert!(
+                        !is_fips_build(),
+                        "MemorySanitizer is not supported for FIPS builds. \
+                         The FIPS integrity check in bcm.c lacks an \
+                         OPENSSL_MSAN guard, causing undefined-symbol link \
+                         errors (BORINGSSL_bcm_text_start/end/hash)."
+                    );
+                    cmake_cfg.define("MSAN", "1");
+                }
+                "tsan" => {
+                    cmake_cfg.define("TSAN", "1");
+                    // AWS-LC's CMakeLists.txt defines BORINGSSL_DISPATCH_TEST for
+                    // non-FIPS, non-release builds. That macro enables non-atomic
+                    // writes to a global BORINGSSL_function_hit[] array from ~15
+                    // dispatch points (C and assembly), which TSAN flags as data
+                    // races. The writes are benign (idempotent store of 1), but
+                    // suppressing every function name is impractical. Force the C
+                    // library to build in Release mode so the macro is never
+                    // defined. This matches AWS-LC's own sanitizer CI, which
+                    // always uses -DCMAKE_BUILD_TYPE=Release.
+                    cmake_cfg.profile("Release");
+                }
+                other => {
+                    panic!("Unsupported sanitizer: '{other}'. Supported values: asan, msan, tsan")
+                }
+            }
+        }
     }
 
     fn configure_open_harmony(cmake_cfg: &mut cmake::Config) {
@@ -450,10 +667,14 @@ impl crate::Builder for CmakeBuilder {
                 eprintln!("Missing dependency: nasm");
                 missing_dependency = true;
             }
-            if target_arch() == "aarch64" && target_env() == "msvc" && !test_clang_cl_command() {
-                eprintln!("Missing dependency: clang-cl");
-                missing_dependency = true;
-            }
+        }
+        if target_os() == "windows"
+            && target_arch() == "aarch64"
+            && target_is_msvc()
+            && !test_clang_cl_command()
+        {
+            eprintln!("Missing dependency: clang-cl");
+            missing_dependency = true;
         }
         if let Some(cmake_cmd) = find_cmake_command() {
             unsafe {
@@ -480,22 +701,53 @@ impl crate::Builder for CmakeBuilder {
 
         println!(
             "cargo:rustc-link-lib={}={}",
-            self.output_lib_type.rust_lib_type(),
+            self.output_lib_type.rust_link_lib_kind(),
             Crypto.libname(&self.build_prefix)
         );
 
         if cfg!(feature = "ssl") {
             println!(
                 "cargo:rustc-link-lib={}={}",
-                self.output_lib_type.rust_lib_type(),
+                self.output_lib_type.rust_link_lib_kind(),
                 Ssl.libname(&self.build_prefix)
             );
         }
+
+        crate::emit_source_build_metadata(&self.manifest_dir);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
         "CMake"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_lto_flags;
+
+    #[test]
+    fn test_strip_lto_flags() {
+        // RPM-style CFLAGS with -flto=auto and -ffat-lto-objects
+        let input = "-O2 -ftree-vectorize -flto=auto -ffat-lto-objects -fexceptions -g -fPIC";
+        assert_eq!(
+            strip_lto_flags(input),
+            "-O2 -ftree-vectorize -fexceptions -g -fPIC"
+        );
+
+        // Various LTO flag forms
+        assert_eq!(strip_lto_flags("-flto -O2"), "-O2");
+        assert_eq!(strip_lto_flags("-flto=thin -O2"), "-O2");
+        assert_eq!(strip_lto_flags("-flto=full -O2"), "-O2");
+        assert_eq!(strip_lto_flags("-flto=4 -O2"), "-O2");
+        assert_eq!(strip_lto_flags("-fno-fat-lto-objects -O2"), "-O2");
+
+        // No LTO flags - passthrough
+        let no_lto = "-O2 -fPIC -g";
+        assert_eq!(strip_lto_flags(no_lto), no_lto);
+
+        // Empty input
+        assert_eq!(strip_lto_flags(""), "");
     }
 }

@@ -4,7 +4,10 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = DisplayMediaStreamConstraints)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "DisplayMediaStreamConstraints"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `DisplayMediaStreamConstraints` dictionary."]
     #[doc = ""]
@@ -28,7 +31,7 @@ extern "C" {
     #[cfg(feature = "MediaTrackConstraints")]
     #[doc = "Change the `audio` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `DisplayMediaStreamConstraints`*"]
+    #[doc = "*This API requires the following crate features to be activated: `DisplayMediaStreamConstraints`, `MediaTrackConstraints`*"]
     #[wasm_bindgen(method, setter = "audio")]
     pub fn set_audio_media_track_constraints(
         this: &DisplayMediaStreamConstraints,
@@ -52,7 +55,7 @@ extern "C" {
     #[cfg(feature = "MediaTrackConstraints")]
     #[doc = "Change the `video` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `DisplayMediaStreamConstraints`*"]
+    #[doc = "*This API requires the following crate features to be activated: `DisplayMediaStreamConstraints`, `MediaTrackConstraints`*"]
     #[wasm_bindgen(method, setter = "video")]
     pub fn set_video_media_track_constraints(
         this: &DisplayMediaStreamConstraints,

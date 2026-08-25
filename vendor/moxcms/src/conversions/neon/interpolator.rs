@@ -27,8 +27,9 @@
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #![allow(dead_code)]
+#![cfg(feature = "neon_luts")]
 use crate::conversions::interpolator::BarycentricWeight;
-use crate::conversions::neon::rgb_xyz::NeonAlignedF32;
+use crate::conversions::neon::NeonAlignedF32;
 use crate::math::{FusedMultiplyAdd, FusedMultiplyNegAdd};
 use std::arch::aarch64::*;
 use std::ops::{Add, Mul, Sub};
@@ -198,6 +199,8 @@ impl NeonVectorDouble {
     }
 }
 
+/// LUT size here is always fixed size (GRID_SIZE^3) and its use
+/// is hardened at [crate::conversions::neon::assert_barycentric_lut_size_precondition].
 impl<const GRID_SIZE: usize> Fetcher<NeonVector> for TetrahedralNeonFetchVector<'_, GRID_SIZE> {
     fn fetch(&self, x: i32, y: i32, z: i32) -> NeonVector {
         let offset = (x as u32 * (GRID_SIZE as u32 * GRID_SIZE as u32)
@@ -210,6 +213,8 @@ impl<const GRID_SIZE: usize> Fetcher<NeonVector> for TetrahedralNeonFetchVector<
     }
 }
 
+/// LUT size here is always fixed size (GRID_SIZE^3) and its use
+/// is hardened at [crate::conversions::neon::assert_barycentric_lut_size_precondition].
 impl<const GRID_SIZE: usize> Fetcher<NeonVectorDouble>
     for TetrahedralNeonFetchVectorDouble<'_, GRID_SIZE>
 {

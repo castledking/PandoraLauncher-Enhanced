@@ -15,11 +15,11 @@ if(ANDROID)
   # Clang reports that argument as unused. We remove the flag only for the FIPS build of Android.
   string(FIND ${CMAKE_CXX_FLAGS} "noexecstack" CXX_EXTRA_WA)
   string(FIND ${CMAKE_C_FLAGS} "noexecstack" C_EXTRA_WA)
-  if(NOT ${CXX_EXTRA_WA} EQUAL '-1')
-    string( REPLACE "-Wa,--noexecstack" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" )
+  if(NOT CXX_EXTRA_WA EQUAL -1)
+    string(REPLACE "-Wa,--noexecstack" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   endif()
-  if(NOT ${C_EXTRA_WA} EQUAL '-1')
-    string( REPLACE "-Wa,--noexecstack" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}" )
+  if(NOT C_EXTRA_WA EQUAL -1)
+    string(REPLACE "-Wa,--noexecstack" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
   endif()
 endif()
 
@@ -250,6 +250,9 @@ if((((ARCH STREQUAL "x86_64") AND NOT MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX) OR
     ${S2N_BIGNUM_DIR}/curve25519/edwards25519_scalarmulbase_alt.S
     ${S2N_BIGNUM_DIR}/curve25519/edwards25519_scalarmuldouble.S
     ${S2N_BIGNUM_DIR}/curve25519/edwards25519_scalarmuldouble_alt.S
+
+    ${S2N_BIGNUM_DIR}/sha3/sha3_keccak_f1600.S
+    ${S2N_BIGNUM_DIR}/sha3/sha3_keccak4_f1600_alt.S
   )
 
   if(ARCH STREQUAL "x86_64")
@@ -264,7 +267,6 @@ if((((ARCH STREQUAL "x86_64") AND NOT MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX) OR
                 ${S2N_BIGNUM_DIR}/curve25519/curve25519_x25519_alt.S
                 ${S2N_BIGNUM_DIR}/curve25519/curve25519_x25519base.S
                 ${S2N_BIGNUM_DIR}/curve25519/curve25519_x25519base_alt.S
-                ${S2N_BIGNUM_DIR}/sha3/sha3_keccak_f1600.S
     )
   elseif(ARCH STREQUAL "aarch64")
     # byte-level interface for aarch64 s2n-bignum x25519 are in
@@ -303,14 +305,8 @@ if((((ARCH STREQUAL "x86_64") AND NOT MY_ASSEMBLER_IS_TOO_OLD_FOR_512AVX) OR
     # (gcc supports it since gcc8, clang supports it since clang7)
     check_compiler("neon_sha3_check.c" MY_ASSEMBLER_SUPPORTS_NEON_SHA3_EXTENSION "-march=armv8.4-a+sha3")
 
-    list(APPEND BCM_ASM_SOURCES
-                # Scalar Keccak-x1 assembly from s2n-bignum/mlkem-native
-                ${S2N_BIGNUM_DIR}/sha3/sha3_keccak_f1600.S
-
-                # Batched Keccak-x4 assembly from s2n-bignum
-                # Scalar version for Neoverse N1
-                ${S2N_BIGNUM_DIR}/sha3/sha3_keccak4_f1600_alt.S
-    )
+    # Note: Scalar Keccak-x1 and Batched Neoverse N1 Keccak-x4 assembly from s2n-bignum
+    # are included in the common s2n-bignum block above
 
     if(MY_ASSEMBLER_SUPPORTS_NEON_SHA3_EXTENSION)
         list(APPEND BCM_ASM_SOURCES
@@ -385,9 +381,41 @@ if((ARCH STREQUAL "x86_64") AND UNIX AND NOT MY_ASSEMBLER_IS_TOO_OLD_FOR_AVX)
     ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/polyvec_basemul_acc_montgomery_cached_asm_k3.S
     ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/polyvec_basemul_acc_montgomery_cached_asm_k4.S
     ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/rej_uniform_asm.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_compress_d10.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_compress_d11.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_compress_d4.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_compress_d5.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_decompress_d10.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_decompress_d11.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_decompress_d4.S
+    ${MLKEM_NATIVE_DIR}/mlkem/native/x86_64/src/poly_decompress_d5.S
   )
 
   list(APPEND BCM_ASM_SOURCES ${MLKEM_NATIVE_X86_64_ASM_SOURCES})
+
+  set(S2N_BIGNUM_INCLUDE_DIR "${AWSLC_SOURCE_DIR}/third_party/s2n-bignum/s2n-bignum-imported/include")
+
+endif()
+
+# mldsa-native assembly files can be compiled on Unix platforms for x86_64
+# and aarch64.
+if(UNIX AND ((ARCH STREQUAL "x86_64" AND NOT MY_ASSEMBLER_IS_TOO_OLD_FOR_AVX) OR (ARCH STREQUAL "aarch64")))
+
+  set(MLDSA_NATIVE_DIR "${AWSLC_SOURCE_DIR}/crypto/fipsmodule/ml_dsa")
+
+  # Every .S file in this directory is imported by importer.sh and must be
+  # compiled; glob so that refreshes which add/remove files don't need a
+  # matching edit here. CONFIGURE_DEPENDS makes CMake re-run when the set of
+  # matching files changes.
+  if(ARCH STREQUAL "x86_64")
+    file(GLOB MLDSA_NATIVE_ASM_SOURCES CONFIGURE_DEPENDS
+      "${MLDSA_NATIVE_DIR}/mldsa/native/x86_64/src/*.S")
+  else()
+    file(GLOB MLDSA_NATIVE_ASM_SOURCES CONFIGURE_DEPENDS
+      "${MLDSA_NATIVE_DIR}/mldsa/native/aarch64/src/*.S")
+  endif()
+
+  list(APPEND BCM_ASM_SOURCES ${MLDSA_NATIVE_ASM_SOURCES})
 
   set(S2N_BIGNUM_INCLUDE_DIR "${AWSLC_SOURCE_DIR}/third_party/s2n-bignum/s2n-bignum-imported/include")
 
@@ -551,6 +579,18 @@ elseif(FIPS_SHARED)
   target_compile_definitions(bcm_library PRIVATE BORINGSSL_IMPLEMENTATION S2N_BN_HIDE_SYMBOLS )
   target_add_awslc_include_paths(TARGET bcm_library SCOPE PRIVATE)
   target_include_directories(bcm_library PRIVATE "${S2N_BIGNUM_INCLUDE_DIR}")
+
+  # On GCC 14+ the Superword Level Parallelism (SLP) vectorizer causes the
+  # compiler to aggressively store static function pointer addresses in the
+  # .data.rel.ro.local section which is discarded by our linker script and
+  # results in undefined references when linking libcrypto.
+  if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND
+     CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "14" AND
+     CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     ARCH STREQUAL "x86_64")
+    target_compile_options(bcm_library PRIVATE -fno-tree-slp-vectorize)
+  endif()
+
   if (APPLE)
     set(BCM_NAME bcm.o)
     # The linker on macOS doesn't have the ability to process linker scripts,
@@ -595,31 +635,39 @@ elseif(FIPS_SHARED)
     # contain pragmas that instruct the compiler to put the code in specific FIPS sections. These sections have a
     # specific suffix $a through $c that controls the order of the FIPS sections when it is linked together into a
     # Grouped Section.
+    #
+    # These custom commands invoke the compiler directly (outside CMake's normal
+    # target compilation), so we must forward CMAKE_C_FLAGS manually. This is
+    # necessary for cross-compilation where the flags contain --target and
+    # system include paths (e.g. clang-cl + xwin on Linux).
+    separate_arguments(FIPS_MARKER_C_FLAGS NATIVE_COMMAND "${CMAKE_C_FLAGS}")
     add_custom_command(
       OUTPUT fips_msvc_start.obj
-      COMMAND ${CMAKE_C_COMPILER} /nologo /c /DAWSLC_FIPS_SHARED_START /Fo:fips_msvc_start.obj ${CMAKE_CURRENT_SOURCE_DIR}/fips_shared_library_marker.c
+      COMMAND ${CMAKE_C_COMPILER} ${FIPS_MARKER_C_FLAGS} -w /nologo /c /DAWSLC_FIPS_SHARED_START /Fofips_msvc_start.obj ${CMAKE_CURRENT_SOURCE_DIR}/fips_shared_library_marker.c
       DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fips_shared_library_marker.c
     )
     add_custom_command(
       OUTPUT fips_msvc_end.obj
-      COMMAND ${CMAKE_C_COMPILER} /nologo /c /DAWSLC_FIPS_SHARED_END /Fo:fips_msvc_end.obj ${CMAKE_CURRENT_SOURCE_DIR}/fips_shared_library_marker.c
+      COMMAND ${CMAKE_C_COMPILER} ${FIPS_MARKER_C_FLAGS} -w /nologo /c /DAWSLC_FIPS_SHARED_END /Fofips_msvc_end.obj ${CMAKE_CURRENT_SOURCE_DIR}/fips_shared_library_marker.c
       DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fips_shared_library_marker.c
     )
 
-    if(CMAKE_AR)
-      set(MSVC_LIB "${CMAKE_AR}")
-    else()
-      get_filename_component(MSVC_BIN ${CMAKE_LINKER} DIRECTORY)
-      set(MSVC_LIB "${MSVC_BIN}/lib.exe")
+    get_filename_component(MSVC_BIN ${CMAKE_LINKER} DIRECTORY)
+    find_program(MSVC_LIB NAMES lib lib.exe llvm-lib llvm-lib.exe
+                 HINTS ${MSVC_BIN} NO_DEFAULT_PATH)
+    if(NOT MSVC_LIB)
+      find_program(MSVC_LIB NAMES lib lib.exe llvm-lib llvm-lib.exe)
+    endif()
+    if(NOT MSVC_LIB)
+      message(FATAL_ERROR "Could not find lib.exe or llvm-lib for creating bcm.lib")
     endif()
 
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/bcm_objects.rsp"
+         CONTENT "\"$<JOIN:$<TARGET_OBJECTS:bcm_library>,\"\n\">\"")
     add_custom_command(
       OUTPUT ${BCM_NAME}
-      # This takes bcm_library which is static library and possibly a collection of assembly files in a CMake list.
-      # The archiver does not handle the CMake list which uses semicolons between items, this generator expression
-      # converts it to a list of quoted strings, it also needs to be itself string escaped
-      COMMAND ${MSVC_LIB} /nologo fips_msvc_start.obj "\"$<JOIN:$<TARGET_OBJECTS:bcm_library>,\" \">\"" fips_msvc_end.obj /OUT:${BCM_NAME}
-      DEPENDS  fips_msvc_start.obj fips_msvc_end.obj bcm_library
+      COMMAND ${MSVC_LIB} /nologo fips_msvc_start.obj @bcm_objects.rsp fips_msvc_end.obj /OUT:${BCM_NAME}
+      DEPENDS fips_msvc_start.obj fips_msvc_end.obj bcm_library
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
   else()

@@ -4,9 +4,12 @@
 
 use super::{ZeroSlice, ZeroVec};
 use crate::ule::*;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
-use serde::de::{self, Deserialize, Deserializer, Visitor};
+use core::mem;
+use serde::de::{self, Deserialize, Deserializer, SeqAccess, Visitor};
 #[cfg(feature = "serde")]
 use serde::ser::{Serialize, SerializeSeq, Serializer};
 
@@ -39,15 +42,14 @@ where
         ZeroVec::parse_bytes(bytes).map_err(de::Error::custom)
     }
 
-    #[cfg(feature = "alloc")]
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
     where
-        A: serde::de::SeqAccess<'de>,
+        A: SeqAccess<'de>,
     {
-        let mut vec: alloc::vec::Vec<T::ULE> = if let Some(capacity) = seq.size_hint() {
-            alloc::vec::Vec::with_capacity(capacity)
+        let mut vec: Vec<T::ULE> = if let Some(capacity) = seq.size_hint() {
+            Vec::with_capacity(capacity)
         } else {
-            alloc::vec::Vec::new()
+            Vec::new()
         };
         while let Some(value) = seq.next_element::<T>()? {
             vec.push(T::to_unaligned(value));
@@ -97,8 +99,7 @@ where
 }
 
 /// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
-#[cfg(feature = "alloc")]
-impl<'de, T> Deserialize<'de> for alloc::boxed::Box<ZeroSlice<T>>
+impl<'de, T> Deserialize<'de> for Box<ZeroSlice<T>>
 where
     T: Deserialize<'de> + AsULE + 'static,
 {
@@ -107,7 +108,7 @@ where
         D: Deserializer<'de>,
     {
         let mut zv = ZeroVec::<T>::deserialize(deserializer)?;
-        let vec = zv.with_mut(core::mem::take);
+        let vec = zv.with_mut(mem::take);
         Ok(ZeroSlice::from_boxed_slice(vec.into_boxed_slice()))
     }
 }
@@ -160,10 +161,6 @@ mod test {
     use crate::ZeroVec;
 
     #[derive(serde::Serialize, serde::Deserialize)]
-    #[allow(
-        dead_code,
-        reason = "Tests compatibility of custom impl with Serde derive."
-    )]
     struct DeriveTest_ZeroVec<'data> {
         #[serde(borrow)]
         _data: ZeroVec<'data, u16>,

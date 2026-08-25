@@ -1,19 +1,20 @@
 //! Contains an implementation of pull-based XML parser.
 
-use crate::reader::DoctypeRef;
 use crate::common::{is_xml10_char, is_xml11_char, is_xml11_char_not_restricted, is_name_char, is_name_start_char, is_whitespace_char};
 use crate::common::{Position, TextPosition, XmlVersion};
+use crate::attribute::OwnedAttribute;
 use crate::name::OwnedName;
 use crate::namespace::NamespaceStack;
 use crate::reader::config::ParserConfig;
-use crate::reader::error::{ImmutableEntitiesError, SyntaxError};
-use crate::reader::error::Error;
+use crate::reader::error::{Error, ImmutableEntitiesError, SyntaxError};
 use crate::reader::events::XmlEvent;
-use crate::reader::indexset::AttributesSet;
 use crate::reader::lexer::{Lexer, Token};
+use crate::reader::DoctypeRef;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
+
+static STRING_RESERVE_CAPACITY: usize = 20;
 
 macro_rules! gen_takes(
     ($($field:ident -> $method:ident, $t:ty, $def:expr);+) => (
@@ -31,15 +32,17 @@ macro_rules! gen_takes(
 );
 
 gen_takes!(
-    name         -> take_name, String, String::new();
-    ref_data     -> take_ref_data, String, String::new();
+    name         -> take_name, String, String::with_capacity(STRING_RESERVE_CAPACITY);
+    ref_data     -> take_ref_data, String, String::with_capacity(STRING_RESERVE_CAPACITY);
 
     encoding     -> take_encoding, Option<String>, None;
 
     element_name -> take_element_name, Option<OwnedName>, None;
 
     attr_name    -> take_attr_name, Option<OwnedName>, None;
-    attributes   -> take_attributes, AttributesSet, AttributesSet::new()
+    attr_pos     -> take_attr_pos, Option<TextPosition>, None;
+    attributes   -> take_attributes, Vec<OwnedAttribute>, Vec::with_capacity(8);
+    attribute_positions -> take_attribute_positions, Vec<TextPosition>, Vec::with_capacity(8)
 );
 
 mod inside_cdata;
@@ -68,6 +71,9 @@ pub(crate) struct PullParser {
     st: State,
     state_after_reference: State,
     buf: String,
+    // Separate scratch space as an optimization avoiding reallocations
+    // for parsing qualified names.
+    qualified_name_buf: String,
 
     /// From DTD internal subset
     entities: HashMap<String, String>,
@@ -119,7 +125,8 @@ impl PullParser {
             lexer,
             st: State::DocumentStart,
             state_after_reference: State::OutsideTag,
-            buf: String::new(),
+            buf: String::with_capacity(STRING_RESERVE_CAPACITY),
+            qualified_name_buf: String::with_capacity(STRING_RESERVE_CAPACITY),
             entities: HashMap::new(),
             nst: NamespaceStack::default(),
 
@@ -136,7 +143,9 @@ impl PullParser {
                 element_name: None,
                 quote: None,
                 attr_name: None,
-                attributes: AttributesSet::new(),
+                attr_pos: None,
+                attributes: Vec::with_capacity(8),
+                attribute_positions: Vec::with_capacity(8),
             },
             final_result: None,
             next_event: None,
@@ -358,7 +367,9 @@ struct MarkupData {
 
     quote: Option<QuoteToken>,  // used to hold opening quote for attribute value
     attr_name: Option<OwnedName>,  // used to hold attribute name
-    attributes: AttributesSet,   // used to hold all accumulated attributes
+    attr_pos: Option<TextPosition>, // used to hold attribute name start position
+    attributes: Vec<OwnedAttribute>,   // used to hold all accumulated attributes
+    attribute_positions: Vec<TextPosition>, // used to hold all accumulated attributes start positions
 }
 
 impl PullParser {
@@ -405,6 +416,10 @@ impl PullParser {
                 },
                 Err(lexer_error) => {
                     self.next_pos();
+                    if self.config.ignore_end_of_stream {
+                        self.lexer.reset_eof_handled();
+                        return Err(lexer_error);
+                    }
                     return self.set_final_result(Err(lexer_error));
                 },
             }
@@ -413,10 +428,18 @@ impl PullParser {
 
     /// Handle end of stream
     #[cold]
-    fn handle_eof(&mut self) -> std::result::Result<XmlEvent, super::Error> {
+    fn handle_eof(&mut self) -> std::result::Result<XmlEvent, Error> {
         let ev = if self.depth() == 0 {
             if self.encountered == Encountered::Element && self.st == State::OutsideTag {  // all is ok
                 Ok(XmlEvent::EndDocument)
+            } else if self.config.ignore_end_of_stream {
+                self.final_result = None;
+                self.lexer.reset_eof_handled();
+                return if self.encountered < Encountered::Element {
+                    self.error(SyntaxError::NoRootElement)
+                } else {
+                    self.error(SyntaxError::UnexpectedEof)
+                };
             } else if self.encountered < Encountered::Element {
                 self.error(SyntaxError::NoRootElement)
             } else {  // self.st != State::OutsideTag
@@ -444,6 +467,12 @@ impl PullParser {
     #[allow(clippy::needless_pass_by_value)]
     fn error(&self, e: SyntaxError) -> Result {
         Err(Error::syntax(e.to_cow(), self.lexer.position()))
+    }
+
+    #[cold]
+    #[allow(clippy::needless_pass_by_value)]
+    fn error_at(e: SyntaxError, pos: TextPosition) -> Result {
+        Err(Error::syntax(e.to_cow(), pos))
     }
 
     #[inline]
@@ -502,7 +531,7 @@ impl PullParser {
 
     #[inline]
     fn take_buf(&mut self) -> String {
-        std::mem::take(&mut self.buf)
+        std::mem::replace(&mut self.buf, String::with_capacity(STRING_RESERVE_CAPACITY))
     }
 
     #[inline]
@@ -541,28 +570,30 @@ impl PullParser {
       where F: Fn(&mut Self, Token, OwnedName) -> Option<Result> {
 
         let try_consume_name = move |this: &mut Self, t| {
-            let name = this.take_buf();
+
             this.seen_prefix_separator = false;
-            match name.parse() {
+            let result = match this.qualified_name_buf.parse() {
                 Ok(name) => on_name(this, t, name),
-                Err(()) => Some(this.error(SyntaxError::InvalidQualifiedName(name.into()))),
-            }
+                Err(()) => Some(this.error(SyntaxError::InvalidQualifiedName(this.qualified_name_buf.clone().into()))),
+            };
+            this.qualified_name_buf.clear();
+            result
         };
 
         match t {
             // There can be only one colon, and not as the first character
-            Token::Character(':') if self.buf_has_data() && !self.seen_prefix_separator => {
-                self.buf.push(':');
+            Token::Character(':') if !self.qualified_name_buf.is_empty() && !self.seen_prefix_separator => {
+                self.qualified_name_buf.push(':');
                 self.seen_prefix_separator = true;
                 None
             },
 
-            Token::Character(c) if c != ':' && (self.buf.is_empty() && is_name_start_char(c) ||
-                                          self.buf_has_data() && is_name_char(c)) => {
-                if self.buf.len() > self.config.max_name_length {
+            Token::Character(c) if c != ':' && (self.qualified_name_buf.is_empty() && is_name_start_char(c) ||
+                                          !self.qualified_name_buf.is_empty() && is_name_char(c)) => {
+                if self.qualified_name_buf.len() > self.config.max_name_length {
                     return Some(self.error(SyntaxError::ExceededConfiguredLimit));
                 }
-                self.buf.push(c);
+                self.qualified_name_buf.push(c);
                 None
             },
 
@@ -641,7 +672,8 @@ impl PullParser {
 
     fn emit_start_element(&mut self, emit_end_element: bool) -> Option<Result> {
         let mut name = self.data.take_element_name()?;
-        let mut attributes = self.data.take_attributes().into_vec();
+        let mut attributes = self.data.take_attributes();
+        let attribute_positions = self.data.take_attribute_positions();
 
         // check whether the name prefix is bound and fix its namespace
         match self.nst.get(name.borrow().prefix_repr()) {
@@ -650,16 +682,22 @@ impl PullParser {
             None => return Some(self.error(SyntaxError::UnboundElementPrefix(name.to_string().into()))),
         }
 
-        // check and fix accumulated attributes prefixes
-        for attr in &mut attributes {
-            if let Some(ref pfx) = attr.name.prefix {
-                let new_ns = match self.nst.get(pfx) {
+        // Fix attribute namespaces
+        for i in 0..attributes.len() {
+            if let Some(ref pfx) = attributes[i].name.prefix {
+                attributes[i].name.namespace = match self.nst.get(pfx) {
                     Some("") => None, // default namespace
                     Some(ns) => Some(ns.into()),
-                    None => return Some(self.error(SyntaxError::UnboundAttribute(attr.name.to_string().into()))),
+                    None => return Some(Self::error_at(SyntaxError::UnboundAttribute(attributes[i].name.to_string().into()), attribute_positions[i])),
                 };
-                attr.name.namespace = new_ns;
             }
+        }
+
+        // check for duplicates (namespace-aware)
+        if let Some(idx) = Self::find_duplicate_attribute(&attributes) {
+            let attr = &attributes[idx];
+            let pos = attribute_positions[idx];
+            return Some(Self::error_at(SyntaxError::RedefinedAttribute(attr.name.to_string().into()), pos));
         }
 
         if emit_end_element {
@@ -695,6 +733,23 @@ impl PullParser {
             self.into_state_emit(State::OutsideTag, Ok(XmlEvent::EndElement { name }))
         } else {
             Some(self.error(SyntaxError::UnexpectedClosingTag(format!("{name} != {op_name}").into())))
+        }
+    }
+
+    fn find_duplicate_attribute(attributes: &[OwnedAttribute]) -> Option<usize> {
+        if attributes.len() >= 8 {
+            let mut seen = HashSet::with_capacity(attributes.len());
+            attributes.iter().enumerate().find(|(_, attr)| {
+                !seen.insert((attr.name.namespace.as_deref(), &attr.name.local_name))
+            }).map(|(i, _)| i)
+        } else {
+            // Linear search for duplicates for small number of attributes.
+            attributes.iter().enumerate().find(|&(i, attr)| {
+                let identity = (attr.name.namespace.as_deref(), &attr.name.local_name);
+                attributes[..i].iter().any(|prev| {
+                    identity == (prev.name.namespace.as_deref(), &prev.name.local_name)
+                })
+            }).map(|(i, _)| i)
         }
     }
 
@@ -840,7 +895,7 @@ mod tests {
 
     #[test]
     fn processing_instruction_in_attribute_value() {
-        use crate::reader::error::{SyntaxError, Error};
+        use crate::reader::error::{Error, SyntaxError};
 
         let (mut r, mut p) = test_data!(r#"
             <y F="<?abc"><x G="/">

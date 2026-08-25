@@ -122,7 +122,7 @@ impl Affine {
     /// let oblique_transform = kurbo::Affine::skew(20f64.to_radians().tan(), 0.0);
     /// ```
     #[inline(always)]
-    pub fn skew(skew_x: f64, skew_y: f64) -> Affine {
+    pub const fn skew(skew_x: f64, skew_y: f64) -> Affine {
         Affine([1.0, skew_y, skew_x, 1.0, 0.0, 0.0])
     }
 
@@ -189,7 +189,7 @@ impl Affine {
     #[inline]
     #[must_use]
     pub fn pre_rotate_about(self, th: f64, center: impl Into<Point>) -> Self {
-        Affine::rotate_about(th, center) * self
+        self * Affine::rotate_about(th, center)
     }
 
     /// A [scale] by `scale` followed by `self`.
@@ -223,6 +223,28 @@ impl Affine {
     #[must_use]
     pub fn pre_translate(self, trans: Vec2) -> Self {
         self * Affine::translate(trans)
+    }
+
+    /// A [skew] of `(skew_x, skew_y)` followed by `self`.
+    ///
+    /// Equivalent to `self * Affine::skew(skew_x, skew_y)`
+    ///
+    /// [skew]: Affine::skew
+    #[inline]
+    #[must_use]
+    pub fn pre_skew(self, skew_x: f64, skew_y: f64) -> Self {
+        self * Affine::skew(skew_x, skew_y)
+    }
+
+    /// A [reflection] about the line through `point` in `direction` followed by `self`.
+    ///
+    /// Equivalent to `self * Affine::reflect(point, direction)`
+    ///
+    /// [reflection]: Affine::reflect
+    #[inline]
+    #[must_use]
+    pub fn pre_reflect(self, point: impl Into<Point>, direction: impl Into<Vec2>) -> Self {
+        self * Affine::reflect(point, direction)
     }
 
     /// `self` followed by a [rotation] of `th`.
@@ -280,6 +302,28 @@ impl Affine {
         Affine::scale_about(scale, center) * self
     }
 
+    /// `self` followed by a [skew] of `(skew_x, skew_y)`.
+    ///
+    /// Equivalent to `Affine::skew(skew_x, skew_y) * self`
+    ///
+    /// [skew]: Affine::skew
+    #[inline]
+    #[must_use]
+    pub fn then_skew(self, skew_x: f64, skew_y: f64) -> Self {
+        Affine::skew(skew_x, skew_y) * self
+    }
+
+    /// `self` followed by a [reflection] about the line through `point` in `direction`.
+    ///
+    /// Equivalent to `Affine::reflect(point, direction) * self`
+    ///
+    /// [reflection]: Affine::reflect
+    #[inline]
+    #[must_use]
+    pub fn then_reflect(self, point: impl Into<Point>, direction: impl Into<Vec2>) -> Self {
+        Affine::reflect(point, direction) * self
+    }
+
     /// `self` followed by a translation of `trans`.
     ///
     /// Equivalent to `Affine::translate(trans) * self`
@@ -287,7 +331,7 @@ impl Affine {
     /// [translation]: Affine::translate
     #[inline]
     #[must_use]
-    pub fn then_translate(mut self, trans: Vec2) -> Self {
+    pub const fn then_translate(mut self, trans: Vec2) -> Self {
         self.0[4] += trans.x;
         self.0[5] += trans.y;
         self
@@ -297,25 +341,89 @@ impl Affine {
     ///
     /// Useful when you want to draw into the unit square but have your output fill any rectangle.
     /// In this case push the `Affine` onto the transform stack.
-    pub fn map_unit_square(rect: Rect) -> Affine {
+    pub const fn map_unit_square(rect: Rect) -> Affine {
         Affine([rect.width(), 0., 0., rect.height(), rect.x0, rect.y0])
     }
 
     /// Get the coefficients of the transform.
     #[inline(always)]
-    pub fn as_coeffs(self) -> [f64; 6] {
+    pub const fn as_coeffs(self) -> [f64; 6] {
         self.0
     }
 
     /// Compute the determinant of this transform.
-    pub fn determinant(self) -> f64 {
+    ///
+    /// # Geometric interpretation
+    ///
+    /// Consider a region transformed by this affine. The transformed region's area is the area of
+    /// the original region scaled by the absolute value of the determinant. A negative determinant
+    /// indicates orientation reversal.
+    #[inline]
+    pub const fn determinant(self) -> f64 {
         self.0[0] * self.0[3] - self.0[1] * self.0[2]
+    }
+
+    /// Compute the square of the nuclear norm of this transform.
+    ///
+    /// This is the square of the [Schatten p-norm][schatten] with `p=1`, also known as the "trace norm."
+    ///
+    /// Returns the squared norm for efficiency; take the square root as necessary.
+    ///
+    /// # Geometric interpretation
+    ///
+    /// Consider a unit circle transformed by this affine. The nuclear norm is the sum of the
+    /// resulting ellipse's radii (semi axes). That sum multiplied by π is a first-order
+    /// approximation of the ellipse's perimeter.
+    ///
+    /// [schatten]: <https://en.wikipedia.org/w/index.php?title=Matrix_norm&oldid=1348997593#Schatten_norms>
+    #[inline]
+    pub const fn nuclear_norm_squared(self) -> f64 {
+        self.frobenius_norm_squared() + 2. * self.determinant().abs()
+    }
+
+    /// Compute the square of the Frobenius norm of this transform.
+    ///
+    /// This is the square of the [Schatten p-norm][schatten] with `p=2`.
+    ///
+    /// Returns the squared norm for efficiency; take the square root as necessary.
+    ///
+    /// # Geometric interpretation
+    ///
+    /// Consider a unit circle transformed by this affine. The squared Frobenius norm is twice the
+    /// mean squared radius of the resulting ellipse. Alternatively, it is equal to the squared
+    /// distance from the ellipse's center to a corner of the rectangle spanned by the ellipse's
+    /// axes.
+    ///
+    /// [schatten]: <https://en.wikipedia.org/w/index.php?title=Matrix_norm&oldid=1348997593#Schatten_norms>
+    #[inline]
+    pub const fn frobenius_norm_squared(self) -> f64 {
+        let [a, b, c, d, _, _] = self.as_coeffs();
+        a * a + b * b + c * c + d * d
+    }
+
+    /// Compute the spectral norm of this transform.
+    ///
+    /// This is the [Schatten p-norm][schatten] with `p=∞`.
+    ///
+    /// # Geometric interpretation
+    ///
+    /// Consider a unit circle transformed by this affine. The spectral norm is the major radius
+    /// (semi-major axis) of the Ellipse.
+    ///
+    /// [schatten]: <https://en.wikipedia.org/w/index.php?title=Matrix_norm&oldid=1348997593#Schatten_norms>
+    #[inline]
+    pub fn spectral_norm(self) -> f64 {
+        // Note a different calculation, returning the `_squared` form like our nuclear and
+        // Frobenius norms, could be `0.5 (frob^2 + sqrt(frob^4 - 4 det^2))`. In terms of operations
+        // it's a wash: one fewer sqrt if the user actually wants the squared form, but it uses more
+        // muls. More importantly, that form has worse numeric conditioning.
+        self.svd().0.x
     }
 
     /// Compute the inverse transform.
     ///
     /// Produces NaN values when the determinant is zero.
-    pub fn inverse(self) -> Affine {
+    pub const fn inverse(self) -> Affine {
         let inv_det = self.determinant().recip();
         Affine([
             inv_det * self.0[3],
@@ -346,7 +454,7 @@ impl Affine {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(&self) -> bool {
+    pub const fn is_finite(&self) -> bool {
         self.0[0].is_finite()
             && self.0[1].is_finite()
             && self.0[2].is_finite()
@@ -359,7 +467,7 @@ impl Affine {
     ///
     /// [NaN]: f64::is_nan
     #[inline]
-    pub fn is_nan(&self) -> bool {
+    pub const fn is_nan(&self) -> bool {
         self.0[0].is_nan()
             || self.0[1].is_nan()
             || self.0[2].is_nan()
@@ -389,26 +497,62 @@ impl Affine {
     /// Will return NaNs if the matrix (or equivalently the linear map) is non-finite.
     ///
     /// The first part of the returned tuple is the scaling, the second part is the angle of
-    /// rotation (in radians).
-    #[inline]
+    /// rotation (in radians). The scaling along the x-axis is guaranteed to be greater than or
+    /// equal to the scaling along the y-axis.
+    //
+    // Note: though this does quite some computation, we are often interested only in specific
+    // components of the result. Hence this is marked `#[inline(always)]`, to give the compiler a
+    // good chance at eliminating dead code.
+    #[inline(always)]
     pub(crate) fn svd(self) -> (Vec2, f64) {
-        let a = self.0[0];
+        let [a, b, c, d, _, _] = self.0;
         let a2 = a * a;
-        let b = self.0[1];
         let b2 = b * b;
-        let c = self.0[2];
         let c2 = c * c;
-        let d = self.0[3];
         let d2 = d * d;
         let ab = a * b;
         let cd = c * d;
         let angle = 0.5 * (2.0 * (ab + cd)).atan2(a2 - b2 + c2 - d2);
-        let s1 = a2 + b2 + c2 + d2;
-        let s2 = ((a2 - b2 + c2 - d2).powi(2) + 4.0 * (ab + cd).powi(2)).sqrt();
+
+        // Given matrix A = [ a c ]
+        //                  [ b d ]
+        //
+        // The two singular values σ1, σ2 of A are the square roots of the two eigen values λ1, λ2
+        // of M = A^T A. The common formula for 2x2 eigenvalues requires evaluating a square root,
+        // but we'd like to compute the singular values of the matrix without nested square roots.
+        //
+        // M = A^T A = [ aa+cc   ab+cd ]
+        //             [ ab+cd   bb+dd ]
+        //
+        // We have
+        // λ = 1/2 (tr(M) ± sqrt(tr(M)^2 - 4 det(M))).
+        //
+        // Note det(M) = det(A^T A) = det(A)^2.
+        // => 2λ = tr(M) ± sqrt(tr(M)^2 - 4 det(A)^2)
+        // => 2λ = tr(M) ± sqrt[(a^2+b^2+c^2+d^2)^2 - 4 (ad-bc)^2]
+        // By factorizing the inner term,
+        // => 2λ = tr(M) ± sqrt[((a+d)^2 + (b-c)^2) ((a-d)^2 + (b+c)^2)]
+        // => 2λ = tr(M) ± sqrt[(a+d)^2 + (b-c)^2] sqrt[(a-d)^2 + (b+c)^2]
+        //
+        // Define S1 = sqrt[(a+d)^2 + (b-c)^2]
+        //        S2 = sqrt[(a-d)^2 + (b+c)^2].
+        //
+        // => 2λ = tr(M) ± S1 S2
+        // => 2λ = 1/2 (S1^2 + S2^2) ± S1 S2
+        // => λ = 1/4 (S1^2 + S2^2 ± 2 S1 S2)
+        // => λ = 1/4 (S1 ± S2)^2
+        //
+        // Note we're interested in
+        // σ = sqrt(λ).
+        //
+        // => σ1 = 1/2 (S1 + S2)
+        // and similarly σ2 = 1/2 |S1 - S2|
+        let s1 = ((a + d).powi(2) + (b - c).powi(2)).sqrt();
+        let s2 = ((a - d).powi(2) + (b + c).powi(2)).sqrt();
         (
             Vec2 {
-                x: (0.5 * (s1 + s2)).sqrt(),
-                y: (0.5 * (s1 - s2)).sqrt(),
+                x: 0.5 * (s1 + s2),
+                y: 0.5 * (s1 - s2).abs(),
             },
             angle,
         )
@@ -416,7 +560,7 @@ impl Affine {
 
     /// Returns the translation part of this affine map (`(self.0[4], self.0[5])`).
     #[inline(always)]
-    pub fn translation(self) -> Vec2 {
+    pub const fn translation(self) -> Vec2 {
         Vec2 {
             x: self.0[4],
             y: self.0[5],
@@ -428,7 +572,7 @@ impl Affine {
     /// The translation can be seen as being applied after the linear part of the map.
     #[must_use]
     #[inline(always)]
-    pub fn with_translation(mut self, trans: Vec2) -> Affine {
+    pub const fn with_translation(mut self, trans: Vec2) -> Affine {
         self.0[4] = trans.x;
         self.0[5] = trans.y;
         self
@@ -636,5 +780,86 @@ mod tests {
         let (scale, rotation) = a.svd();
         assert_eq!(scale, Vec2::new(0., 0.));
         assert_eq!(rotation, 0.);
+    }
+
+    #[test]
+    fn svd_singular_values() {
+        // Test a few known singular values.
+        let mat = |a, b, c, d| Affine::new([a, b, c, d, 0., 0.]);
+
+        let s = mat(1., 0., 0., 1.).svd().0;
+        assert_near(s.to_point(), Point::new(1., 1.));
+
+        let s = mat(1., 0., 0., -1.).svd().0;
+        assert_near(s.to_point(), Point::new(1., 1.));
+
+        let s = mat(1., 1., 1., 1.).svd().0;
+        assert_near(s.to_point(), Point::new(2., 0.));
+
+        let s = mat(1., 1., 1., 1.).svd().0;
+        assert_near(s.to_point(), Point::new(2., 0.));
+
+        let s = mat(0., 0., 1., 0.).svd().0;
+        assert_near(s.to_point(), Point::new(1., 0.));
+
+        // The singular values are the scaling of the affine map. So let's test that.
+        let s = Affine::scale_non_uniform(4., 8.)
+            .then_rotate_about(42_f64.to_radians(), (-2., 50.))
+            .svd()
+            .0;
+        assert_near(s.to_point(), Point::new(8., 4.));
+
+        // Correctly handles negative scaling (singular values are necessarily non-negative).
+        let s = Affine::scale_non_uniform(-20., 3.).svd().0;
+        assert_near(s.to_point(), Point::new(20., 3.));
+        let s = Affine::scale_non_uniform(-20., -3.).svd().0;
+        assert_near(s.to_point(), Point::new(20., 3.));
+        let s = Affine::scale_non_uniform(20., -3.).svd().0;
+        assert_near(s.to_point(), Point::new(20., 3.));
+
+        // One more property: given a full-rank transform, the product of its singular values
+        // should be equal to its absolute determinant.
+        let m = mat(10., 9., -2.5, 3.3333);
+        let s = m.svd().0;
+        let prod = s.x * s.y;
+        let det = m.determinant().abs();
+        assert!(
+            (prod - det) < 1e-9,
+            "The product of the singular values {s:?} ({prod}) should be equal to the absolute determinant {det}.",
+        );
+    }
+
+    #[test]
+    fn rotate_about_composition() {
+        let theta = core::f64::consts::FRAC_PI_2;
+        let center = Point::new(-1., 0.);
+        let translation = Vec2::new(0., 1.);
+        let probe = Point::ORIGIN;
+
+        let rotate_about = Affine::rotate_about(theta, center);
+        let translate = Affine::translate(translation);
+
+        // Establish baselines with raw matrix composition
+        // (also a sanity check to ensure the order of ops matters for this contrived test)
+        let rotate_then_translate = translate * rotate_about;
+        let translate_then_rotate = rotate_about * translate;
+        assert_near(rotate_then_translate * probe, Point::new(-1., 2.));
+        assert_near(translate_then_rotate * probe, Point::new(-2., 1.));
+
+        // Check .then_* semantics
+        affine_assert_near(
+            rotate_about.then_translate(translation),
+            rotate_then_translate,
+        );
+        affine_assert_near(
+            translate.then_rotate_about(theta, center),
+            translate_then_rotate,
+        );
+
+        // Check .pre_rotate_about semantics
+        affine_assert_near(
+            translate.pre_rotate_about(theta, center),
+            rotate_then_translate,
+        );
     }
 }

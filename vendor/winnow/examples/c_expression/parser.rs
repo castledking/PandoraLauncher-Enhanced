@@ -98,7 +98,7 @@
 //! | Infix   | `a >= b`   | GreaterEq        | 12    | Neither |           |
 //! | Infix   | `a > b`    | Greater          | 12    | Neither |           |
 //! | Infix   | `a <= b`   | LessEqual        | 12    | Neither |           |
-//! | Infix   | `a < b`    | Less             | 2     | Neither |           |
+//! | Infix   | `a < b`    | Less             | 12    | Neither |           |
 //! | Infix   | `a, b`     | Comma            | 0     | Left    |           |
 //! | Infix   | `a != b`   | NotEq            | 10    | Neither |           |
 //! | Infix   | `a \|\| b` | Or               | 4     | Left    |           |
@@ -112,9 +112,6 @@ use winnow::dispatch;
 use winnow::error::{ContextError, ErrMode};
 use winnow::prelude::*;
 use winnow::token::{any, one_of, take, take_while};
-
-#[cfg(test)]
-mod test;
 
 #[test]
 fn parse_example() {

@@ -44,10 +44,6 @@ pub use autolaunch::{Autolaunch, AutolaunchScope};
 mod launchd;
 #[cfg(target_os = "macos")]
 pub use launchd::Launchd;
-#[cfg(unix)]
-mod ibus;
-#[cfg(unix)]
-pub use ibus::Ibus;
 #[cfg(any(
     all(feature = "vsock", not(feature = "tokio")),
     feature = "tokio-vsock"
@@ -77,12 +73,6 @@ pub enum Transport {
     /// A launchd D-Bus address.
     #[cfg(target_os = "macos")]
     Launchd(Launchd),
-    /// An IBus D-Bus address.
-    ///
-    /// IBus (Intelligent Input Bus) is an input method framework. This transport queries the
-    /// IBus daemon for its D-Bus address using the `ibus address` command.
-    #[cfg(unix)]
-    Ibus(Ibus),
     #[cfg(any(
         all(feature = "vsock", not(feature = "tokio")),
         feature = "tokio-vsock"
@@ -99,7 +89,7 @@ pub enum Transport {
 }
 
 impl Transport {
-    #[cfg_attr(any(unix, windows), async_recursion::async_recursion)]
+    #[cfg_attr(any(target_os = "macos", windows), async_recursion::async_recursion)]
     pub(super) async fn connect(self) -> Result<Stream> {
         match self {
             Transport::Unix(unix) => {
@@ -227,12 +217,6 @@ impl Transport {
                 let addr = launchd.bus_address().await?;
                 addr.connect().await
             }
-
-            #[cfg(unix)]
-            Transport::Ibus(ibus) => {
-                let addr = ibus.bus_address().await?;
-                addr.connect().await
-            }
         }
     }
 
@@ -253,8 +237,6 @@ impl Transport {
             "autolaunch" => Autolaunch::from_options(options).map(Self::Autolaunch),
             #[cfg(target_os = "macos")]
             "launchd" => Launchd::from_options(options).map(Self::Launchd),
-            #[cfg(unix)]
-            "ibus" => Ibus::from_options(options).map(Self::Ibus),
 
             _ => Err(Error::Address(format!(
                 "unsupported transport '{transport}'"
@@ -382,8 +364,6 @@ impl Display for Transport {
             Self::Autolaunch(autolaunch) => write!(f, "{autolaunch}")?,
             #[cfg(target_os = "macos")]
             Self::Launchd(launchd) => write!(f, "{launchd}")?,
-            #[cfg(unix)]
-            Self::Ibus(ibus) => write!(f, "{ibus}")?,
         }
 
         Ok(())

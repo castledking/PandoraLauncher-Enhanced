@@ -26,6 +26,7 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#![cfg(feature = "neon_luts")]
 use crate::conversions::interpolator::BarycentricWeight;
 use crate::math::FusedMultiplyAdd;
 use std::arch::aarch64::*;
@@ -207,6 +208,8 @@ impl NeonVectorQ0_15Double {
     }
 }
 
+/// LUT size here is always fixed size (GRID_SIZE^3) and its use
+/// is hardened at [crate::conversions::neon::assert_barycentric_lut_size_precondition].
 impl<const GRID_SIZE: usize> Fetcher<NeonVectorQ0_15>
     for TetrahedralNeonQ0_15FetchVector<'_, GRID_SIZE>
 {
@@ -221,6 +224,8 @@ impl<const GRID_SIZE: usize> Fetcher<NeonVectorQ0_15>
     }
 }
 
+/// LUT size here is always fixed size (GRID_SIZE^3) and its use
+/// is hardened at [crate::conversions::neon::assert_barycentric_lut_size_precondition].
 impl<const GRID_SIZE: usize> Fetcher<NeonVectorQ0_15Double>
     for TetrahedralNeonQ0_15FetchVectorDouble<'_, GRID_SIZE>
 {

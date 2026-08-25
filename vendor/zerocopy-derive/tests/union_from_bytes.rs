@@ -16,7 +16,6 @@ include!("include.rs");
 // - all fields are `imp::FromBytes`
 
 #[derive(Clone, Copy, imp::Immutable, imp::FromBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union Zst {
     a: (),
 }
@@ -25,7 +24,6 @@ util_assert_impl_all!(Zst: imp::FromBytes);
 test_trivial_is_bit_valid!(Zst => test_zst_trivial_is_bit_valid);
 
 #[derive(imp::Immutable, imp::FromBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union One {
     a: u8,
 }
@@ -34,7 +32,6 @@ util_assert_impl_all!(One: imp::FromBytes);
 test_trivial_is_bit_valid!(One => test_one_trivial_is_bit_valid);
 
 #[derive(imp::Immutable, imp::FromBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union Two {
     a: u8,
     b: Zst,
@@ -44,7 +41,6 @@ util_assert_impl_all!(Two: imp::FromBytes);
 test_trivial_is_bit_valid!(Two => test_two_trivial_is_bit_valid);
 
 #[derive(imp::Immutable, imp::FromBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union TypeParams<'a, T: imp::Copy, I: imp::Iterator>
 where
     I::Item: imp::Copy,
@@ -63,7 +59,6 @@ test_trivial_is_bit_valid!(TypeParams<'static, (), imp::IntoIter<()>> => test_ty
 // Deriving `imp::FromBytes` should work if the union has bounded parameters.
 
 #[derive(imp::Immutable, imp::FromBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 union WithParams<'a: 'b, 'b: 'a, T: 'a + 'b + imp::FromBytes, const N: usize>
 where
@@ -77,13 +72,3 @@ where
 
 util_assert_impl_all!(WithParams<'static, 'static, u8, 42>: imp::FromBytes);
 test_trivial_is_bit_valid!(WithParams<'static, 'static, u8, 42> => test_with_params_trivial_is_bit_valid);
-
-#[derive(imp::FromBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
-#[repr(C)]
-union UnsafeCellUnion {
-    a: imp::ManuallyDrop<imp::UnsafeCell<u8>>,
-}
-
-util_assert_impl_all!(UnsafeCellUnion: imp::FromBytes);
-test_trivial_is_bit_valid!(UnsafeCellUnion => test_unsafe_cell_union_trivial_is_bit_valid);

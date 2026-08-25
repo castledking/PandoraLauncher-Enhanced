@@ -19,14 +19,12 @@ include!("include.rs");
 // - `repr(packed)`
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct CZst;
 
 util_assert_impl_all!(CZst: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct C {
     a: u8,
@@ -37,7 +35,6 @@ struct C {
 util_assert_impl_all!(C: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct SyntacticUnsized {
     a: u8,
@@ -48,20 +45,18 @@ struct SyntacticUnsized {
 util_assert_impl_all!(C: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct Transparent {
     a: u8,
-    b: (),
+    b: CZst,
 }
 
 util_assert_impl_all!(Transparent: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct TransparentGeneric<T: ?imp::Sized> {
-    a: (),
+    a: CZst,
     b: T,
 }
 
@@ -69,14 +64,12 @@ util_assert_impl_all!(TransparentGeneric<u64>: imp::IntoBytes);
 util_assert_impl_all!(TransparentGeneric<[u64]>: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 struct CZstPacked;
 
 util_assert_impl_all!(CZstPacked: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 struct CPacked {
     a: u8,
@@ -93,7 +86,6 @@ struct CPacked {
 util_assert_impl_all!(CPacked: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed(2))]
 // The same caveats as for CPacked apply - we're assuming u64 is at least
 // 4-byte aligned by default. Without packed(2), this should fail, as there
@@ -106,7 +98,6 @@ struct CPacked2 {
 util_assert_impl_all!(CPacked2: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 struct CPackedGeneric<T, U: ?imp::Sized> {
     t: T,
@@ -122,7 +113,6 @@ util_assert_impl_all!(CPackedGeneric<u8, util::AU16>: imp::IntoBytes);
 util_assert_impl_all!(CPackedGeneric<u8, [util::AU16]>: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(packed)]
 struct PackedGeneric<T, U: ?imp::Sized> {
     t: T,
@@ -140,7 +130,6 @@ util_assert_impl_all!(PackedGeneric<u8, [util::AU16]>: imp::IntoBytes);
 // This test is non-portable, but works so long as Rust happens to lay this
 // struct out with no padding.
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct Unpacked {
     a: u8,
     b: u8,
@@ -149,7 +138,6 @@ struct Unpacked {
 util_assert_impl_all!(Unpacked: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct ReprCGenericOneField<T: ?imp::Sized> {
     t: T,
@@ -161,7 +149,6 @@ util_assert_impl_all!(ReprCGenericOneField<util::AU16>: imp::IntoBytes);
 util_assert_impl_all!(ReprCGenericOneField<[util::AU16]>: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct ReprCGenericMultipleFields<T, U: ?imp::Sized> {
     t: T,
@@ -176,7 +163,6 @@ util_assert_not_impl_any!(ReprCGenericMultipleFields<u8, util::AU16>: imp::IntoB
 util_assert_not_impl_any!(ReprCGenericMultipleFields<u8, [util::AU16]>: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct Unsized {
     a: [u8],
@@ -187,7 +173,6 @@ util_assert_impl_all!(Unsized: imp::IntoBytes);
 // Deriving `IntoBytes` should work if the struct has bounded parameters.
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct WithParams<'a: 'b, 'b: 'a, T: 'a + 'b + imp::IntoBytes, const N: usize>(
     [T; N],
@@ -203,12 +188,10 @@ util_assert_impl_all!(WithParams<'static, 'static, u8, 42>: imp::IntoBytes);
 // Test for the failure reported in #1182.
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 pub struct IndexEntryFlags(u8);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 pub struct IndexEntry<const SIZE_BLOCK_ID: usize> {
     block_number: imp::native_endian::U64,

@@ -7,6 +7,7 @@ use std::{
         io::{BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
         net::UnixStream,
     },
+    ptr::NonNull,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, Weak,
@@ -201,11 +202,11 @@ impl InnerObjectId {
         }
     }
 
-    pub fn as_ptr(&self) -> *mut wl_resource {
+    pub fn as_ptr(&self) -> Result<NonNull<wl_resource>, InvalidId> {
         if self.alive.load(Ordering::Acquire) {
-            self.ptr
+            NonNull::new(self.ptr).ok_or(InvalidId)
         } else {
-            std::ptr::null_mut()
+            Err(InvalidId)
         }
     }
 }
@@ -809,6 +810,11 @@ impl InnerHandle {
         self.state.lock().unwrap().global_info(id)
     }
 
+    #[cfg(feature = "libwayland_server_1_22")]
+    pub fn global_name(&self, global: InnerGlobalId, client: InnerClientId) -> Option<u32> {
+        self.state.lock().unwrap().global_name(global, client)
+    }
+
     /// Returns the handler which manages the visibility and notifies when a client has bound the global.
     pub fn get_global_handler<D: 'static>(
         &self,
@@ -833,6 +839,23 @@ impl InnerHandle {
 
     pub fn flush(&mut self, client: Option<ClientId>) -> std::io::Result<()> {
         self.state.lock().unwrap().flush(client)
+    }
+
+    #[cfg(feature = "libwayland_server_1_23")]
+    pub fn set_default_max_buffer_size(&self, max_buffer_size: usize) {
+        unsafe {
+            ffi_dispatch!(
+                wayland_server_handle(),
+                wl_display_set_default_max_buffer_size,
+                self.display_ptr(),
+                max_buffer_size
+            );
+        }
+    }
+
+    #[cfg(feature = "libwayland_server_1_23")]
+    pub fn set_client_max_buffer_size(&self, client: InnerClientId, max_buffer_size: usize) {
+        self.state.lock().unwrap().set_client_max_buffer_size(client, max_buffer_size)
     }
 
     pub fn display_ptr(&self) -> *mut wl_display {
@@ -870,8 +893,12 @@ pub(crate) trait ErasedState: downcast_rs::Downcast {
     fn post_error(&mut self, object_id: InnerObjectId, error_code: u32, message: CString);
     fn kill_client(&mut self, client_id: InnerClientId, reason: DisconnectReason);
     fn global_info(&self, id: InnerGlobalId) -> Result<GlobalInfo, InvalidId>;
+    #[cfg(feature = "libwayland_server_1_22")]
+    fn global_name(&self, global: InnerGlobalId, client: InnerClientId) -> Option<u32>;
     fn is_known_global(&self, global_ptr: *const wl_global) -> bool;
     fn flush(&mut self, client: Option<ClientId>) -> std::io::Result<()>;
+    #[cfg(feature = "libwayland_server_1_23")]
+    fn set_client_max_buffer_size(&mut self, client: InnerClientId, max_buffer_size: usize);
     fn display_ptr(&self) -> *mut wl_display;
 }
 
@@ -1243,6 +1270,27 @@ impl<D: 'static> ErasedState for State<D> {
         })
     }
 
+    #[cfg(feature = "libwayland_server_1_22")]
+    fn global_name(&self, global: InnerGlobalId, client: InnerClientId) -> Option<u32> {
+        if !global.alive.load(Ordering::Acquire) {
+            return None;
+        }
+
+        if !client.alive.load(Ordering::Acquire) {
+            return None;
+        }
+
+        let name = unsafe {
+            ffi_dispatch!(wayland_server_handle(), wl_global_get_name, global.ptr, client.ptr)
+        };
+
+        if name == 0 {
+            None
+        } else {
+            Some(name)
+        }
+    }
+
     fn is_known_global(&self, global_ptr: *const wl_global) -> bool {
         self.known_globals.iter().any(|ginfo| std::ptr::eq(ginfo.ptr, global_ptr))
     }
@@ -1274,6 +1322,20 @@ impl<D: 'static> ErasedState for State<D> {
             };
         }
         Ok(())
+    }
+
+    #[cfg(feature = "libwayland_server_1_23")]
+    fn set_client_max_buffer_size(&mut self, client: InnerClientId, max_buffer_size: usize) {
+        if client.alive.load(Ordering::Acquire) {
+            unsafe {
+                ffi_dispatch!(
+                    wayland_server_handle(),
+                    wl_client_set_max_buffer_size,
+                    client.ptr,
+                    max_buffer_size
+                )
+            }
+        }
     }
 
     fn display_ptr(&self) -> *mut wl_display {

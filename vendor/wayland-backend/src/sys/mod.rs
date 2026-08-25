@@ -62,8 +62,23 @@ impl client::ObjectId {
     }
 
     /// Get the underlying libwayland pointer for this object
+    ///
+    /// Returns `NULL` if the proxy has already been destroyed.
+    // TODO(breaking): Return `Result`
     pub fn as_ptr(&self) -> *mut wayland_sys::client::wl_proxy {
-        self.id.as_ptr()
+        self.id.as_ptr().map_or(std::ptr::null_mut(), |p| p.as_ptr())
+    }
+
+    /// Get the underlying display pointer for this object.
+    ///
+    /// This pointer is associated with the original display this object
+    /// belongs to.
+    #[cfg(feature = "libwayland_client_1_23")]
+    pub fn display_ptr(
+        &self,
+    ) -> Result<std::ptr::NonNull<wayland_sys::client::wl_display>, crate::types::client::InvalidId>
+    {
+        self.id.display_ptr()
     }
 }
 
@@ -195,8 +210,11 @@ impl server::ObjectId {
     /// Returns the pointer that represents this object.
     ///
     /// The pointer may be used to interoperate with libwayland.
+    ///
+    /// Returns `NULL` if the resource has already been destroyed.
+    // TODO(breaking): Return `Result`
     pub fn as_ptr(&self) -> *mut wayland_sys::server::wl_resource {
-        self.id.as_ptr()
+        self.id.as_ptr().map_or(std::ptr::null_mut(), |p| p.as_ptr())
     }
 }
 

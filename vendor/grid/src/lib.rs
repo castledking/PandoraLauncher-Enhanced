@@ -42,6 +42,9 @@ assert_eq!(grid, grid![[1,2,3][4,5,6][7,8,9]])
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(all(test, not(feature = "std")))]
+extern crate std;
+
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 #[cfg(not(feature = "std"))]
@@ -504,6 +507,18 @@ impl<T> Grid<T> {
         }
     }
 
+    #[inline]
+    #[must_use]
+    fn safe_add(lhs: usize, rhs: usize) -> usize {
+        lhs.checked_add(rhs).expect("grid dimensions overflow")
+    }
+
+    #[inline]
+    #[must_use]
+    fn safe_multiply(rows: usize, cols: usize) -> usize {
+        rows.checked_mul(cols).expect("grid dimensions overflow")
+    }
+
     /// Returns the index of the coordinates in the internal vector.
     #[inline]
     #[must_use]
@@ -636,7 +651,7 @@ impl<T> Grid<T> {
     /// assert_eq!(iter.next(), Some(&4));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<'_, T> {
         self.data.iter()
     }
 
@@ -652,7 +667,7 @@ impl<T> Grid<T> {
     /// assert_eq!(next, Some(&mut 1));
     /// *next.unwrap() = 10;
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<T> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
         self.data.iter_mut()
     }
 
@@ -677,7 +692,7 @@ impl<T> Grid<T> {
     /// # Panics
     ///
     /// Panics if the col index is out of bounds.
-    pub fn iter_col(&self, col: usize) -> StepBy<Iter<T>> {
+    pub fn iter_col(&self, col: usize) -> StepBy<Iter<'_, T>> {
         assert!(
             col < self.cols,
             "out of bounds. Column must be less than {:?}, but is {:?}",
@@ -715,7 +730,7 @@ impl<T> Grid<T> {
     /// # Panics
     ///
     /// Panics if the col index is out of bounds.
-    pub fn iter_col_mut(&mut self, col: usize) -> StepBy<IterMut<T>> {
+    pub fn iter_col_mut(&mut self, col: usize) -> StepBy<IterMut<'_, T>> {
         assert!(
             col < self.cols,
             "out of bounds. Column must be less than {:?}, but is {:?}",
@@ -752,7 +767,7 @@ impl<T> Grid<T> {
     /// # Panics
     ///
     /// Panics if the row index is out of bounds.
-    pub fn iter_row(&self, row: usize) -> StepBy<Iter<T>> {
+    pub fn iter_row(&self, row: usize) -> StepBy<Iter<'_, T>> {
         assert!(
             row < self.rows,
             "out of bounds. Row must be less than {:?}, but is {:?}",
@@ -788,7 +803,7 @@ impl<T> Grid<T> {
     /// # Panics
     ///
     /// Panics if the row index is out of bounds.
-    pub fn iter_row_mut(&mut self, row: usize) -> StepBy<IterMut<T>> {
+    pub fn iter_row_mut(&mut self, row: usize) -> StepBy<IterMut<'_, T>> {
         assert!(
             row < self.rows,
             "out of bounds. Row must be less than {:?}, but is {:?}",
@@ -973,7 +988,7 @@ impl<T> Grid<T> {
                 self.data[col_idx..col_idx + self.rows + i].rotate_right(i);
             }
         }
-        self.rows += 1;
+        self.rows = Self::safe_add(self.rows, 1);
         if self.cols == 0 {
             self.cols = self.data.len();
         }
@@ -1028,7 +1043,7 @@ impl<T> Grid<T> {
                 self.data[row_idx..row_idx + self.cols + i].rotate_right(i);
             }
         }
-        self.cols += 1;
+        self.cols = Self::safe_add(self.cols, 1);
         if self.rows == 0 {
             self.rows = self.data.len();
         }
@@ -1185,6 +1200,106 @@ impl<T> Grid<T> {
         Some(col)
     }
 
+    /// Delete a row at the index without returning it, avoiding allocation.
+    ///
+    /// This method is more efficient than [`remove_row`](Grid::remove_row) when you don't need
+    /// the removed elements, as it avoids allocating a `Vec<T>` to hold them.
+    ///
+    /// # Examples
+    /// ```
+    /// use grid::*;
+    /// let mut grid = grid![[1,2][3,4][5,6]];
+    /// assert!(grid.delete_row(1));
+    /// assert_eq!(grid, grid![[1,2][5,6]]);
+    /// assert!(grid.delete_row(0));
+    /// assert_eq!(grid, grid![[5,6]]);
+    /// assert!(grid.delete_row(0));
+    /// assert!(grid.is_empty());
+    /// assert!(!grid.delete_row(0));
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This method will be significantly slower if the grid uses a column-major memory layout.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the row was successfully deleted, `false` if the index was out of bounds.
+    pub fn delete_row(&mut self, row_index: usize) -> bool {
+        if self.cols == 0 || self.rows == 0 || row_index >= self.rows {
+            return false;
+        }
+        match self.order {
+            Order::RowMajor => {
+                let start = row_index * self.cols;
+                let end = (row_index + 1) * self.cols;
+                self.data.drain(start..end);
+            }
+            Order::ColumnMajor => {
+                for i in 0..self.cols {
+                    let col_idx = row_index + i * (self.rows - 1);
+                    let end = cmp::min(col_idx + self.rows + i, self.data.len());
+                    self.data[col_idx..end].rotate_left(i + 1);
+                }
+                self.data.truncate(self.data.len() - self.cols);
+            }
+        }
+        self.rows -= 1;
+        if self.rows == 0 {
+            self.cols = 0;
+        }
+        true
+    }
+
+    /// Delete a column at the index without returning it, avoiding allocation.
+    ///
+    /// This method is more efficient than [`remove_col`](Grid::remove_col) when you don't need
+    /// the removed elements, as it avoids allocating a `Vec<T>` to hold them.
+    ///
+    /// # Examples
+    /// ```
+    /// use grid::*;
+    /// let mut grid = grid![[1,2,3,4][5,6,7,8][9,10,11,12][13,14,15,16]];
+    /// assert!(grid.delete_col(3));
+    /// assert_eq!(grid, grid![[1,2,3][5,6,7][9,10,11][13,14,15]]);
+    /// assert!(grid.delete_col(0));
+    /// assert_eq!(grid, grid![[2,3][6,7][10,11][14,15]]);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This method will be significantly slower if the grid uses a row-major memory layout,
+    /// which is the default.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the column was successfully deleted, `false` if the index was out of bounds.
+    pub fn delete_col(&mut self, col_index: usize) -> bool {
+        if self.cols == 0 || self.rows == 0 || col_index >= self.cols {
+            return false;
+        }
+        match self.order {
+            Order::RowMajor => {
+                for i in 0..self.rows {
+                    let row_idx = col_index + i * (self.cols - 1);
+                    let end = cmp::min(row_idx + self.cols + i, self.data.len());
+                    self.data[row_idx..end].rotate_left(i + 1);
+                }
+                self.data.truncate(self.data.len() - self.rows);
+            }
+            Order::ColumnMajor => {
+                let start = col_index * self.rows;
+                let end = (col_index + 1) * self.rows;
+                self.data.drain(start..end);
+            }
+        }
+        self.cols -= 1;
+        if self.cols == 0 {
+            self.rows = 0;
+        }
+        true
+    }
+
     /// Insert a new row at the index and shifts all rows after down.
     ///
     /// # Examples
@@ -1204,8 +1319,10 @@ impl<T> Grid<T> {
     /// Panics if:
     /// - the grid is not empty and `row.len() != grid.cols()`.
     /// - the index is greater than the number of rows
+    /// - inserted row is empty
     pub fn insert_row(&mut self, index: usize, row: Vec<T>) {
         let input_len = row.len();
+        assert_ne!(input_len, 0, "Inserted row must not be empty.");
         assert!(
             !(self.cols > 0 && input_len != self.cols),
             "Inserted row must be of length {}, but was {}.",
@@ -1231,7 +1348,7 @@ impl<T> Grid<T> {
             }
         }
         self.cols = input_len;
-        self.rows += 1;
+        self.rows = Self::safe_add(self.rows, 1);
     }
 
     /// Insert a new column at the index.
@@ -1257,8 +1374,10 @@ impl<T> Grid<T> {
     /// Panics if:
     /// - the grid is not empty and `col.len() != grid.rows()`.
     /// - the index is greater than the number of columns
+    /// - inserted row is empty
     pub fn insert_col(&mut self, index: usize, col: Vec<T>) {
         let input_len = col.len();
+        assert_ne!(input_len, 0, "Inserted col must not be empty.");
         assert!(
             !(self.rows > 0 && input_len != self.rows),
             "Inserted col must be of length {}, but was {}.",
@@ -1284,7 +1403,7 @@ impl<T> Grid<T> {
             }
         }
         self.rows = input_len;
-        self.cols += 1;
+        self.cols = Self::safe_add(self.cols, 1);
     }
 
     /// Returns a reference to the internal data structure of the grid.
@@ -1646,8 +1765,9 @@ impl<T: Default> Grid<T> {
     /// This method will be significantly slower if the grid uses a column-major memory layout.
     pub fn expand_rows(&mut self, rows: usize) {
         if rows > 0 && self.cols > 0 {
-            self.data
-                .resize_with(self.data.len() + rows * self.cols, T::default);
+            let new_rows = Self::safe_add(self.rows, rows);
+            let new_len = Self::safe_multiply(new_rows, self.cols);
+            self.data.resize_with(new_len, T::default);
 
             if self.order == Order::ColumnMajor {
                 for row_added in 0..rows {
@@ -1658,7 +1778,7 @@ impl<T: Default> Grid<T> {
                     }
                 }
             }
-            self.rows += rows;
+            self.rows = new_rows;
         }
     }
 
@@ -1683,8 +1803,9 @@ impl<T: Default> Grid<T> {
     /// This method will be significantly slower if the grid uses a row-major memory layout.
     pub fn expand_cols(&mut self, cols: usize) {
         if cols > 0 && self.rows > 0 {
-            self.data
-                .resize_with(self.data.len() + cols * self.rows, T::default);
+            let new_cols = Self::safe_add(self.cols, cols);
+            let new_len = Self::safe_multiply(self.rows, new_cols);
+            self.data.resize_with(new_len, T::default);
 
             if self.order == Order::RowMajor {
                 for col_added in 0..cols {
@@ -1695,7 +1816,103 @@ impl<T: Default> Grid<T> {
                     }
                 }
             }
-            self.cols += cols;
+            self.cols = new_cols;
+        }
+    }
+
+    /// Expands the grid by inserting a given amount of rows at the beginning, filling the new rows with `T::default()`.
+    /// If the grid has no rows or no columns, nothing will happen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grid::*;
+    /// let mut grid: Grid<u8> = grid![[1, 2, 3][3, 4, 5]];
+    /// grid.prepend_rows(2);
+    /// assert_eq!(grid.rows(), 4);
+    /// assert_eq!(grid[(0, 0)], 0);
+    /// assert_eq!(grid[(0, 1)], 0);
+    /// assert_eq!(grid[(0, 2)], 0);
+    /// assert_eq!(grid[(1, 0)], 0);
+    /// assert_eq!(grid[(1, 1)], 0);
+    /// assert_eq!(grid[(1, 2)], 0);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This method will be significantly slower if the grid uses a column-major memory layout.
+    pub fn prepend_rows(&mut self, rows: usize) {
+        if rows > 0 && self.cols > 0 {
+            let new_rows = Self::safe_add(self.rows, rows);
+            let new_len = Self::safe_multiply(new_rows, self.cols);
+            self.data.resize_with(new_len, T::default);
+
+            match self.order {
+                Order::RowMajor => {
+                    for i in (0..self.rows).rev() {
+                        let s = i * self.cols;
+                        let e = (i + rows + 1) * self.cols;
+                        self.data[s..e].rotate_left(self.cols);
+                    }
+                }
+                Order::ColumnMajor => {
+                    for row_added in 0..rows {
+                        for i in (0..self.cols).rev() {
+                            let total_rows = self.rows + row_added;
+                            let col_idx = i * total_rows;
+                            self.data[col_idx..=col_idx + total_rows + i].rotate_right(i + 1);
+                        }
+                    }
+                }
+            }
+            self.rows = new_rows;
+        }
+    }
+
+    /// Expands the grid by inserting a given amount of columns at the beginning, filling the new columns with `T::default()`.
+    /// If the grid has no rows or no columns, nothing will happen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grid::*;
+    /// let mut grid: Grid<u8> = grid![[1, 2, 3][3, 4, 5]];
+    /// grid.prepend_cols(2);
+    /// assert_eq!(grid.cols(), 5);
+    /// assert_eq!(grid[(0, 0)], 0);
+    /// assert_eq!(grid[(0, 1)], 0);
+    /// assert_eq!(grid[(1, 0)], 0);
+    /// assert_eq!(grid[(1, 1)], 0);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This method will be significantly slower if the grid uses a row-major memory layout.
+    pub fn prepend_cols(&mut self, cols: usize) {
+        if cols > 0 && self.rows > 0 {
+            let new_cols = Self::safe_add(self.cols, cols);
+            let new_len = Self::safe_multiply(self.rows, new_cols);
+            self.data.resize_with(new_len, T::default);
+
+            match self.order {
+                Order::RowMajor => {
+                    for col_added in 0..cols {
+                        for i in (0..self.rows).rev() {
+                            let total_cols = self.cols + col_added;
+                            let row_idx = i * total_cols;
+                            self.data[row_idx..=row_idx + total_cols + i].rotate_right(i + 1);
+                        }
+                    }
+                }
+                Order::ColumnMajor => {
+                    for i in (0..self.cols).rev() {
+                        let s = i * self.rows;
+                        let e = (i + cols + 1) * self.rows;
+                        self.data[s..e].rotate_left(self.rows);
+                    }
+                }
+            }
+            self.cols = new_cols;
         }
     }
 }
@@ -2183,6 +2400,14 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
+    #[allow(clippy::should_panic_without_expect)]
+    fn insert_col_empty_input_panics() {
+        let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![], 0, Order::RowMajor);
+        grid.insert_col(0, vec![]);
+    }
+
+    #[test]
     fn insert_col_at_end_column_major() {
         let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![1, 3, 2, 4], 2, Order::ColumnMajor);
         grid.insert_col(2, vec![5, 6]);
@@ -2205,6 +2430,14 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
+    #[allow(clippy::should_panic_without_expect)]
+    fn insert_col_empty_input_panics_column_major() {
+        let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![], 0, Order::ColumnMajor);
+        grid.insert_col(0, vec![]);
+    }
+
+    #[test]
     fn insert_row_at_end() {
         let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![1, 2, 3, 4], 2, Order::RowMajor);
         grid.insert_row(2, vec![5, 6]);
@@ -2216,6 +2449,14 @@ mod test {
         let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![], 0, Order::RowMajor);
         grid.insert_row(0, vec![1, 2, 3]);
         test_grid(&grid, 1, 3, Order::RowMajor, &[1, 2, 3]);
+    }
+
+    #[test]
+    #[should_panic]
+    #[allow(clippy::should_panic_without_expect)]
+    fn insert_row_empty_input_panics() {
+        let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![], 0, Order::RowMajor);
+        grid.insert_row(0, vec![]);
     }
 
     #[test]
@@ -2253,6 +2494,14 @@ mod test {
         let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![], 0, Order::ColumnMajor);
         grid.insert_row(0, vec![1, 2, 3]);
         test_grid(&grid, 1, 3, Order::ColumnMajor, &[1, 2, 3]);
+    }
+
+    #[test]
+    #[should_panic]
+    #[allow(clippy::should_panic_without_expect)]
+    fn insert_row_empty_input_panics_column_major() {
+        let mut grid: Grid<u8> = Grid::from_vec_with_order(vec![], 0, Order::ColumnMajor);
+        grid.insert_row(0, vec![]);
     }
 
     #[test]
@@ -2697,6 +2946,98 @@ mod test {
         assert_eq!(grid.into_vec(), vec![1, 1, 1]);
     }
 
+    fn assert_growth_overflow_keeps_grid_valid(grow: impl FnOnce(&mut Grid<u8>)) {
+        let mut grid = Grid::from_vec_with_order(vec![1, 2], 2, Order::RowMajor);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| grow(&mut grid)));
+
+        assert!(result.is_err());
+        assert_eq!(grid.size(), (1, 2));
+        assert_eq!(grid.get(0, 0), Some(&1));
+        assert_eq!(grid.get(0, 1), Some(&2));
+        assert_eq!(grid.get(1, 0), None);
+    }
+
+    #[test]
+    fn expand_rows_overflow_keeps_grid_valid() {
+        assert_growth_overflow_keeps_grid_valid(|grid| grid.expand_rows(usize::MAX / 2));
+    }
+
+    #[test]
+    fn expand_rows_overflow_safe_get_regression() {
+        let mut grid = Grid::from_vec(vec![1_u8, 2_u8], 2);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            grid.expand_rows(usize::MAX / 2);
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(grid.get(0, 0), Some(&1));
+    }
+
+    #[test]
+    fn expand_cols_overflow_keeps_grid_valid() {
+        assert_growth_overflow_keeps_grid_valid(|grid| grid.expand_cols(usize::MAX));
+    }
+
+    #[test]
+    fn prepend_rows_overflow_keeps_grid_valid() {
+        assert_growth_overflow_keeps_grid_valid(|grid| grid.prepend_rows(usize::MAX / 2));
+    }
+
+    #[test]
+    fn prepend_cols_overflow_keeps_grid_valid() {
+        assert_growth_overflow_keeps_grid_valid(|grid| grid.prepend_cols(usize::MAX));
+    }
+
+    fn assert_failed_insert_row_keeps_grid_valid<T>(mut grid: Grid<T>)
+    where
+        T: fmt::Debug + PartialEq,
+    {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            grid.insert_row(0, vec![]);
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(grid.size(), (0, 0));
+        assert!(grid.is_empty());
+        assert_eq!(grid.get(0, 0), None);
+    }
+
+    fn assert_failed_insert_col_keeps_grid_valid<T>(mut grid: Grid<T>)
+    where
+        T: fmt::Debug + PartialEq,
+    {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            grid.insert_col(0, vec![]);
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(grid.size(), (0, 0));
+        assert!(grid.is_empty());
+        assert_eq!(grid.get(0, 0), None);
+    }
+
+    #[test]
+    fn insert_row_empty_input_keeps_empty_grid_valid() {
+        assert_failed_insert_row_keeps_grid_valid(Grid::<u8>::new(0, 0));
+    }
+
+    #[test]
+    fn insert_col_empty_input_keeps_empty_grid_valid() {
+        assert_failed_insert_col_keeps_grid_valid(Grid::<u8>::new(0, 0));
+    }
+
+    #[test]
+    fn insert_row_empty_input_keeps_zst_grid_valid() {
+        assert_failed_insert_row_keeps_grid_valid(Grid::<()>::new(0, 0));
+    }
+
+    #[test]
+    fn insert_col_empty_input_keeps_zst_grid_valid() {
+        assert_failed_insert_col_keeps_grid_valid(Grid::<()>::new(0, 0));
+    }
+
     #[test]
     fn expand_rows_empty_grid() {
         let mut grid: Grid<u8> = Grid::init(0, 0, 0);
@@ -2749,6 +3090,102 @@ mod test {
     fn expand_cols_empty_grid() {
         let mut grid: Grid<u8> = Grid::init(0, 0, 0);
         grid.expand_cols(2);
+
+        assert_eq!(grid.size(), (0, 0));
+        assert_eq!(grid.order, Order::RowMajor);
+        assert_eq!(grid.rows(), 0);
+        assert_eq!(grid.cols(), 0);
+        assert_eq!(grid.into_vec(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn prepend_rows() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 1, 1, 2, 2, 2], 3, Order::RowMajor);
+        grid.prepend_rows(2);
+
+        assert_eq!(grid.size(), (4, 3));
+        assert_eq!(grid.order, Order::RowMajor);
+        assert_eq!(grid.rows(), 4);
+        assert_eq!(grid.cols(), 3);
+        assert_eq!(grid.into_vec(), vec![0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2]);
+    }
+
+    #[test]
+    fn prepend_rows_column_major() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 2, 1, 2, 1, 2], 3, Order::ColumnMajor);
+        grid.prepend_rows(2);
+
+        assert_eq!(grid.size(), (4, 3));
+        assert_eq!(grid.order, Order::ColumnMajor);
+        assert_eq!(grid.rows(), 4);
+        assert_eq!(grid.cols(), 3);
+        assert_eq!(grid.into_vec(), vec![0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2]);
+    }
+
+    #[test]
+    fn prepend_rows_zero() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 1, 1], 3, Order::RowMajor);
+        grid.prepend_rows(0);
+
+        assert_eq!(grid.size(), (1, 3));
+        assert_eq!(grid.order, Order::RowMajor);
+        assert_eq!(grid.rows(), 1);
+        assert_eq!(grid.cols(), 3);
+        assert_eq!(grid.into_vec(), vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn prepend_rows_empty_grid() {
+        let mut grid: Grid<u8> = Grid::init(0, 0, 0);
+        grid.prepend_rows(2);
+
+        assert_eq!(grid.size(), (0, 0));
+        assert_eq!(grid.order, Order::RowMajor);
+        assert_eq!(grid.rows(), 0);
+        assert_eq!(grid.cols(), 0);
+        assert_eq!(grid.into_vec(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn prepend_cols() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 1, 1, 2, 2, 2], 3, Order::RowMajor);
+        grid.prepend_cols(2);
+
+        assert_eq!(grid.size(), (2, 5));
+        assert_eq!(grid.order, Order::RowMajor);
+        assert_eq!(grid.rows(), 2);
+        assert_eq!(grid.cols(), 5);
+        assert_eq!(grid.into_vec(), vec![0, 0, 1, 1, 1, 0, 0, 2, 2, 2]);
+    }
+
+    #[test]
+    fn prepend_cols_column_major() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 2, 1, 2, 1, 2], 3, Order::ColumnMajor);
+        grid.prepend_cols(2);
+
+        assert_eq!(grid.size(), (2, 5));
+        assert_eq!(grid.order, Order::ColumnMajor);
+        assert_eq!(grid.rows(), 2);
+        assert_eq!(grid.cols(), 5);
+        assert_eq!(grid.into_vec(), vec![0, 0, 0, 0, 1, 2, 1, 2, 1, 2]);
+    }
+
+    #[test]
+    fn prepend_cols_zero() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 2, 1, 2], 2, Order::RowMajor);
+        grid.prepend_cols(0);
+
+        assert_eq!(grid.size(), (2, 2));
+        assert_eq!(grid.order, Order::RowMajor);
+        assert_eq!(grid.rows(), 2);
+        assert_eq!(grid.cols(), 2);
+        assert_eq!(grid.into_vec(), vec![1, 2, 1, 2]);
+    }
+
+    #[test]
+    fn prepend_cols_empty_grid() {
+        let mut grid: Grid<u8> = Grid::init(0, 0, 0);
+        grid.prepend_cols(2);
 
         assert_eq!(grid.size(), (0, 0));
         assert_eq!(grid.order, Order::RowMajor);
@@ -3755,6 +4192,154 @@ mod test {
         test_grid(&grid, 2, 2, Order::ColumnMajor, &[1, 3, 2, 4]);
         assert_eq!(grid.remove_col(1), Some(vec![2, 4]));
         test_grid(&grid, 2, 1, Order::ColumnMajor, &[1, 3]);
+    }
+
+    #[test]
+    fn delete_row() {
+        let mut grid = grid![[1,2][3,4][5,6]];
+        assert!(grid.delete_row(1));
+        test_grid(&grid, 2, 2, Order::RowMajor, &[1, 2, 5, 6]);
+        assert!(grid.delete_row(0));
+        test_grid(&grid, 1, 2, Order::RowMajor, &[5, 6]);
+        assert!(grid.delete_row(0));
+        test_grid(&grid, 0, 0, Order::RowMajor, &[]);
+        assert!(!grid.delete_row(0));
+        test_grid(&grid, 0, 0, Order::RowMajor, &[]);
+    }
+
+    #[test]
+    fn delete_row_out_of_bound() {
+        let mut grid = grid![[1, 2][3, 4]];
+        assert!(!grid.delete_row(5));
+        test_grid(&grid, 2, 2, Order::RowMajor, &[1, 2, 3, 4]);
+        assert!(grid.delete_row(1));
+        test_grid(&grid, 1, 2, Order::RowMajor, &[1, 2]);
+    }
+
+    #[test]
+    fn delete_row_column_major() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 3, 5, 2, 4, 6], 2, Order::ColumnMajor);
+        assert!(grid.delete_row(1));
+        test_grid(&grid, 2, 2, Order::ColumnMajor, &[1, 5, 2, 6]);
+        assert!(grid.delete_row(0));
+        test_grid(&grid, 1, 2, Order::ColumnMajor, &[5, 6]);
+        assert!(grid.delete_row(0));
+        test_grid(&grid, 0, 0, Order::ColumnMajor, &[]);
+        assert!(!grid.delete_row(0));
+        test_grid(&grid, 0, 0, Order::ColumnMajor, &[]);
+    }
+
+    #[test]
+    fn delete_row_out_of_bound_column_major() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 3, 2, 4], 2, Order::ColumnMajor);
+        assert!(!grid.delete_row(5));
+        test_grid(&grid, 2, 2, Order::ColumnMajor, &[1, 3, 2, 4]);
+        assert!(grid.delete_row(1));
+        test_grid(&grid, 1, 2, Order::ColumnMajor, &[1, 2]);
+    }
+
+    #[test]
+    fn delete_col() {
+        let mut grid = grid![[1,2,3,4][5,6,7,8][9,10,11,12][13,14,15,16]];
+        assert!(grid.delete_col(3));
+        let expected = [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15];
+        test_grid(&grid, 4, 3, Order::RowMajor, &expected);
+        assert!(grid.delete_col(0));
+        test_grid(&grid, 4, 2, Order::RowMajor, &[2, 3, 6, 7, 10, 11, 14, 15]);
+        assert!(grid.delete_col(1));
+        test_grid(&grid, 4, 1, Order::RowMajor, &[2, 6, 10, 14]);
+        assert!(grid.delete_col(0));
+        test_grid(&grid, 0, 0, Order::RowMajor, &[]);
+        assert!(!grid.delete_col(0));
+        test_grid(&grid, 0, 0, Order::RowMajor, &[]);
+    }
+
+    #[test]
+    fn delete_col_out_of_bound() {
+        let mut grid = grid![[1, 2][3, 4]];
+        assert!(!grid.delete_col(5));
+        test_grid(&grid, 2, 2, Order::RowMajor, &[1, 2, 3, 4]);
+        assert!(grid.delete_col(1));
+        test_grid(&grid, 2, 1, Order::RowMajor, &[1, 3]);
+    }
+
+    #[test]
+    fn delete_col_column_major() {
+        let internal = vec![1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16];
+        let mut grid = Grid::from_vec_with_order(internal, 4, Order::ColumnMajor);
+        assert!(grid.delete_col(3));
+        let expected = [1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15];
+        test_grid(&grid, 4, 3, Order::ColumnMajor, &expected);
+        assert!(grid.delete_col(0));
+        let expected = [2, 6, 10, 14, 3, 7, 11, 15];
+        test_grid(&grid, 4, 2, Order::ColumnMajor, &expected);
+        assert!(grid.delete_col(1));
+        test_grid(&grid, 4, 1, Order::ColumnMajor, &[2, 6, 10, 14]);
+        assert!(grid.delete_col(0));
+        test_grid(&grid, 0, 0, Order::ColumnMajor, &[]);
+        assert!(!grid.delete_col(0));
+        test_grid(&grid, 0, 0, Order::ColumnMajor, &[]);
+    }
+
+    #[test]
+    fn delete_col_out_of_bound_column_major() {
+        let mut grid = Grid::from_vec_with_order(vec![1, 3, 2, 4], 2, Order::ColumnMajor);
+        assert!(!grid.delete_col(5));
+        test_grid(&grid, 2, 2, Order::ColumnMajor, &[1, 3, 2, 4]);
+        assert!(grid.delete_col(1));
+        test_grid(&grid, 2, 1, Order::ColumnMajor, &[1, 3]);
+    }
+
+    #[test]
+    fn delete_row_multiple() {
+        // Test deleting multiple rows to ensure correctness
+        let mut grid = grid![[1,2,3][4,5,6][7,8,9][10,11,12]];
+        assert!(grid.delete_row(2));
+        test_grid(
+            &grid,
+            3,
+            3,
+            Order::RowMajor,
+            &[1, 2, 3, 4, 5, 6, 10, 11, 12],
+        );
+        assert!(grid.delete_row(1));
+        test_grid(&grid, 2, 3, Order::RowMajor, &[1, 2, 3, 10, 11, 12]);
+        assert!(grid.delete_row(0));
+        test_grid(&grid, 1, 3, Order::RowMajor, &[10, 11, 12]);
+    }
+
+    #[test]
+    fn delete_col_multiple() {
+        // Test deleting multiple columns to ensure correctness
+        let mut grid = grid![[1,2,3,4][5,6,7,8][9,10,11,12]];
+        assert!(grid.delete_col(2));
+        test_grid(&grid, 3, 3, Order::RowMajor, &[1, 2, 4, 5, 6, 8, 9, 10, 12]);
+        assert!(grid.delete_col(1));
+        test_grid(&grid, 3, 2, Order::RowMajor, &[1, 4, 5, 8, 9, 12]);
+        assert!(grid.delete_col(0));
+        test_grid(&grid, 3, 1, Order::RowMajor, &[4, 8, 12]);
+    }
+
+    #[test]
+    fn delete_row_vs_remove_row_equivalence() {
+        // Verify delete_row produces same result as remove_row
+        let mut grid1 = grid![[1,2][3,4][5,6]];
+        let mut grid2 = grid![[1,2][3,4][5,6]];
+
+        grid1.delete_row(1);
+        let _ = grid2.remove_row(1);
+        assert_eq!(grid1, grid2);
+    }
+
+    #[test]
+    fn delete_col_vs_remove_col_equivalence() {
+        // Verify delete_col produces same result as remove_col
+        let mut grid1 = grid![[1,2,3][4,5,6][7,8,9]];
+        let mut grid2 = grid![[1,2,3][4,5,6][7,8,9]];
+
+        grid1.delete_col(1);
+        let _ = grid2.remove_col(1);
+        assert_eq!(grid1, grid2);
     }
 
     #[test]

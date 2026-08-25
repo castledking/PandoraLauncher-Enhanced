@@ -355,8 +355,6 @@ pub unsafe trait VarULE: 'static {
     }
 
     /// Allocate on the heap as a `Box<T>`
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[inline]
     #[cfg(feature = "alloc")]
     fn to_boxed(&self) -> alloc::boxed::Box<Self> {

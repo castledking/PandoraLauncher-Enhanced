@@ -10,9 +10,8 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-rust-version = "1.26"
 name = "signal-hook-registry"
-version = "1.4.8"
+version = "1.4.6"
 authors = [
     "Michal 'vorner' Vaner <vorner@vorner.cz>",
     "Masaki Hara <ackie.h.gmai@gmail.com>",
@@ -31,7 +30,7 @@ keywords = [
     "unix",
     "daemon",
 ]
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0/MIT"
 repository = "https://github.com/vorner/signal-hook"
 
 [badges.maintenance]
@@ -48,14 +47,8 @@ path = "src/lib.rs"
 name = "unregister_signal"
 path = "tests/unregister_signal.rs"
 
-[dependencies.errno]
-version = ">=0.2, <0.4"
-
 [dependencies.libc]
 version = "^0.2"
 
 [dev-dependencies.signal-hook]
 version = "~0.3"
-
-[lints.clippy]
-unnecessary_clippy_cfg = "allow"

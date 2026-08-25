@@ -28,10 +28,11 @@
  */
 use crate::CmsError;
 use crate::writer::write_u16_be;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
 pub struct ColorDateTime {
     pub year: u16,
     pub month: u16,
@@ -69,6 +70,12 @@ fn days_in_month(year: i32, month: i32) -> i32 {
     }
 }
 
+impl Default for ColorDateTime {
+    fn default() -> Self {
+        Self::now()
+    }
+}
+
 impl ColorDateTime {
     /// Parses slice for date time
     pub fn new_from_slice(slice: &[u8]) -> Result<ColorDateTime, CmsError> {
@@ -93,10 +100,15 @@ impl ColorDateTime {
 
     /// Creates a new `ColorDateTime` from the current system time (UTC)
     pub fn now() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(v) => v,
             Err(_) => return Self::default(),
         };
+        #[cfg(target_arch = "wasm32")]
+        use std::time::Duration;
+        #[cfg(target_arch = "wasm32")]
+        let now = Duration::new(365 * 60 * 60 * 24 * 30, 0);
         let mut days = (now.as_secs() / 86_400) as i64;
         let secs_of_day = (now.as_secs() % 86_400) as i64;
 

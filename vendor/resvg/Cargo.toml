@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.67.1"
+edition = "2024"
+rust-version = "1.87.0"
 name = "resvg"
-version = "0.45.1"
+version = "0.46.0"
 build = false
 exclude = ["tests"]
 autolib = false
@@ -30,6 +30,7 @@ keywords = [
 ]
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/linebender/resvg"
+resolver = "2"
 
 [features]
 default = [
@@ -73,11 +74,11 @@ name = "minimal"
 path = "examples/minimal.rs"
 
 [dependencies.gif]
-version = "0.13"
+version = "0.14.1"
 optional = true
 
 [dependencies.image-webp]
-version = "0.2.0"
+version = "0.2.4"
 optional = true
 
 [dependencies.log]
@@ -91,21 +92,21 @@ features = ["eq-separator"]
 version = "0.8"
 
 [dependencies.svgtypes]
-version = "0.15.3"
+version = "0.16.1"
 
 [dependencies.tiny-skia]
 version = "0.11.4"
 
 [dependencies.usvg]
-version = "0.45.1"
+version = "0.46.0"
 default-features = false
 
 [dependencies.zune-jpeg]
-version = "0.4"
+version = "0.5.8"
 optional = true
 
 [dev-dependencies.once_cell]
-version = "1.5"
+version = "1.21"
 
 [dev-dependencies.png]
-version = "0.17"
+version = "0.18.0"

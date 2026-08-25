@@ -201,7 +201,6 @@ fn get_platform_machine_id() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused)]
     use super::*;
 
     #[test]

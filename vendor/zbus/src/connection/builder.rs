@@ -98,49 +98,6 @@ impl<'a> Builder<'a> {
         Ok(Self::new(Target::Address(Address::system()?)))
     }
 
-    /// Create a builder for an IBus connection.
-    ///
-    /// IBus (Intelligent Input Bus) is an input method framework. This method creates a builder
-    /// that will query the IBus daemon for its D-Bus address using the `ibus address` command.
-    ///
-    /// # Platform Support
-    ///
-    /// This method is available on Unix-like systems where IBus is installed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The `ibus` command is not found or fails to execute
-    /// - The IBus daemon is not running
-    /// - The command output cannot be parsed as a valid D-Bus address
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::error::Error;
-    /// # use zbus::connection::Builder;
-    /// # use zbus::block_on;
-    /// #
-    /// # block_on(async {
-    /// let conn = Builder::ibus()?
-    ///     .build()
-    ///     .await?;
-    ///
-    /// // Use the connection to interact with IBus services
-    /// # drop(conn);
-    /// # Ok::<(), zbus::Error>(())
-    /// # }).unwrap();
-    /// #
-    /// # Ok::<_, Box<dyn Error + Send + Sync>>(())
-    /// ```
-    #[cfg(unix)]
-    pub fn ibus() -> Result<Self> {
-        use crate::address::transport::{Ibus, Transport};
-        Ok(Self::new(Target::Address(Address::from(Transport::Ibus(
-            Ibus::new(),
-        )))))
-    }
-
     /// Create a builder for a connection that will use the given [D-Bus bus address].
     ///
     /// # Example
@@ -169,8 +126,7 @@ impl<'a> Builder<'a> {
     /// ```
     ///
     /// **Note:** The IBus address is different for each session. You can find the address for your
-    /// current session using `ibus address` command. For a more convenient way to connect to IBus,
-    /// see [`Builder::ibus`].
+    /// current session using `ibus address` command.
     ///
     /// [D-Bus bus address]: https://dbus.freedesktop.org/doc/dbus-specification.html#addresses
     pub fn address<A>(address: A) -> Result<Self>

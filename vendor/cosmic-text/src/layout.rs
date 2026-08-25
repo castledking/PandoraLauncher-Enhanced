@@ -2,7 +2,9 @@
 
 use core::fmt::Display;
 
-use crate::{math, CacheKey, CacheKeyFlags, Color};
+use core::ops::Range;
+
+use crate::{math, CacheKey, CacheKeyFlags, Color, GlyphDecorationData};
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
@@ -60,6 +62,19 @@ pub struct LayoutGlyph {
     pub cache_key_flags: CacheKeyFlags,
 }
 
+/// A span of consecutive glyphs sharing the same text decoration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecorationSpan {
+    /// Range of glyph indices in `LayoutLine::glyphs` covered by this span
+    pub glyph_range: Range<usize>,
+    /// The decoration config and metrics
+    pub data: GlyphDecorationData,
+    /// Fallback color from the first glyph's `color_opt`
+    pub color_opt: Option<Color>,
+    /// Font size from the first glyph (used to scale EM-unit metrics)
+    pub font_size: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct PhysicalGlyph {
     /// Cache key, see [`CacheKey`]
@@ -104,6 +119,8 @@ pub struct LayoutLine {
     pub line_height_opt: Option<f32>,
     /// Glyphs in line
     pub glyphs: Vec<LayoutGlyph>,
+    /// Text decoration spans covering ranges of glyphs
+    pub decorations: Vec<DecorationSpan>,
 }
 
 /// Wrapping mode
@@ -150,6 +167,29 @@ impl Display for Align {
             Self::End => write!(f, "End"),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Ellipsize {
+    /// No Ellipsizing
+    #[default]
+    None,
+    /// Ellipsizes the start of the last visual line that fits within the `EllipsizeHeightLimit`
+    Start(EllipsizeHeightLimit),
+    /// Ellipsizes the middle of the last visual line that fits within the `EllipsizeHeightLimit`.
+    Middle(EllipsizeHeightLimit),
+    /// Ellipsizes the end of the last visual line that fits within the `EllipsizeHeightLimit`.
+    End(EllipsizeHeightLimit),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EllipsizeHeightLimit {
+    /// Number of lines to show before ellipsizing the rest. Only works if `Wrap` is NOT set to
+    /// `Wrap::None`. Otherwise, it will be ignored and the behavior will be the same as `Lines(1)`
+    Lines(usize),
+    /// Ellipsizes the last line that fits within the given height limit. If `Wrap` is set to
+    /// `Wrap::None`, the behavior will be the same as `Lines(1)`
+    Height(f32),
 }
 
 /// Metrics hinting strategy

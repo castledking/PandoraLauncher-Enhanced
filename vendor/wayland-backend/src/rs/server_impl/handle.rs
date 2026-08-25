@@ -9,12 +9,13 @@ use std::{
 
 use crate::{
     protocol::{same_interface, Interface, Message, ObjectInfo, ANONYMOUS_INTERFACE},
+    rs::DEFAULT_MAX_BUFFER_SIZE,
     types::server::{DisconnectReason, GlobalInfo, InvalidId},
 };
 
 use super::{
     client::ClientStore, registry::Registry, ClientData, ClientId, Credentials, GlobalHandler,
-    InnerClientId, InnerGlobalId, InnerObjectId, ObjectData, ObjectId,
+    GlobalId, InnerClientId, InnerGlobalId, InnerObjectId, ObjectData, ObjectId,
 };
 
 pub(crate) type PendingDestructor<D> = (Arc<dyn ObjectData<D>>, InnerClientId, InnerObjectId);
@@ -25,6 +26,7 @@ pub struct State<D: 'static> {
     pub(crate) registry: Registry<D>,
     pub(crate) pending_destructors: Vec<PendingDestructor<D>>,
     pub(crate) poll_fd: OwnedFd,
+    pub(crate) default_max_buffer_size: usize,
 }
 
 impl<D> State<D> {
@@ -36,6 +38,7 @@ impl<D> State<D> {
             registry: Registry::new(),
             pending_destructors: Vec::new(),
             poll_fd,
+            default_max_buffer_size: DEFAULT_MAX_BUFFER_SIZE,
         }
     }
 
@@ -68,6 +71,16 @@ impl<D> State<D> {
                 let _ = client.flush();
             }
             Ok(())
+        }
+    }
+
+    pub fn set_default_max_buffer_size(&mut self, max_buffer_size: usize) {
+        self.default_max_buffer_size = max_buffer_size;
+    }
+
+    fn set_client_max_buffer_size(&mut self, client: InnerClientId, max_buffer_size: usize) {
+        if let Ok(client) = self.clients.get_client_mut(client) {
+            client.socket.set_max_buffer_size(Some(max_buffer_size));
         }
     }
 }
@@ -244,22 +257,30 @@ impl InnerHandle {
         let mut state = self.state.lock().unwrap();
         let state = (&mut *state as &mut dyn ErasedState)
             .downcast_mut::<State<D>>()
-            .expect("Wrong type parameter passed to Handle::create_global().");
+            .expect("Wrong type parameter passed to Handle::disable_global().");
 
         state.registry.disable_global(id, &mut state.clients)
     }
 
     pub fn remove_global<D: 'static>(&self, id: InnerGlobalId) {
-        let mut state = self.state.lock().unwrap();
-        let state = (&mut *state as &mut dyn ErasedState)
+        let mut state_lock = self.state.lock().unwrap();
+        let state = (&mut *state_lock as &mut dyn ErasedState)
             .downcast_mut::<State<D>>()
-            .expect("Wrong type parameter passed to Handle::create_global().");
+            .expect("Wrong type parameter passed to Handle::remove_global().");
 
-        state.registry.remove_global(id, &mut state.clients)
+        let global = state.registry.remove_global(id, &mut state.clients);
+        // Don't free global user-data until lock is released
+        drop(state_lock);
+        drop(global);
     }
 
     pub fn global_info(&self, id: InnerGlobalId) -> Result<GlobalInfo, InvalidId> {
         self.state.lock().unwrap().global_info(id)
+    }
+
+    #[cfg_attr(not(feature = "libwayland_server_1_22"), allow(dead_code))]
+    pub fn global_name(&self, global: InnerGlobalId, client: InnerClientId) -> Option<u32> {
+        self.state.lock().unwrap().global_name(global, client)
     }
 
     pub fn get_global_handler<D: 'static>(
@@ -275,6 +296,16 @@ impl InnerHandle {
 
     pub fn flush(&mut self, client: Option<ClientId>) -> std::io::Result<()> {
         self.state.lock().unwrap().flush(client)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_default_max_buffer_size(&self, max_buffer_size: usize) {
+        self.state.lock().unwrap().set_default_max_buffer_size(max_buffer_size)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_client_max_buffer_size(&self, client: InnerClientId, max_buffer_size: usize) {
+        self.state.lock().unwrap().set_client_max_buffer_size(client, max_buffer_size)
     }
 }
 
@@ -308,7 +339,10 @@ pub(crate) trait ErasedState: downcast_rs::Downcast {
     fn post_error(&mut self, object_id: InnerObjectId, error_code: u32, message: CString);
     fn kill_client(&mut self, client_id: InnerClientId, reason: DisconnectReason);
     fn global_info(&self, id: InnerGlobalId) -> Result<GlobalInfo, InvalidId>;
+    fn global_name(&self, global: InnerGlobalId, client: InnerClientId) -> Option<u32>;
     fn flush(&mut self, client: Option<ClientId>) -> std::io::Result<()>;
+    fn set_default_max_buffer_size(&mut self, max_buffer_size: usize);
+    fn set_client_max_buffer_size(&mut self, client: InnerClientId, max_buffer_size: usize);
 }
 
 downcast_rs::impl_downcast!(ErasedState);
@@ -323,11 +357,11 @@ impl<D> ErasedState for State<D> {
         stream: UnixStream,
         data: Arc<dyn ClientData>,
     ) -> std::io::Result<InnerClientId> {
-        let id = self.clients.create_client(stream, data);
+        let id = self.clients.create_client(stream, data, self.default_max_buffer_size);
         let client = self.clients.get_client(id.clone()).unwrap();
 
         // register the client to the internal epoll
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "redox"))]
         let ret = {
             use rustix::event::epoll;
             epoll::add(
@@ -450,7 +484,30 @@ impl<D> ErasedState for State<D> {
         self.registry.get_info(id)
     }
 
+    fn global_name(&self, global_id: InnerGlobalId, client_id: InnerClientId) -> Option<u32> {
+        let client = self.clients.get_client(client_id.clone()).ok()?;
+        let handler = self.registry.get_handler(global_id.clone()).ok()?;
+        let name = global_id.id;
+
+        let can_view =
+            handler.can_view(ClientId { id: client_id }, &client.data, GlobalId { id: global_id });
+
+        if can_view {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
     fn flush(&mut self, client: Option<ClientId>) -> std::io::Result<()> {
         self.flush(client)
+    }
+
+    fn set_default_max_buffer_size(&mut self, max_buffer_size: usize) {
+        self.set_default_max_buffer_size(max_buffer_size)
+    }
+
+    fn set_client_max_buffer_size(&mut self, client: InnerClientId, max_buffer_size: usize) {
+        self.set_client_max_buffer_size(client, max_buffer_size)
     }
 }

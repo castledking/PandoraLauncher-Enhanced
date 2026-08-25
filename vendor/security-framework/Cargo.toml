@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2024"
-rust-version = "1.85"
+edition = "2021"
+rust-version = "1.71"
 name = "security-framework"
-version = "3.7.0"
+version = "3.5.1"
 authors = [
     "Steven Fackler <sfackler@gmail.com>",
     "Kornel <kornel@geekhood.net>",
@@ -43,7 +43,6 @@ categories = [
 ]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kornelski/rust-security-framework"
-resolver = "2"
 
 [package.metadata.docs.rs]
 targets = [
@@ -56,18 +55,24 @@ features = ["OSX_10_15"]
 status = "looking-for-maintainer"
 
 [features]
-OSX_10_12 = []
-OSX_10_13 = []
-OSX_10_14 = []
-OSX_10_15 = ["security-framework-sys/OSX_10_15"]
-alpn = []
-default = [
-    "OSX_10_14",
+OSX_10_12 = ["security-framework-sys/OSX_10_12"]
+OSX_10_13 = [
+    "OSX_10_12",
+    "security-framework-sys/OSX_10_13",
     "alpn",
     "session-tickets",
 ]
+OSX_10_14 = [
+    "OSX_10_13",
+    "security-framework-sys/OSX_10_14",
+]
+OSX_10_15 = [
+    "OSX_10_14",
+    "security-framework-sys/OSX_10_15",
+]
+alpn = []
+default = ["OSX_10_12"]
 job-bless = []
-macos-12 = ["security-framework-sys/macos-12"]
 nightly = []
 session-tickets = []
 sync-keychain = ["OSX_10_13"]
@@ -89,7 +94,7 @@ name = "set_internet_password"
 path = "examples/set_internet_password.rs"
 
 [dependencies.bitflags]
-version = "2.11"
+version = "2.6"
 
 [dependencies.core-foundation]
 version = "0.10"
@@ -105,7 +110,7 @@ version = "0.4.20"
 optional = true
 
 [dependencies.security-framework-sys]
-version = "2.17"
+version = "2.15"
 default-features = false
 
 [dev-dependencies.env_logger]
@@ -121,7 +126,7 @@ version = "3.12.0"
 version = "0.3.23"
 
 [dev-dependencies.x509-parser]
-version = "0.18"
+version = "0.16"
 
 [lints.clippy]
 cast_possible_truncation = "allow"

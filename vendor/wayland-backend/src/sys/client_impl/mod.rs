@@ -8,7 +8,7 @@ use std::{
         io::{BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
         net::UnixStream,
     },
-    ptr,
+    ptr::{self, NonNull},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, MutexGuard, Weak,
@@ -139,11 +139,22 @@ impl InnerObjectId {
         Ok(Self { id, ptr, alive, interface })
     }
 
-    pub fn as_ptr(&self) -> *mut wl_proxy {
+    pub fn as_ptr(&self) -> Result<NonNull<wl_proxy>, InvalidId> {
         if self.alive.as_ref().map(|alive| alive.load(Ordering::Acquire)).unwrap_or(true) {
-            self.ptr
+            NonNull::new(self.ptr).ok_or(InvalidId)
         } else {
-            std::ptr::null_mut()
+            Err(InvalidId)
+        }
+    }
+
+    #[cfg(feature = "libwayland_client_1_23")]
+    pub fn display_ptr(&self) -> Result<NonNull<wl_display>, InvalidId> {
+        if self.alive.as_ref().map(|alive| alive.load(Ordering::Acquire)).unwrap_or(true) {
+            let ptr =
+                unsafe { ffi_dispatch!(wayland_client_handle(), wl_proxy_get_display, self.ptr) };
+            NonNull::new(ptr).ok_or(InvalidId)
+        } else {
+            Err(InvalidId)
         }
     }
 }
@@ -308,6 +319,19 @@ impl InnerBackend {
 
     pub fn dispatch_inner_queue(&self) -> Result<usize, WaylandError> {
         self.inner.dispatch_lock.lock().unwrap().dispatch_pending(self.inner.clone())
+    }
+
+    #[cfg(feature = "libwayland_client_1_23")]
+    pub fn set_max_buffer_size(&self, max_buffer_size: Option<usize>) {
+        let guard = self.lock_state();
+        unsafe {
+            ffi_dispatch!(
+                wayland_client_handle(),
+                wl_display_set_max_buffer_size,
+                guard.display,
+                max_buffer_size.unwrap_or(0)
+            )
+        }
     }
 }
 
@@ -543,6 +567,11 @@ impl InnerBackend {
         child_spec: Option<(&'static Interface, u32)>,
     ) -> Result<ObjectId, InvalidId> {
         let mut guard = self.lock_state();
+
+        if id.is_null() {
+            return Err(InvalidId);
+        }
+
         // check that the argument list is valid
         let message_desc = match id.interface.requests.get(opcode as usize) {
             Some(msg) => msg,
@@ -551,8 +580,7 @@ impl InnerBackend {
             }
         };
 
-        if !id.alive.as_ref().map(|a| a.load(Ordering::Acquire)).unwrap_or(true) || id.ptr.is_null()
-        {
+        if !id.alive.as_ref().map(|a| a.load(Ordering::Acquire)).unwrap_or(true) {
             if self.inner.debug {
                 debug::print_send_message(id.interface.name, id.id, message_desc.name, &args, true);
             }

@@ -48,13 +48,13 @@ pub fn fill_path(
         usvg::Paint::Color(c) => {
             paint.set_color_rgba8(c.red, c.green, c.blue, fill.opacity().to_u8());
         }
-        usvg::Paint::LinearGradient(ref lg) => {
+        usvg::Paint::LinearGradient(lg) => {
             paint.shader = convert_linear_gradient(lg, fill.opacity())?;
         }
-        usvg::Paint::RadialGradient(ref rg) => {
+        usvg::Paint::RadialGradient(rg) => {
             paint.shader = convert_radial_gradient(rg, fill.opacity())?;
         }
-        usvg::Paint::Pattern(ref pattern) => {
+        usvg::Paint::Pattern(pattern) => {
             let (patt_pix, patt_ts) = render_pattern_pixmap(pattern, ctx, transform)?;
 
             pattern_pixmap = patt_pix;
@@ -64,7 +64,7 @@ pub fn fill_path(
                 tiny_skia::FilterQuality::Bicubic,
                 fill.opacity().get(),
                 patt_ts,
-            )
+            );
         }
     }
     paint.anti_alias = path.rendering_mode().use_shape_antialiasing();
@@ -88,13 +88,13 @@ fn stroke_path(
         usvg::Paint::Color(c) => {
             paint.set_color_rgba8(c.red, c.green, c.blue, stroke.opacity().to_u8());
         }
-        usvg::Paint::LinearGradient(ref lg) => {
+        usvg::Paint::LinearGradient(lg) => {
             paint.shader = convert_linear_gradient(lg, stroke.opacity())?;
         }
-        usvg::Paint::RadialGradient(ref rg) => {
+        usvg::Paint::RadialGradient(rg) => {
             paint.shader = convert_radial_gradient(rg, stroke.opacity())?;
         }
-        usvg::Paint::Pattern(ref pattern) => {
+        usvg::Paint::Pattern(pattern) => {
             let (patt_pix, patt_ts) = render_pattern_pixmap(pattern, ctx, transform)?;
 
             pattern_pixmap = patt_pix;
@@ -104,7 +104,7 @@ fn stroke_path(
                 tiny_skia::FilterQuality::Bicubic,
                 stroke.opacity().get(),
                 patt_ts,
-            )
+            );
         }
     }
     paint.anti_alias = path.rendering_mode().use_shape_antialiasing();
@@ -118,7 +118,7 @@ fn stroke_path(
 fn convert_linear_gradient(
     gradient: &usvg::LinearGradient,
     opacity: usvg::Opacity,
-) -> Option<tiny_skia::Shader> {
+) -> Option<tiny_skia::Shader<'_>> {
     let (mode, points) = convert_base_gradient(gradient, opacity)?;
 
     let shader = tiny_skia::LinearGradient::new(
@@ -135,7 +135,7 @@ fn convert_linear_gradient(
 fn convert_radial_gradient(
     gradient: &usvg::RadialGradient,
     opacity: usvg::Opacity,
-) -> Option<tiny_skia::Shader> {
+) -> Option<tiny_skia::Shader<'_>> {
     let (mode, points) = convert_base_gradient(gradient, opacity)?;
 
     let shader = tiny_skia::RadialGradient::new(
@@ -169,7 +169,7 @@ fn convert_base_gradient(
             stop.color().blue,
             alpha.to_u8(),
         );
-        points.push(tiny_skia::GradientStop::new(stop.offset().get(), color))
+        points.push(tiny_skia::GradientStop::new(stop.offset().get(), color));
     }
 
     Some((mode, points))

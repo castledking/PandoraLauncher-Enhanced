@@ -8,8 +8,9 @@
 //! Here, `GET /` will be sent to the `root` service, while all other requests go to `not_found`.
 //!
 //! ```rust
-//! # use std::task::{Context, Poll, ready};
+//! # use std::task::{Context, Poll};
 //! # use tower_service::Service;
+//! # use futures_util::future::{ready, Ready, poll_fn};
 //! # use tower::steer::Steer;
 //! # use tower::service_fn;
 //! # use tower::util::BoxService;

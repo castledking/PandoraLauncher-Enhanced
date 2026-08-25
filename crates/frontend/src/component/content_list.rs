@@ -17,12 +17,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, IndexPath, Sizable,
-    button::{Button, ButtonVariants},
-    h_flex,
-    list::{ListDelegate, ListItem, ListState},
-    switch::Switch,
-    v_flex,
+    ActiveTheme, Disableable, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, list::{ListDelegate, ListItem, ListState}, spinner::Spinner, switch::Switch, v_flex
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
@@ -89,6 +84,7 @@ pub struct ContentListDelegate {
     backend_handle: BackendHandle,
     sort_key: InstanceContentSortKey,
     enabled_first: bool,
+    loading: bool,
     content: Vec<InstanceContentSummary>,
     searched: Option<Vec<SummaryOrChild>>,
     children: Vec<Vec<ContentEntryChild>>,
@@ -120,6 +116,7 @@ impl ContentListDelegate {
             backend_handle,
             sort_key,
             enabled_first,
+            loading: true,
             content: Vec::new(),
             searched: None,
             children: Vec::new(),
@@ -304,6 +301,25 @@ impl ContentListDelegate {
             },
         };
 
+        let unzip_button = if summary.content_summary.extra.modpack_files().is_some() {
+            Some(Button::new(("unzip", element_id))
+                .outline()
+                .icon(PandoraIcon::PackageOpen)
+                .tooltip(t::instance::content::unzip::tooltip())
+                .on_click({
+                    let instance_id = self.id;
+                    let content_id = summary.id;
+                    let content_title = summary.filename.clone();
+                    let backend_handle = self.backend_handle.clone();
+                    move |_: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        crate::modals::unzip_modpack::open_unzip_modpack(instance_id, content_id, &content_title, backend_handle.clone(), window, cx);
+                    }
+                }))
+        } else {
+            None
+        };
+
         let backend_handle = self.backend_handle.clone();
 
         let toggle_control = Switch::new(("toggle", element_id))
@@ -383,12 +399,15 @@ impl ContentListDelegate {
                 content.border_color(cx.theme().selection).bg(cx.theme().selection.alpha(0.2))
             });
 
-        if let Some(update_button) = update_button {
-            item_content =
-                item_content.child(h_flex().absolute().right_4().gap_2().child(update_button).child(delete_button))
-        } else {
-            item_content = item_content.child(delete_button.absolute().right_4())
+        let mut right_buttons = Vec::new();
+        if let Some(unzip_button) = unzip_button {
+            right_buttons.push(unzip_button.into_any_element());
         }
+        if let Some(update_button) = update_button {
+            right_buttons.push(update_button.into_any_element());
+        }
+        right_buttons.push(delete_button.into_any_element());
+        item_content = item_content.child(h_flex().absolute().right_4().gap_2().children(right_buttons));
 
         ListItem::new(("item", element_id)).p_1().child(item_content).on_click(cx.listener(
             move |this, click: &ClickEvent, _, cx| {
@@ -544,16 +563,9 @@ impl ContentListDelegate {
             .child(desc1.when(!visually_enabled, |this| this.line_through()))
             .when_some(desc2, |div, desc2| div.child(desc2.when(!visually_enabled, |this| this.line_through())));
 
-        if blocked {
-            item_content = item_content.child(
-                ErrorAlert::new(
-                    "Blocked".into(),
-                    "The mod author has blocked downloads from third-party launchers".into(),
-                )
-                .w(Length::Auto),
-            );
-        } else if child.is_missing {
-            item_content = item_content.child(Button::new("download").label("Download").success().on_click({
+        if child.disabled_third_party_downloads {
+            item_content = item_content.child(ErrorAlert::new(t::instance::content::blocked().into(), t::instance::content::install::no_third_party_downloads().into()).w(Length::Auto));
+            item_content = item_content.child(Button::new("download").label(t::instance::content::download()).success().on_click({
                 let backend_handle = self.backend_handle.clone();
                 let id = self.id;
                 let content_id = child.parent;
@@ -566,13 +578,8 @@ impl ContentListDelegate {
                         modal_action: modal_action.clone(),
                     });
 
-                    crate::modals::generic::show_modal(
-                        window,
-                        cx,
-                        "Downloading children".into(),
-                        "Error downloading children".into(),
-                        modal_action,
-                    );
+                    crate::modals::generic::show_modal(window, cx, t::instance::content::downloading_children().into(),
+                        t::instance::content::error_downloading_children().into(), modal_action);
                 }
             }));
         } else {
@@ -662,7 +669,7 @@ impl ContentListDelegate {
                 // them under the Mods tab (where the modpack bundle itself lives).
                 if self.content_folder == ContentFolder::Mods {
                     for unknown_file in unknown_files.iter() {
-                        let filename: Arc<str> = format!("File ID: {}", unknown_file.file_id).into();
+                        let filename: Arc<str> = t::instance::content::file_id(unknown_file.file_id).into();
 
                         let lowercase_filename: Arc<str> = filename.to_ascii_lowercase().into();
                         let lowercase_search_keys = Arc::new([lowercase_filename]);
@@ -843,6 +850,7 @@ impl ContentListDelegate {
         }
         drop(updating);
 
+        self.loading = false;
         self.content = mods.clone();
         self.children = children;
         self.searched = None;
@@ -939,12 +947,24 @@ impl ListDelegate for ContentListDelegate {
         }
     }
 
-    fn render_item(
+    fn loading(&self, _cx: &App) -> bool {
+        self.loading
+    }
+
+    fn render_loading(
         &mut self,
-        ix: IndexPath,
         _window: &mut Window,
         cx: &mut Context<ListState<Self>>,
-    ) -> Option<Self::Item> {
+    ) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .h_1_2()
+            .items_center()
+            .justify_center()
+            .child(Spinner::new().color(cx.theme().muted_foreground).with_size(px(36.0)))
+    }
+
+    fn render_item(&mut self, ix: IndexPath, _window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<Self::Item> {
         let mut index = ix.row;
 
         if let Some(searched) = &self.searched {

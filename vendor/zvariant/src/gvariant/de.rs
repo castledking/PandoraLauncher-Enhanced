@@ -341,7 +341,9 @@ impl<'de, 'd, 'sig, 'f, #[cfg(unix)] F: AsFd, #[cfg(not(unix))] F> de::Deseriali
         V: Visitor<'de>,
     {
         match self.0.signature {
-            Signature::Str => self.deserialize_str(visitor),
+            Signature::Str | Signature::ObjectPath | Signature::Signature => {
+                self.deserialize_str(visitor)
+            }
             Signature::U32 => self.deserialize_u32(visitor),
             Signature::Structure(fields) => {
                 let mut fields = fields.iter();

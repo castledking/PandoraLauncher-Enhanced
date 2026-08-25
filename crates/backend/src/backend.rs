@@ -20,19 +20,19 @@ use bridge::{
     handle::{BackendHandle, BackendReceiver, FrontendHandle},
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath},
     instance::{
-        ContentFolder, ContentSummary, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath,
+        ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath,
         ModpackFileSource,
     },
     message::{EmbeddedOrRaw, MessageToFrontend},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
-    safe_path::SafePath,
+    safe_path::SafePath
 };
 use image::ImageFormat;
 use indexmap::IndexSet;
 use parking_lot::RwLock;
 use reqwest::{StatusCode, redirect::Policy};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use schema::{
     auxiliary::AuxiliaryContentMeta,
     backend_config::{BackendConfig, ProxyConfig, SyncTargets},
@@ -585,7 +585,6 @@ impl BackendState {
 
         if let Some(login_tracker) = login_tracker {
             login_tracker.set_total(AUTH_STAGE_COUNT as usize + 1);
-            login_tracker.notify();
         }
 
         let mut last_auth_stage = None;
@@ -602,7 +601,6 @@ impl BackendState {
 
             if let Some(login_tracker) = login_tracker {
                 login_tracker.set_count(stage as usize + 1);
-                login_tracker.notify();
             }
 
             if let Some(last_stage) = last_auth_stage {
@@ -746,7 +744,6 @@ impl BackendState {
                         Ok(profile) => {
                             if let Some(login_tracker) = login_tracker {
                                 login_tracker.set_count(AUTH_STAGE_COUNT as usize + 1);
-                                login_tracker.notify();
                             }
 
                             return Ok((profile, access_token));
@@ -811,7 +808,7 @@ impl BackendState {
             if connector.exists() {
                 let original_connector = original_mods_dir.join(".connector");
                 _ = std::fs::create_dir_all(&original_connector);
-                _ = crate::copy_content_recursive(&connector, &original_connector, false, &|_, _| {});
+                _ = crate::fs::copy_content_recursive(&connector, &original_connector, false, &|_, _| {});
             }
         }
 
@@ -855,73 +852,100 @@ impl BackendState {
             return;
         };
 
-        let mut mod_copies = Vec::new();
+        let mut known_files: FxHashSet<Arc<Path>> = FxHashSet::with_capacity_and_hasher(mods.len() * 2, FxBuildHasher);
+        for content in mods.iter() {
+            known_files.insert(content.path.clone());
+            if let Some(aux) = crate::fs::pandora_aux_path_for_content(&content) {
+                known_files.insert(aux.into());
+            }
+        }
 
-        // Remove .pandora.filename mods (todo: get rid of this)
+        let mut other_files = Vec::new();
         if let Ok(read_dir) = std::fs::read_dir(&mods_dir) {
             for entry in read_dir {
                 let Ok(entry) = entry else {
                     continue;
                 };
                 let path = entry.path();
-                let Some(file_name) = path.file_name() else {
-                    continue;
-                };
 
-                let file_name = file_name.as_encoded_bytes();
-                if file_name.starts_with(b".pandora.") {
-                    log::trace!("Removing temporary mod file {:?}", &file_name);
-                    _ = std::fs::remove_file(entry.path());
+                // Remove .pandora.filename mods (todo: get rid of this)
+                if let Some(file_name) = path.file_name() {
+                    let file_name = file_name.as_encoded_bytes();
+                    if file_name.starts_with(b".pandora.") {
+                        log::trace!("Removing temporary mod file {:?}", &file_name);
+                        _ = std::fs::remove_file(entry.path());
+                        continue;
+                    }
+                }
+
+                if !known_files.contains(&*path) {
+                    if let Ok(relative) = path.strip_prefix(&mods_dir) {
+                        other_files.push(relative.to_path_buf());
+                    }
                 }
             }
         }
 
-        self.prelaunch_collect_mods_and_apply_modpack(
-            loader,
-            minecraft_version,
-            &mods,
-            &dot_minecraft_dir,
-            &mods_dir,
-            &mut mod_copies,
-            modal_action,
-        )
-        .await;
+        let mod_copies = self.apply_modpack_and_collect_mods(loader, minecraft_version, &mods, &dot_minecraft_dir, &mods_dir, modal_action).await;
 
-        let sandbox = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             instance.set_frozen_mods_folder(true);
-            instance.configuration.get().sandbox
-        } else {
-            true
-        };
+        }
 
         let original_mods_dir = root_dir.join("original_mods");
         if let Err(err) = std::fs::rename(&mods_dir, &original_mods_dir) {
             log::error!("Unable to move mods dir ({:?}) to {:?}:\n{:?}", &mods_dir, &original_mods_dir, err);
             return;
         }
-        self.prelaunch_create_mods_dir(mod_copies, &mods_dir, modal_action);
 
-        // Copy sinytra connector cache
-        if !sandbox {
-            let original_connector = original_mods_dir.join(".connector");
-            if original_connector.exists() {
-                let connector = mods_dir.join(".connector");
-                _ = std::fs::create_dir_all(&connector);
-                _ = crate::copy_content_recursive(&original_connector, &connector, false, &|_, _| {});
+        _ = std::fs::create_dir_all(&mods_dir);
+
+        let copy_tracker = modal_action.push_tracker("Copying immutable mods directory".into());
+        self.apply_copies_to_mods_dir(mod_copies, &mods_dir, &copy_tracker);
+        copy_tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+        // Copy any additional files which aren't mods
+        if !other_files.is_empty() {
+            let tracker = modal_action.push_tracker("Copying extra files into mods directory".into());
+            tracker.set_total(other_files.len());
+
+            for other_file in other_files {
+                let from = original_mods_dir.join(&other_file);
+                let to = mods_dir.join(&other_file);
+
+                if from.is_dir() {
+                    let name = other_file.file_name().map(|s| s.to_string_lossy()).unwrap_or_default();
+                    let inner = modal_action.push_tracker(format!("Copying '{}' folder", name).into());
+
+                    _ = std::fs::create_dir_all(&to);
+                    let res = crate::fs::copy_content_recursive(&from, &to, false, &|count, total| {
+                        inner.set_count(count as usize);
+                        inner.set_total(total as usize);
+                    });
+
+                    if let Err(err) = res {
+                        log::error!("Unable to copy folder {:?} to {:?}: {}", from, to, err);
+                        inner.set_finished(ProgressTrackerFinishType::Error);
+                    } else {
+                        inner.set_finished(ProgressTrackerFinishType::Normal);
+                    }
+                } else {
+                    let res = crate::fs::fastcopy(&from, &to, true, false);
+                    if let Err(err) = res {
+                        log::error!("Unable to copy file {:?} to {:?}: {}", from, to, err);
+                    }
+                }
+
+                tracker.add_count(1);
             }
+
+            tracker.set_finished(ProgressTrackerFinishType::Normal);
         }
     }
 
-    async fn prelaunch_collect_mods_and_apply_modpack(
-        self: &Arc<Self>,
-        loader: Loader,
-        minecraft_version: Ustr,
-        mods: &[InstanceContentSummary],
-        dot_minecraft_dir: &Path,
-        mod_dir: &Path,
-        mod_copies: &mut Vec<PrelaunchModCopy>,
-        modal_action: &ModalAction,
-    ) {
+    pub async fn apply_modpack_and_collect_mods(self: &Arc<Self>, loader: Loader, minecraft_version: Ustr, mods: &[InstanceContentSummary], dot_minecraft_dir: &Path, mod_dir: &Path, modal_action: &ModalAction) -> Vec<PrelaunchModCopy> {
+        let mut mod_copies = Vec::new();
+
         struct ModpackInstall {
             aux_path: Option<PathBuf>,
             files: Vec<ModpackFile>,
@@ -957,27 +981,18 @@ impl BackendState {
                     let Ok(rel_path) = path.strip_prefix(&mod_dir) else {
                         continue;
                     };
-                    let Some(rel_path) = SafePath::from_std_path(rel_path) else {
-                        continue;
-                    };
 
                     let extension = path.extension().and_then(OsStr::to_str);
-                    let content_library_path = crate::create_content_library_path(
-                        &content_library_dir,
-                        summary.content_summary.hash,
-                        extension,
-                    );
+                    let content_library_path = crate::fs::create_content_library_path(&content_library_dir, summary.content_summary.hash, extension);
 
                     if content_library_path.exists() {
                         mod_copies.push(PrelaunchModCopy {
-                            path: rel_path,
-                            source: PrelaunchModCopySource::FromContentLibrary {
-                                hash: summary.content_summary.hash,
-                            },
+                            path: rel_path.to_path_buf(),
+                            source: PrelaunchModCopySource::FromContentLibrary { hash: summary.content_summary.hash },
                         });
                     } else if let Ok(file) = std::fs::read(&path) {
                         mod_copies.push(PrelaunchModCopy {
-                            path: rel_path,
+                            path: rel_path.to_path_buf(),
                             source: PrelaunchModCopySource::FromBytes { bytes: file.into() },
                         });
                     }
@@ -1004,7 +1019,7 @@ impl BackendState {
                     .collect::<Vec<_>>();
 
                 modpack_installs.push(ModpackInstall {
-                    aux_path: crate::pandora_aux_path_for_content(&summary),
+                    aux_path: crate::fs::pandora_aux_path_for_content(&summary),
                     files: filtered_files,
                 });
             }
@@ -1013,7 +1028,7 @@ impl BackendState {
         for modpack_install in modpack_installs {
             let content_library_dir = &self.directories.content_library_dir.clone();
             let mut aux: Option<AuxiliaryContentMeta> = if let Some(aux_path) = &modpack_install.aux_path {
-                Some(crate::read_json(&aux_path).unwrap_or_default())
+                Some(crate::fs::read_json(&aux_path).unwrap_or_default())
             } else {
                 None
             };
@@ -1033,7 +1048,7 @@ impl BackendState {
 
                 // Always try to override config/yosbr/ files
                 if path.starts_with("config/yosbr/") {
-                    return !crate::check_sha1_hash(dest, new_sha1).unwrap_or(false);
+                    return !crate::fs::check_sha1_hash(dest, new_sha1).unwrap_or(false);
                 }
 
                 let mut old_hash = [0u8; 20];
@@ -1041,7 +1056,7 @@ impl BackendState {
                     return true;
                 };
 
-                if let Ok(matches) = crate::check_sha1_hash(dest, old_hash) {
+                if let Ok(matches) = crate::fs::check_sha1_hash(dest, old_hash) {
                     // Override the file if the hash on disk matches the old hash, and the override has changed
                     // This makes it so that if the file wasn't modified, it'll override with the new version
                     // But if the file was modified by the user, it'll avoid overriding
@@ -1053,10 +1068,8 @@ impl BackendState {
             }
 
             if !modpack_install.files.is_empty() {
-                let tracker = ProgressTracker::new("Copying modpack files".into(), self.send.clone());
-                modal_action.trackers.push(tracker.clone());
+                let tracker = modal_action.push_tracker("Copying modpack files".into());
                 tracker.set_total(modpack_install.files.len());
-                tracker.notify();
 
                 let mut aux_changed = false;
 
@@ -1069,7 +1082,7 @@ impl BackendState {
                     if let ModpackFileSource::Builtin { bytes } = file.source {
                         if let Some(filename) = rel_path.strip_prefix("mods") {
                             mod_copies.push(PrelaunchModCopy {
-                                path: filename,
+                                path: filename.to_path(Path::new(".")),
                                 source: PrelaunchModCopySource::FromBytes {
                                     bytes: bytes.clone(),
                                 },
@@ -1086,13 +1099,13 @@ impl BackendState {
                                     aux_changed = true;
                                 }
 
-                                _ = crate::write_safe(&dest_path, &bytes);
+                                _ = crate::fs::write_safe(&dest_path, &bytes);
                             }
                         }
                     } else {
                         if let Some(filename) = rel_path.strip_prefix("mods") {
                             mod_copies.push(PrelaunchModCopy {
-                                path: filename,
+                                path: filename.to_path(Path::new(".")),
                                 source: PrelaunchModCopySource::FromContentLibrary {
                                     hash: file.hash,
                                 },
@@ -1100,11 +1113,7 @@ impl BackendState {
                         } else {
                             let dest_path = rel_path.to_path(&dot_minecraft_dir);
 
-                            let content_path = crate::create_content_library_path(
-                                content_library_dir,
-                                file.hash,
-                                rel_path.extension(),
-                            );
+                            let content_path = crate::fs::create_content_library_path(content_library_dir, file.hash, rel_path.extension());
 
                             if should_override_file(file.path.as_str(), &dest_path, file.hash, &aux) {
                                 if let Some(aux) = &mut aux {
@@ -1115,57 +1124,48 @@ impl BackendState {
                                     aux_changed = true;
                                 }
 
-                                let _ = std::fs::create_dir_all(dest_path.parent().unwrap());
-                                let _ = std::fs::copy(content_path, dest_path);
+                                _ = std::fs::create_dir_all(dest_path.parent().unwrap());
+                                _ = crate::fs::fastcopy(&content_path, &dest_path, true, false);
                             }
                         }
                     }
 
                     tracker.add_count(1);
-                    tracker.notify();
                 }
 
                 if let Some(aux_path) = &modpack_install.aux_path
                     && aux_changed
                 {
                     if let Ok(bytes) = serde_json::to_vec(aux.as_ref().unwrap()) {
-                        _ = crate::write_safe(&aux_path, &bytes);
+                        _ = crate::fs::write_safe(&aux_path, &bytes);
                     }
                 }
 
                 tracker.set_finished(ProgressTrackerFinishType::Normal);
-                tracker.notify();
             }
         }
+
+        mod_copies
     }
 
-    fn prelaunch_create_mods_dir(
-        &self,
-        mod_copies: Vec<PrelaunchModCopy>,
-        mods_dir: &Path,
-        modal_action: &ModalAction,
-    ) {
-        let tracker = ProgressTracker::new("Copying immutable mods directory".into(), self.send.clone());
-        modal_action.trackers.push(tracker.clone());
-
+    pub fn apply_copies_to_mods_dir(&self, mod_copies: Vec<PrelaunchModCopy>, mods_dir: &Path, tracker: &ProgressTracker) {
         tracker.set_total(mod_copies.len());
-        tracker.notify();
 
         let content_library_dir = &self.directories.content_library_dir.clone();
 
         for mod_copy in mod_copies {
-            let target_path = mod_copy.path.to_path(mods_dir);
+            let target_path = mods_dir.join(&mod_copy.path);
             if let Some(parent) = target_path.parent() {
                 _ = std::fs::create_dir_all(parent);
             }
             match mod_copy.source {
                 PrelaunchModCopySource::FromContentLibrary { hash } => {
                     let extension = mod_copy.path.extension();
-                    let path = crate::create_content_library_path(&content_library_dir, hash, extension);
+                    let path = crate::fs::create_content_library_path_osstrext(&content_library_dir, hash, extension);
 
                     if !path.exists() {
                         log::error!("Unable to copy from content library because path doesn't exist: {:?}", path);
-                    } else if let Err(err) = std::fs::copy(&path, &target_path) {
+                    } else if let Err(err) = crate::fs::fastcopy(&path, &target_path, true, false) {
                         log::error!("Error copying mod from {:?} to {:?}:\n{:?}", path, target_path, err);
                     }
                 },
@@ -1176,10 +1176,7 @@ impl BackendState {
                 },
             }
             tracker.add_count(1);
-            tracker.notify();
         }
-
-        tracker.set_finished(ProgressTrackerFinishType::Normal);
     }
 
     pub async fn download_modpack_children(
@@ -1266,10 +1263,8 @@ impl BackendState {
         }
 
         if !curseforge_file_ids.is_empty() {
-            let tracker = ProgressTracker::new("Requesting download URLs from CurseForge".into(), self.send.clone());
-            modal_action.trackers.push(tracker.clone());
+            let tracker = modal_action.push_tracker("Requesting download URLs from CurseForge".into());
             tracker.set_total(1);
-            tracker.notify();
 
             let files_result = self
                 .meta
@@ -1280,7 +1275,6 @@ impl BackendState {
 
             tracker.set_count(1);
             tracker.set_finished(ProgressTrackerFinishType::from_err(files_result.is_err()));
-            tracker.notify();
 
             if let Ok(files) = files_result {
                 for file in files.data.iter() {
@@ -1337,10 +1331,8 @@ impl BackendState {
 
         // Recover blocked CurseForge files from Modrinth by matching sha1 hashes.
         if !blocked_curseforge_files.is_empty() {
-            let tracker = ProgressTracker::new("Recovering blocked mods from Modrinth".into(), self.send.clone());
-            modal_action.trackers.push(tracker.clone());
+            let tracker = modal_action.push_tracker("Recovering blocked mods from Modrinth".into());
             tracker.set_total(1);
-            tracker.notify();
 
             let hashes: Arc<[Arc<str>]> = blocked_curseforge_files.iter().map(|(hex, _, _)| hex.clone()).collect();
             let result = self
@@ -1353,7 +1345,6 @@ impl BackendState {
 
             tracker.set_count(1);
             tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
-            tracker.notify();
 
             if let Ok(response) = result {
                 for (sha1_hex, hash, path) in &blocked_curseforge_files {
@@ -1435,9 +1426,8 @@ impl BackendState {
         icon: Option<EmbeddedOrRaw>,
     ) -> Option<PathBuf> {
         log::info!("Creating instance {name}");
-        if !crate::is_single_component_path_str(&name) {
-            self.send
-                .send_warning(format!("Unable to create instance, name must not be a path: {}", name));
+        if !crate::fs::is_single_component_path_str(&name) {
+            self.send.send_warning(format!("Unable to create instance, name must not be a path: {}", name));
             return None;
         }
         if !sanitize_filename::is_sanitized_with_options(
@@ -1473,7 +1463,7 @@ impl BackendState {
                 if let Ok(format) = image::guess_format(&*image_bytes) {
                     if format == ImageFormat::Png {
                         let icon_path = instance_dir.join("icon.png");
-                        crate::write_safe(&icon_path, &*image_bytes).unwrap();
+                        crate::fs::write_safe(&icon_path, &*image_bytes).unwrap();
                     } else {
                         self.send.send_error("Unable to apply icon: only pngs are supported");
                     }
@@ -1485,64 +1475,17 @@ impl BackendState {
         }
 
         let info_path = instance_dir.join("info_v1.json");
-        crate::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
+        crate::fs::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
 
         Some(instance_dir.clone())
     }
 
-    pub async fn duplicate_instance(self: &Arc<Self>, id: InstanceID) {
-        let (old_name, old_path) = {
-            let guard = self.instance_state.read();
-            let Some(instance) = guard.instances.get(id) else {
-                self.send.send_error("Unable to duplicate instance, unknown id".to_string());
-                return;
-            };
-            (instance.name.to_string(), instance.root_path.clone())
-        };
-
-        let sanitized = sanitize_filename::sanitize_with_options(
-            &old_name,
-            sanitize_filename::Options { windows: true, ..Default::default() },
-        );
-
-        let mut new_name = format!("{}-1", sanitized);
-        {
-            let guard = self.instance_state.read();
-            for i in 1..=99 {
-                let candidate = if i == 1 {
-                    format!("{}-1", sanitized)
-                } else {
-                    format!("{}-{}", sanitized, i)
-                };
-                if !guard.instances.iter().any(|inst| inst.name == candidate) {
-                    new_name = candidate;
-                    break;
-                }
-            }
-        }
-
-        let new_path = self.directories.instances_dir.join(&new_name);
-        if let Err(err) = std::fs::create_dir_all(&new_path) {
-            self.send.send_error(format!("Unable to create duplicate instance folder: {}", err));
-            return;
-        }
-
-        if let Err(err) = crate::copy_content_recursive(&old_path, &new_path, false, &|_, _| {}) {
-            self.send.send_error(format!("Failed to copy instance: {}", err));
-            let _ = std::fs::remove_dir_all(&new_path);
-            return;
-        }
-
-        self.send.send(MessageToFrontend::Refresh);
-        self.send.send_info(format!("Duplicated instance as \"{}\"", new_name));
-    }
-
     pub async fn rename_instance(self: &Arc<Self>, id: InstanceID, name: &str) {
-        if !crate::is_single_component_path_str(&name) {
-            self.send
-                .send_warning(format!("Unable to rename instance, name must not be a path: {}", name));
+        if !crate::fs::is_single_component_path_str(&name) {
+            self.send.send_warning(format!("Unable to rename instance, name must not be a path: {}", name));
             return;
         }
+
         if !sanitize_filename::is_sanitized_with_options(
             &*name,
             sanitize_filename::OptionsForCheck {
@@ -1774,8 +1717,8 @@ pub enum LoginError {
     CancelledByUser,
 }
 
-struct PrelaunchModCopy {
-    path: SafePath,
+pub struct PrelaunchModCopy {
+    path: PathBuf,
     source: PrelaunchModCopySource,
 }
 

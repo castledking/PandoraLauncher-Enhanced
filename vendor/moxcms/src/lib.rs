@@ -37,7 +37,7 @@
 )]
 #![allow(stable_features)]
 #![cfg_attr(
-    not(any(feature = "avx", feature = "sse", feature = "avx512", feature = "neon")),
+    not(any(feature = "avx", feature = "sse", feature = "avx512", feature = "neon",)),
     forbid(unsafe_code)
 )]
 mod chad;
@@ -74,6 +74,7 @@ mod yrg;
 mod chromaticity;
 mod dt_ucs;
 mod helpers;
+mod interceptors;
 mod lut_hint;
 mod matan;
 mod srlab2;
@@ -115,10 +116,12 @@ pub use profile::{
 pub use rgb::{FusedExp, FusedExp2, FusedExp10, FusedLog, FusedLog2, FusedLog10, FusedPow, Rgb};
 pub use srlab2::Srlab2;
 pub use transform::{
-    BarycentricWeightScale, InPlaceStage, InterpolationMethod, Layout, PointeeSizeExpressible,
-    Stage, Transform8BitExecutor, Transform16BitExecutor, TransformExecutor,
-    TransformF32BitExecutor, TransformF64BitExecutor, TransformOptions,
+    BarycentricWeightScale, InPlaceStage, InPlaceTransformExecutor, InterpolationMethod, Layout,
+    PointeeSizeExpressible, Stage, Transform8BitExecutor, Transform16BitExecutor,
+    TransformExecutor, TransformF32Executor, TransformF64Executor, TransformOptions,
 };
-pub use trc::{GammaLutInterpolate, ToneCurveEvaluator, ToneReprCurve, curve_from_gamma};
+pub use trc::{
+    GammaLutInterpolate, ParametricCurve, ToneCurveEvaluator, ToneReprCurve, curve_from_gamma,
+};
 pub use xyy::{XyY, XyYRepresentable};
 pub use yrg::{Ych, Yrg, cie_y_1931_to_cie_y_2006};

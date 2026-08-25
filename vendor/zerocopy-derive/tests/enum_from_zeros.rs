@@ -13,7 +13,6 @@
 include!("include.rs");
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 enum Foo {
     A,
@@ -22,7 +21,6 @@ enum Foo {
 util_assert_impl_all!(Foo: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 enum Bar {
     A = 0,
@@ -31,7 +29,6 @@ enum Bar {
 util_assert_impl_all!(Bar: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 enum TwoVariantsHasExplicitZero {
     A = 1,
@@ -41,7 +38,6 @@ enum TwoVariantsHasExplicitZero {
 util_assert_impl_all!(TwoVariantsHasExplicitZero: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(i8)]
 enum ImplicitNonFirstVariantIsZero {
     A = -1,
@@ -51,7 +47,6 @@ enum ImplicitNonFirstVariantIsZero {
 util_assert_impl_all!(ImplicitNonFirstVariantIsZero: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(u64)]
 enum LargeDiscriminant {
     A = 0xFFFF_FFFF_FFFF_FFFF,
@@ -61,7 +56,6 @@ enum LargeDiscriminant {
 util_assert_impl_all!(LargeDiscriminant: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 enum FirstVariantIsZeroable {
     A(u32),
@@ -71,7 +65,6 @@ enum FirstVariantIsZeroable {
 util_assert_impl_all!(FirstVariantIsZeroable: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(u8)]
 enum FirstVariantIsZeroableSecondIsNot {
     A(bool),
@@ -86,7 +79,6 @@ mod msrv_only {
     use super::*;
 
     #[derive(imp::FromZeros)]
-    #[zerocopy(crate = "zerocopy_renamed")]
     #[repr(u8)]
     enum ImplicitFirstVariantIsZeroable {
         A(bool),
@@ -96,7 +88,6 @@ mod msrv_only {
     util_assert_impl_all!(ImplicitFirstVariantIsZeroable: imp::FromZeros);
 
     #[derive(imp::FromZeros)]
-    #[zerocopy(crate = "zerocopy_renamed")]
     #[repr(i8)]
     enum ImplicitNonFirstVariantIsZeroable {
         A(::core::num::NonZeroU8) = 1,

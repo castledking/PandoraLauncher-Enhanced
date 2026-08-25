@@ -1631,7 +1631,6 @@ impl Add<TimeDelta> for NaiveDateTime {
     type Output = NaiveDateTime;
 
     #[inline]
-    #[track_caller]
     fn add(self, rhs: TimeDelta) -> NaiveDateTime {
         self.checked_add_signed(rhs).expect("`NaiveDateTime + TimeDelta` overflowed")
     }
@@ -1651,7 +1650,6 @@ impl Add<Duration> for NaiveDateTime {
     type Output = NaiveDateTime;
 
     #[inline]
-    #[track_caller]
     fn add(self, rhs: Duration) -> NaiveDateTime {
         let rhs = TimeDelta::from_std(rhs)
             .expect("overflow converting from core::time::Duration to TimeDelta");
@@ -1671,7 +1669,6 @@ impl Add<Duration> for NaiveDateTime {
 /// Consider using [`NaiveDateTime::checked_add_signed`] to get an `Option` instead.
 impl AddAssign<TimeDelta> for NaiveDateTime {
     #[inline]
-    #[track_caller]
     fn add_assign(&mut self, rhs: TimeDelta) {
         *self = self.add(rhs);
     }
@@ -1689,7 +1686,6 @@ impl AddAssign<TimeDelta> for NaiveDateTime {
 /// Consider using [`NaiveDateTime::checked_add_signed`] to get an `Option` instead.
 impl AddAssign<Duration> for NaiveDateTime {
     #[inline]
-    #[track_caller]
     fn add_assign(&mut self, rhs: Duration) {
         *self = self.add(rhs);
     }
@@ -1705,7 +1701,6 @@ impl Add<FixedOffset> for NaiveDateTime {
     type Output = NaiveDateTime;
 
     #[inline]
-    #[track_caller]
     fn add(self, rhs: FixedOffset) -> NaiveDateTime {
         self.checked_add_offset(rhs).expect("`NaiveDateTime + FixedOffset` out of range")
     }
@@ -1759,7 +1754,6 @@ impl Add<FixedOffset> for NaiveDateTime {
 impl Add<Months> for NaiveDateTime {
     type Output = NaiveDateTime;
 
-    #[track_caller]
     fn add(self, rhs: Months) -> Self::Output {
         self.checked_add_months(rhs).expect("`NaiveDateTime + Months` out of range")
     }
@@ -1825,7 +1819,6 @@ impl Sub<TimeDelta> for NaiveDateTime {
     type Output = NaiveDateTime;
 
     #[inline]
-    #[track_caller]
     fn sub(self, rhs: TimeDelta) -> NaiveDateTime {
         self.checked_sub_signed(rhs).expect("`NaiveDateTime - TimeDelta` overflowed")
     }
@@ -1845,7 +1838,6 @@ impl Sub<Duration> for NaiveDateTime {
     type Output = NaiveDateTime;
 
     #[inline]
-    #[track_caller]
     fn sub(self, rhs: Duration) -> NaiveDateTime {
         let rhs = TimeDelta::from_std(rhs)
             .expect("overflow converting from core::time::Duration to TimeDelta");
@@ -1867,7 +1859,6 @@ impl Sub<Duration> for NaiveDateTime {
 /// Consider using [`NaiveDateTime::checked_sub_signed`] to get an `Option` instead.
 impl SubAssign<TimeDelta> for NaiveDateTime {
     #[inline]
-    #[track_caller]
     fn sub_assign(&mut self, rhs: TimeDelta) {
         *self = self.sub(rhs);
     }
@@ -1885,7 +1876,6 @@ impl SubAssign<TimeDelta> for NaiveDateTime {
 /// Consider using [`NaiveDateTime::checked_sub_signed`] to get an `Option` instead.
 impl SubAssign<Duration> for NaiveDateTime {
     #[inline]
-    #[track_caller]
     fn sub_assign(&mut self, rhs: Duration) {
         *self = self.sub(rhs);
     }
@@ -1901,7 +1891,6 @@ impl Sub<FixedOffset> for NaiveDateTime {
     type Output = NaiveDateTime;
 
     #[inline]
-    #[track_caller]
     fn sub(self, rhs: FixedOffset) -> NaiveDateTime {
         self.checked_sub_offset(rhs).expect("`NaiveDateTime - FixedOffset` out of range")
     }
@@ -1941,7 +1930,6 @@ impl Sub<FixedOffset> for NaiveDateTime {
 impl Sub<Months> for NaiveDateTime {
     type Output = NaiveDateTime;
 
-    #[track_caller]
     fn sub(self, rhs: Months) -> Self::Output {
         self.checked_sub_months(rhs).expect("`NaiveDateTime - Months` out of range")
     }
@@ -2014,7 +2002,6 @@ impl Sub<NaiveDateTime> for NaiveDateTime {
 impl Add<Days> for NaiveDateTime {
     type Output = NaiveDateTime;
 
-    #[track_caller]
     fn add(self, days: Days) -> Self::Output {
         self.checked_add_days(days).expect("`NaiveDateTime + Days` out of range")
     }
@@ -2029,7 +2016,6 @@ impl Add<Days> for NaiveDateTime {
 impl Sub<Days> for NaiveDateTime {
     type Output = NaiveDateTime;
 
-    #[track_caller]
     fn sub(self, days: Days) -> Self::Output {
         self.checked_sub_days(days).expect("`NaiveDateTime - Days` out of range")
     }
@@ -2068,13 +2054,6 @@ impl fmt::Debug for NaiveDateTime {
         self.date.fmt(f)?;
         f.write_char('T')?;
         self.time.fmt(f)
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for NaiveDateTime {
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{}T{}", self.date, self.time);
     }
 }
 

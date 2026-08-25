@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+use std::borrow::Cow;
 use crate::dirtyalpha::blurred_dirty_alpha;
 use crate::error::Error;
 #[cfg(not(feature = "threading"))]
@@ -60,8 +61,10 @@ pub struct EncodedImage {
 }
 
 /// Encoder config builder
+///
+/// The lifetime is relevant only for [`Encoder::with_exif()`]. Use `Encoder<'static>` if Rust complains.
 #[derive(Debug, Clone)]
-pub struct Encoder {
+pub struct Encoder<'exif_slice> {
     /// 0-255 scale
     quantizer: u8,
     /// 0-255 scale
@@ -78,10 +81,12 @@ pub struct Encoder {
     alpha_color_mode: AlphaColorMode,
     /// 8 or 10
     output_depth: BitDepth,
+    /// Dropped into MPEG infe BOX
+    exif: Option<Cow<'exif_slice, [u8]>>,
 }
 
 /// Builder methods
-impl Encoder {
+impl<'exif_slice> Encoder<'exif_slice> {
     /// Start here
     #[must_use]
     pub fn new() -> Self {
@@ -93,6 +98,7 @@ impl Encoder {
             premultiplied_alpha: false,
             color_model: ColorModel::YCbCr,
             threads: None,
+            exif: None,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
         }
     }
@@ -109,6 +115,7 @@ impl Encoder {
 
     #[doc(hidden)]
     #[deprecated(note = "Renamed to with_bit_depth")]
+    #[must_use]
     pub fn with_depth(self, depth: Option<u8>) -> Self {
         self.with_bit_depth(depth.map(|d| if d >= 10 { BitDepth::Ten } else { BitDepth::Eight }).unwrap_or(BitDepth::Auto))
     }
@@ -161,6 +168,7 @@ impl Encoder {
 
     #[doc(hidden)]
     #[deprecated = "Renamed to `with_internal_color_model()`"]
+    #[must_use]
     pub fn with_internal_color_space(self, color_model: ColorModel) -> Self {
         self.with_internal_color_model(color_model)
     }
@@ -171,7 +179,7 @@ impl Encoder {
     #[track_caller]
     #[must_use]
     pub fn with_num_threads(mut self, num_threads: Option<usize>) -> Self {
-        assert!(num_threads.map_or(true, |n| n > 0));
+        assert!(num_threads.is_none_or(|n| n > 0));
         self.threads = num_threads;
         self
     }
@@ -187,10 +195,18 @@ impl Encoder {
         self.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
         self
     }
+
+    /// Embedded into AVIF file as-is
+    ///
+    /// The data can be `Vec<u8>`, or `&[u8]` if the encoder instance doesn't leave its scope.
+    pub fn with_exif(mut self, exif_data: impl Into<Cow<'exif_slice, [u8]>>) -> Self {
+        self.exif = Some(exif_data.into());
+        self
+    }
 }
 
 /// Once done with config, call one of the `encode_*` functions
-impl Encoder {
+impl Encoder<'_> {
     /// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
     ///
     /// Make the `Img` for the `buffer` like this:
@@ -227,23 +243,17 @@ impl Encoder {
         };
         match self.output_depth {
             BitDepth::Eight => {
-                let planes = buffer.pixels().map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601),
-                        ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()),
-                    };
-                    [y, u, v]
+                let planes = buffer.pixels().map(|px| match self.color_model {
+                    ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601).into(),
+                    ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| px.a);
                 self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
             },
             BitDepth::Ten | BitDepth::Auto => {
-                let planes = buffer.pixels().map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601),
-                        ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()),
-                    };
-                    [y, u, v]
+                let planes = buffer.pixels().map(|px| match self.color_model {
+                    ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601).into(),
+                    ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| to_ten(px.a));
                 self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
@@ -341,7 +351,9 @@ impl Encoder {
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
     #[inline]
     pub fn encode_raw_planes_8_bit(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u8; 3]> + Send, alpha: Option<impl IntoIterator<Item = u8> + Send>,
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [u8; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = u8> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
         self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
@@ -350,7 +362,7 @@ impl Encoder {
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
     /// with sRGB transfer characteristics and color primaries.
     ///
-    /// The pixels are 10-bit (values `0.=1023`).
+    /// The pixels are 10-bit (values `0.=1023`) in host's native endian.
     ///
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
@@ -363,7 +375,9 @@ impl Encoder {
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
     #[inline]
     pub fn encode_raw_planes_10_bit(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [u16; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
         self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
@@ -371,8 +385,11 @@ impl Encoder {
 
     #[inline(never)]
     fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, alpha: Option<impl IntoIterator<Item = P> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, input_pixels_bit_depth: u8,
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [P; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = P> + Send>,
+        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
+        input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
         let color_description = Some(ColorDescription {
             transfer_characteristics: TransferCharacteristics::SRGB,
@@ -424,7 +441,8 @@ impl Encoder {
         let (color, alpha) = rayon::join(encode_color, encode_alpha);
         let (color, alpha) = (color?, alpha.transpose()?);
 
-        let avif_file = avif_serialize::Aviffy::new()
+        let mut serializer_config = avif_serialize::Aviffy::new();
+        serializer_config
             .matrix_coefficients(match matrix_coefficients {
                 MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
                 MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
@@ -435,8 +453,11 @@ impl Encoder {
                 MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
                 _ => return Err(Error::Unsupported("matrix coefficients")),
             })
-            .premultiplied_alpha(self.premultiplied_alpha)
-            .to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
+            .premultiplied_alpha(self.premultiplied_alpha);
+        if let Some(exif) = &self.exif {
+            serializer_config.set_exif(exif.to_vec());
+        }
+        let avif_file = serializer_config.to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();
         let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 
@@ -446,11 +467,13 @@ impl Encoder {
     }
 }
 
+/// Native endian
 #[inline(always)]
 fn to_ten(x: u8) -> u16 {
     (u16::from(x) << 2) | (u16::from(x) >> 6)
 }
 
+/// Native endian
 #[inline(always)]
 fn rgb_to_10_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
     (to_ten(px.g), to_ten(px.b), to_ten(px.r))
@@ -469,9 +492,9 @@ fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8, matrix: [f32; 3]) -> (f32, f32, f32
     let max_value = ((1 << depth) - 1) as f32;
     let scale = max_value / 255.;
     let shift = (max_value * 0.5).round();
-    let y = scale * matrix[0] * f32::from(px.r) + scale * matrix[1] * f32::from(px.g) + scale * matrix[2] * f32::from(px.b);
-    let cb = (f32::from(px.b) * scale - y).mul_add(0.5 / (1. - matrix[2]), shift);
-    let cr = (f32::from(px.r) * scale - y).mul_add(0.5 / (1. - matrix[0]), shift);
+    let y = (scale * matrix[2]).mul_add(f32::from(px.b), (scale * matrix[0]).mul_add(f32::from(px.r), scale * matrix[1] * f32::from(px.g)));
+    let cb = f32::from(px.b).mul_add(scale, -y).mul_add(0.5 / (1. - matrix[2]), shift);
+    let cr = f32::from(px.r).mul_add(scale, -y).mul_add(0.5 / (1. - matrix[0]), shift);
     (y.round(), cb.round(), cr.round())
 }
 
@@ -489,7 +512,7 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
 
 fn quality_to_quantizer(quality: f32) -> u8 {
     let q = quality / 100.;
-    let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { 1. - 0.125 - q * 0.5 } else { 1. - q };
+    let x = if q >= 0.82 { (1. - q) * 2.6 } else if q > 0.25 { q.mul_add(-0.5, 1. - 0.125) } else { 1. - q };
     (x * 255.).round() as u8
 }
 
@@ -586,10 +609,10 @@ impl SpeedTweaks {
         if let Some(v) = self.cdef { speed_settings.cdef = v; }
         if let Some(v) = self.lrf { speed_settings.lrf = v; }
         if let Some(v) = self.inter_tx_split { speed_settings.transform.enable_inter_tx_split = v; }
-        if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } };
+        if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } }
         if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
         if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
-        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
+        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} }
         if let Some((min, max)) = self.partition_range {
             debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
@@ -727,8 +750,7 @@ fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Fr
                 },
                 _ => continue,
             },
-            Err(EncoderStatus::Encoded) |
-            Err(EncoderStatus::LimitReached) => break,
+            Err(EncoderStatus::Encoded | EncoderStatus::LimitReached) => break,
             Err(err) => Err(err)?,
         }
     }

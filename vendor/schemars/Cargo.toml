@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.74"
 name = "schemars"
-version = "1.2.1"
+version = "1.0.4"
 authors = ["Graham Esau <gesau@hotmail.co.uk>"]
 build = false
 autolib = false
@@ -166,7 +166,7 @@ default-features = false
 package = "rust_decimal"
 
 [dependencies.schemars_derive]
-version = "=1.2.1"
+version = "=1.0.4"
 optional = true
 
 [dependencies.semver1]
@@ -193,12 +193,6 @@ package = "smallvec"
 
 [dependencies.smol_str02]
 version = "0.2.1"
-optional = true
-default-features = false
-package = "smol_str"
-
-[dependencies.smol_str03]
-version = "0.3.2"
 optional = true
 default-features = false
 package = "smol_str"
@@ -303,12 +297,6 @@ package = "smallvec"
 
 [dev-dependencies.smol_str02]
 version = "0.2.1"
-features = ["serde"]
-default-features = false
-package = "smol_str"
-
-[dev-dependencies.smol_str03]
-version = "0.3.2"
 features = ["serde"]
 default-features = false
 package = "smol_str"

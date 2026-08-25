@@ -43,9 +43,7 @@ impl<'a> CowBytes<'a> {
     /// Create a new owned CowBytes.
     #[cfg(feature = "alloc")]
     #[inline(always)]
-    pub(crate) fn new_owned(
-        bytes: alloc::boxed::Box<[u8]>,
-    ) -> CowBytes<'static> {
+    fn new_owned(bytes: alloc::boxed::Box<[u8]>) -> CowBytes<'static> {
         CowBytes(Imp::Owned(bytes))
     }
 

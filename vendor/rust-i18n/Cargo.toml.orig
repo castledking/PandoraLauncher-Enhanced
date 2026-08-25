@@ -16,7 +16,7 @@ license = "MIT"
 name = "rust-i18n"
 readme = "README.md"
 repository = "https://github.com/longbridge/rust-i18n"
-version = "4.0.0"
+version = "4.2.1"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -36,11 +36,12 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1.0.2"
 regex = "1"
 rust-i18n = { path = "." }
-rust-i18n-extract = { path = "./crates/extract", version = "4.0.0" }
-rust-i18n-macro = { path = "./crates/macro", version = "4.0.0" }
-rust-i18n-support = { path = "./crates/support", version = "4.0.0" }
+rust-i18n-extract = { path = "./crates/extract", version = "4.2.1" }
+rust-i18n-macro = { path = "./crates/macro", version = "4.2.1" }
+rust-i18n-support = { path = "./crates/support", version = "4.2.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde-saphyr = "0.0.29"
 serde_yaml = "0.9.33"
 siphasher = "1.0"
 smallvec = "1.12.0"
@@ -53,18 +54,20 @@ rust-i18n-support.workspace = true
 rust-i18n-macro.workspace = true
 smallvec.workspace = true
 
+[features]
+log-miss-tr = ["rust-i18n-macro/log-miss-tr"]
+load-path = ["rust-i18n-support/codegen"]
+
 [dev-dependencies]
 foo.workspace = true
 criterion.workspace = true
 lazy_static.workspace = true
 serde_yaml.workspace = true
+rust-i18n-support = { path = "./crates/support", version = "4.2.1", features = ["codegen"] }
 
 [build-dependencies]
 globwalk.workspace = true
 regex.workspace = true
-
-[features]
-log-miss-tr = ["rust-i18n-macro/log-miss-tr"]
 
 [[example]]
 name = "app"
@@ -80,6 +83,9 @@ members = [
     "examples/app-load-path",
     "examples/app-metadata",
     "examples/app-minify-key",
+    "examples/extend-crate/app",
+    "examples/extend-crate/app-default",
+    "examples/extend-crate/ui-component",
     "examples/foo",
 ]
 

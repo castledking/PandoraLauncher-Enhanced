@@ -1,9 +1,10 @@
 use std::{fmt, marker::PhantomData};
 
+use futures_core::ready;
 use std::{
     future::Future,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tower_service::Service;
 
@@ -69,7 +70,7 @@ where
 pub struct Ready<'a, T, Request>(ReadyOneshot<&'a mut T, Request>);
 
 // Safety: This is safe for the same reason that the impl for ReadyOneshot is safe.
-impl<T, Request> Unpin for Ready<'_, T, Request> {}
+impl<'a, T, Request> Unpin for Ready<'a, T, Request> {}
 
 impl<'a, T, Request> Ready<'a, T, Request>
 where
@@ -92,7 +93,7 @@ where
     }
 }
 
-impl<T, Request> fmt::Debug for Ready<'_, T, Request>
+impl<'a, T, Request> fmt::Debug for Ready<'a, T, Request>
 where
     T: fmt::Debug,
 {

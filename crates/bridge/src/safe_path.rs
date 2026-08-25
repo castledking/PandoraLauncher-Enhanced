@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use relative_path::RelativePath;
+use relative_path::{RelativePath, RelativePathBuf};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SafePath(Arc<RelativePath>);
@@ -34,7 +34,29 @@ impl SafePath {
     }
 
     pub fn from_std_path(path: &Path) -> Option<SafePath> {
-        Self::from_relative_path(RelativePath::from_path(path).ok()?)
+        let mut buf = RelativePathBuf::new();
+
+        for component in path.components() {
+            match component {
+                std::path::Component::Prefix(_) => {
+                    return None;
+                },
+                std::path::Component::RootDir => {
+                    return None;
+                },
+                std::path::Component::CurDir => {},
+                std::path::Component::ParentDir => {
+                    if !buf.pop() {
+                        return None;
+                    }
+                },
+                std::path::Component::Normal(os_str) => {
+                    buf.push(os_str.to_str()?);
+                },
+            }
+        }
+
+        Self::from_relative_path(buf.as_relative_path())
     }
 
     pub fn new(path: &str) -> Option<SafePath> {

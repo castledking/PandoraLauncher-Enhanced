@@ -10,8 +10,6 @@ use core::{fmt, hash};
 
 #[cfg(feature = "bytemuck")]
 use bytemuck::{Pod, Zeroable};
-#[cfg(feature = "malloc_size_of")]
-use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use num_traits::real::Real;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -243,13 +241,6 @@ unsafe impl<T: Zeroable, Src, Dst> Zeroable for RigidTransform3D<T, Src, Dst> {}
 
 #[cfg(feature = "bytemuck")]
 unsafe impl<T: Pod, Src: 'static, Dst: 'static> Pod for RigidTransform3D<T, Src, Dst> {}
-
-#[cfg(feature = "malloc_size_of")]
-impl<T: MallocSizeOf, Src, Dst> MallocSizeOf for RigidTransform3D<T, Src, Dst> {
-    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
-        self.rotation.size_of(ops) + self.translation.size_of(ops)
-    }
-}
 
 impl<T: Real + ApproxEq<T>, Src, Dst> From<Rotation3D<T, Src, Dst>>
     for RigidTransform3D<T, Src, Dst>

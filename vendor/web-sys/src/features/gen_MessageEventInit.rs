@@ -4,7 +4,7 @@ use super::*;
 use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = MessageEventInit)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "MessageEventInit")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `MessageEventInit` dictionary."]
     #[doc = ""]
@@ -93,19 +93,19 @@ extern "C" {
     #[cfg(feature = "Window")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `MessageEventInit`*"]
+    #[doc = "*This API requires the following crate features to be activated: `MessageEventInit`, `Window`*"]
     #[wasm_bindgen(method, setter = "source")]
     pub fn set_source_opt_window(this: &MessageEventInit, val: Option<&Window>);
     #[cfg(feature = "MessagePort")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `MessageEventInit`*"]
+    #[doc = "*This API requires the following crate features to be activated: `MessageEventInit`, `MessagePort`*"]
     #[wasm_bindgen(method, setter = "source")]
     pub fn set_source_opt_message_port(this: &MessageEventInit, val: Option<&MessagePort>);
     #[cfg(feature = "ServiceWorker")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `MessageEventInit`*"]
+    #[doc = "*This API requires the following crate features to be activated: `MessageEventInit`, `ServiceWorker`*"]
     #[wasm_bindgen(method, setter = "source")]
     pub fn set_source_opt_service_worker(this: &MessageEventInit, val: Option<&ServiceWorker>);
 }

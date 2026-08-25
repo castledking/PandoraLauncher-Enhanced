@@ -1,5 +1,5 @@
-use crate::{DecodeV2, FlateDecoder};
-use compression_core::util::{PartialBuffer, WriteBuffer};
+use crate::{Decode, FlateDecoder};
+use compression_core::util::PartialBuffer;
 use std::io::Result;
 
 #[derive(Debug)]
@@ -21,7 +21,7 @@ impl DeflateDecoder {
     }
 }
 
-impl DecodeV2 for DeflateDecoder {
+impl Decode for DeflateDecoder {
     fn reinit(&mut self) -> Result<()> {
         self.inner.reinit()?;
         Ok(())
@@ -29,17 +29,23 @@ impl DecodeV2 for DeflateDecoder {
 
     fn decode(
         &mut self,
-        input: &mut PartialBuffer<&[u8]>,
-        output: &mut WriteBuffer<'_>,
+        input: &mut PartialBuffer<impl AsRef<[u8]>>,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
     ) -> Result<bool> {
         self.inner.decode(input, output)
     }
 
-    fn flush(&mut self, output: &mut WriteBuffer<'_>) -> Result<bool> {
+    fn flush(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> Result<bool> {
         self.inner.flush(output)
     }
 
-    fn finish(&mut self, output: &mut WriteBuffer<'_>) -> Result<bool> {
+    fn finish(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> Result<bool> {
         self.inner.finish(output)
     }
 }

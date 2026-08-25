@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.56"
+rust-version = "1.88.0"
 name = "darling_core"
-version = "0.21.3"
+version = "0.23.0"
 authors = ["Ted Driggs <ted.driggs@outlook.com>"]
 build = false
 autolib = false
@@ -36,9 +36,6 @@ suggestions = ["strsim"]
 [lib]
 name = "darling_core"
 path = "src/lib.rs"
-
-[dependencies.fnv]
-version = "1.0.7"
 
 [dependencies.ident_case]
 version = "1.0.1"

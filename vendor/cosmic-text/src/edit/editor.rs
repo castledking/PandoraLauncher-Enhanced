@@ -10,8 +10,9 @@ use core::cmp;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Action, Attrs, AttrsList, BorrowedWithFontSystem, BufferLine, BufferRef, Change, ChangeItem,
-    Color, Cursor, Edit, FontSystem, LayoutRun, LineEnding, LineIter, Renderer, Selection, Shaping,
+    render_decoration, Action, Attrs, AttrsList, BorrowedWithFontSystem, BufferLine, BufferRef,
+    Change, ChangeItem, Color, Cursor, Edit, FontSystem, LayoutRun, LineEnding, LineIter, Renderer,
+    Selection, Shaping,
 };
 
 /// A wrapper of [`Buffer`] for easy editing
@@ -26,64 +27,9 @@ pub struct Editor<'buffer> {
     change: Option<Change>,
 }
 
-fn cursor_glyph_opt(cursor: &Cursor, run: &LayoutRun) -> Option<(usize, f32)> {
-    if cursor.line == run.line_i {
-        for (glyph_i, glyph) in run.glyphs.iter().enumerate() {
-            if cursor.index == glyph.start {
-                return Some((glyph_i, 0.0));
-            } else if cursor.index > glyph.start && cursor.index < glyph.end {
-                // Guess x offset based on characters
-                let mut before = 0;
-                let mut total = 0;
-
-                let cluster = &run.text[glyph.start..glyph.end];
-                for (i, _) in cluster.grapheme_indices(true) {
-                    if glyph.start + i < cursor.index {
-                        before += 1;
-                    }
-                    total += 1;
-                }
-
-                let offset = glyph.w * (before as f32) / (total as f32);
-                return Some((glyph_i, offset));
-            }
-        }
-        match run.glyphs.last() {
-            Some(glyph) => {
-                if cursor.index == glyph.end {
-                    return Some((run.glyphs.len(), 0.0));
-                }
-            }
-            None => {
-                return Some((0, 0.0));
-            }
-        }
-    }
-    None
-}
-
 fn cursor_position(cursor: &Cursor, run: &LayoutRun) -> Option<(i32, i32)> {
-    let (cursor_glyph, cursor_glyph_offset) = cursor_glyph_opt(cursor, run)?;
-    let x = run.glyphs.get(cursor_glyph).map_or_else(
-        || {
-            run.glyphs.last().map_or(0, |glyph| {
-                if glyph.level.is_rtl() {
-                    glyph.x as i32
-                } else {
-                    (glyph.x + glyph.w) as i32
-                }
-            })
-        },
-        |glyph| {
-            if glyph.level.is_rtl() {
-                (glyph.x + glyph.w - cursor_glyph_offset) as i32
-            } else {
-                (glyph.x + cursor_glyph_offset) as i32
-            }
-        },
-    );
-
-    Some((x, run.line_top as i32))
+    let x = run.cursor_position(cursor)?;
+    Some((x as i32, run.line_top as i32))
 }
 
 impl<'buffer> Editor<'buffer> {
@@ -101,10 +47,12 @@ impl<'buffer> Editor<'buffer> {
     }
 
     /// Draw the editor
+    ///
+    /// Automatically resolves any pending dirty state before drawing.
     #[cfg(feature = "swash")]
     #[allow(clippy::too_many_arguments)]
     pub fn draw<F>(
-        &self,
+        &mut self,
         font_system: &mut FontSystem,
         cache: &mut crate::SwashCache,
         text_color: Color,
@@ -115,6 +63,7 @@ impl<'buffer> Editor<'buffer> {
     ) where
         F: FnMut(i32, i32, u32, u32, Color),
     {
+        self.with_buffer_mut(|buffer| buffer.shape_until_scroll(font_system, false));
         let mut renderer = crate::LegacyRenderer {
             font_system,
             cache,
@@ -129,6 +78,10 @@ impl<'buffer> Editor<'buffer> {
         );
     }
 
+    /// Render the editor using the provided renderer.
+    ///
+    /// The caller is responsible for calling [`Edit::shape_as_needed`] first
+    /// to ensure layout is up to date.
     pub fn render<R: Renderer>(
         &self,
         renderer: &mut R,
@@ -148,60 +101,42 @@ impl<'buffer> Editor<'buffer> {
                 // Highlight selection
                 if let Some((start, end)) = selection_bounds {
                     if line_i >= start.line && line_i <= end.line {
-                        let mut range_opt = None;
-                        for glyph in run.glyphs {
-                            // Guess x offset based on characters
-                            let cluster = &run.text[glyph.start..glyph.end];
-                            let total = cluster.grapheme_indices(true).count();
-                            let mut c_x = glyph.x;
-                            let c_w = glyph.w / total as f32;
-                            for (i, c) in cluster.grapheme_indices(true) {
-                                let c_start = glyph.start + i;
-                                let c_end = glyph.start + i + c.len();
-                                if (start.line != line_i || c_end > start.index)
-                                    && (end.line != line_i || c_start < end.index)
-                                {
-                                    range_opt = match range_opt.take() {
-                                        Some((min, max)) => Some((
-                                            cmp::min(min, c_x as i32),
-                                            cmp::max(max, (c_x + c_w) as i32),
-                                        )),
-                                        None => Some((c_x as i32, (c_x + c_w) as i32)),
-                                    };
-                                } else if let Some((min, max)) = range_opt.take() {
-                                    renderer.rectangle(
-                                        min,
-                                        line_top as i32,
-                                        cmp::max(0, max - min) as u32,
-                                        line_height as u32,
-                                        selection_color,
-                                    );
-                                }
-                                c_x += c_w;
-                            }
-                        }
+                        let highlights: Vec<(f32, f32)> = run.highlight(start, end).collect();
 
-                        if run.glyphs.is_empty() && end.line > line_i {
+                        if highlights.is_empty() && run.glyphs.is_empty() && end.line > line_i {
                             // Highlight all of internal empty lines
-                            range_opt = Some((0, buffer.size().0.unwrap_or(0.0) as i32));
-                        }
-
-                        if let Some((mut min, mut max)) = range_opt.take() {
-                            if end.line > line_i {
-                                // Draw to end of line
-                                if run.rtl {
-                                    min = 0;
-                                } else {
-                                    max = buffer.size().0.unwrap_or(0.0) as i32;
-                                }
-                            }
+                            let max = buffer.size().0.unwrap_or(0.0) as i32;
                             renderer.rectangle(
-                                min,
+                                0,
                                 line_top as i32,
-                                cmp::max(0, max - min) as u32,
+                                max as u32,
                                 line_height as u32,
                                 selection_color,
                             );
+                        } else {
+                            let len = highlights.len();
+                            for (idx, (x, width)) in highlights.into_iter().enumerate() {
+                                let mut min = x as i32;
+                                let mut max = (x + width) as i32;
+
+                                // Extend the last rect to the line edge for
+                                // multi-line selections
+                                if idx == len - 1 && end.line > line_i {
+                                    if run.rtl {
+                                        min = 0;
+                                    } else {
+                                        max = buffer.size().0.unwrap_or(0.0) as i32;
+                                    }
+                                }
+
+                                renderer.rectangle(
+                                    min,
+                                    line_top as i32,
+                                    cmp::max(0, max - min) as u32,
+                                    line_height as u32,
+                                    selection_color,
+                                );
+                            }
                         }
                     }
                 }
@@ -211,6 +146,7 @@ impl<'buffer> Editor<'buffer> {
                     renderer.rectangle(x, y, 1, line_height as u32, cursor_color);
                 }
 
+                render_decoration(renderer, &run, text_color);
                 for glyph in run.glyphs {
                     let physical_glyph = glyph.physical((0., line_y), 1.0);
 
@@ -278,8 +214,8 @@ impl<'buffer> Edit<'buffer> for Editor<'buffer> {
         self.with_buffer(super::super::buffer::Buffer::tab_width)
     }
 
-    fn set_tab_width(&mut self, font_system: &mut FontSystem, tab_width: u16) {
-        self.with_buffer_mut(|buffer| buffer.set_tab_width(font_system, tab_width));
+    fn set_tab_width(&mut self, tab_width: u16) {
+        self.with_buffer_mut(|buffer| buffer.set_tab_width(tab_width));
     }
 
     fn shape_as_needed(&mut self, font_system: &mut FontSystem, prune: bool) {
@@ -835,8 +771,10 @@ impl<'buffer> Edit<'buffer> for Editor<'buffer> {
             Action::Click { x, y } => {
                 self.set_selection(Selection::None);
 
-                if let Some(new_cursor) = self.with_buffer(|buffer| buffer.hit(x as f32, y as f32))
-                {
+                if let Some(new_cursor) = self.with_buffer_mut(|buffer| {
+                    buffer.shape_until_scroll(font_system, false);
+                    buffer.hit(x as f32, y as f32)
+                }) {
                     if new_cursor != self.cursor {
                         self.cursor = new_cursor;
                         self.with_buffer_mut(|buffer| buffer.set_redraw(true));
@@ -846,8 +784,10 @@ impl<'buffer> Edit<'buffer> for Editor<'buffer> {
             Action::DoubleClick { x, y } => {
                 self.set_selection(Selection::None);
 
-                if let Some(new_cursor) = self.with_buffer(|buffer| buffer.hit(x as f32, y as f32))
-                {
+                if let Some(new_cursor) = self.with_buffer_mut(|buffer| {
+                    buffer.shape_until_scroll(font_system, false);
+                    buffer.hit(x as f32, y as f32)
+                }) {
                     if new_cursor != self.cursor {
                         self.cursor = new_cursor;
                         self.with_buffer_mut(|buffer| buffer.set_redraw(true));
@@ -859,8 +799,10 @@ impl<'buffer> Edit<'buffer> for Editor<'buffer> {
             Action::TripleClick { x, y } => {
                 self.set_selection(Selection::None);
 
-                if let Some(new_cursor) = self.with_buffer(|buffer| buffer.hit(x as f32, y as f32))
-                {
+                if let Some(new_cursor) = self.with_buffer_mut(|buffer| {
+                    buffer.shape_until_scroll(font_system, false);
+                    buffer.hit(x as f32, y as f32)
+                }) {
                     if new_cursor != self.cursor {
                         self.cursor = new_cursor;
                     }
@@ -874,8 +816,10 @@ impl<'buffer> Edit<'buffer> for Editor<'buffer> {
                     self.with_buffer_mut(|buffer| buffer.set_redraw(true));
                 }
 
-                if let Some(new_cursor) = self.with_buffer(|buffer| buffer.hit(x as f32, y as f32))
-                {
+                if let Some(new_cursor) = self.with_buffer_mut(|buffer| {
+                    buffer.shape_until_scroll(font_system, false);
+                    buffer.hit(x as f32, y as f32)
+                }) {
                     if new_cursor != self.cursor {
                         self.cursor = new_cursor;
                         self.with_buffer_mut(|buffer| buffer.set_redraw(true));

@@ -563,7 +563,7 @@ impl Authorization {
     #[cfg(all(target_os = "macos", feature = "job-bless"))]
     pub fn job_bless(&self, label: &str) -> Result<(), CFError> {
         #[link(name = "ServiceManagement", kind = "framework")]
-        unsafe extern "C" {
+        extern "C" {
             static kSMDomainSystemLaunchd: CFStringRef;
 
             fn SMJobBless(

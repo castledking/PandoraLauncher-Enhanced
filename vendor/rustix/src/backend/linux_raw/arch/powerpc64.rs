@@ -34,8 +34,6 @@ pub(in crate::backend) unsafe fn syscall0_readonly(nr: SyscallNumber<'_>) -> Ret
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)
@@ -61,8 +59,6 @@ pub(in crate::backend) unsafe fn syscall1(nr: SyscallNumber<'_>, a0: ArgReg<'_, 
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags)
     );
     FromAsm::from_asm(r0)
@@ -91,8 +87,6 @@ pub(in crate::backend) unsafe fn syscall1_readonly(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)
@@ -133,8 +127,6 @@ pub(in crate::backend) unsafe fn syscall2(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags)
     );
     FromAsm::from_asm(r0)
@@ -164,8 +156,6 @@ pub(in crate::backend) unsafe fn syscall2_readonly(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)
@@ -196,8 +186,6 @@ pub(in crate::backend) unsafe fn syscall3(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags)
     );
     FromAsm::from_asm(r0)
@@ -228,8 +216,6 @@ pub(in crate::backend) unsafe fn syscall3_readonly(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)
@@ -261,8 +247,6 @@ pub(in crate::backend) unsafe fn syscall4(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags)
     );
     FromAsm::from_asm(r0)
@@ -294,8 +278,6 @@ pub(in crate::backend) unsafe fn syscall4_readonly(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)
@@ -328,8 +310,6 @@ pub(in crate::backend) unsafe fn syscall5(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags)
     );
     FromAsm::from_asm(r0)
@@ -362,8 +342,6 @@ pub(in crate::backend) unsafe fn syscall5_readonly(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)
@@ -397,8 +375,6 @@ pub(in crate::backend) unsafe fn syscall6(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags)
     );
     FromAsm::from_asm(r0)
@@ -432,8 +408,6 @@ pub(in crate::backend) unsafe fn syscall6_readonly(
         lateout("r11") _,
         lateout("r12") _,
         lateout("cr0") _,
-        lateout("ctr") _,
-        lateout("xer") _,
         options(nostack, preserves_flags, readonly)
     );
     FromAsm::from_asm(r0)

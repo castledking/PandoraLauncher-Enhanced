@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.89"
 name = "cosmic-text"
-version = "0.17.2"
+version = "0.19.0"
 authors = ["Jeremy Soller <jeremy@system76.com>"]
 build = false
 autolib = false
@@ -46,6 +46,7 @@ no_std = [
     "dep:libm",
     "skrifa/libm",
     "core_maths",
+    "swash?/libm",
 ]
 peniko = []
 shape-run-cache = []
@@ -76,8 +77,24 @@ name = "editor_modified_state"
 path = "tests/editor_modified_state.rs"
 
 [[test]]
+name = "ellipsize_rendering"
+path = "tests/ellipsize_rendering.rs"
+
+[[test]]
+name = "richtext_layout"
+path = "tests/richtext_layout.rs"
+
+[[test]]
 name = "shaping_and_rendering"
 path = "tests/shaping_and_rendering.rs"
+
+[[test]]
+name = "text_decorations"
+path = "tests/text_decorations.rs"
+
+[[test]]
+name = "variable_font_weight"
+path = "tests/variable_font_weight.rs"
 
 [[test]]
 name = "wrap_stability"
@@ -117,7 +134,7 @@ version = "0.5.0"
 default-features = false
 
 [dependencies.hashbrown]
-version = "0.16"
+version = "0.17"
 optional = true
 default-features = false
 

@@ -12,20 +12,9 @@
 [package]
 edition = "2018"
 name = "libfuzzer-sys"
-version = "0.4.12"
+version = "0.4.10"
 authors = ["The rust-fuzz Project Developers"]
 build = "build.rs"
-exclude = [
-    ".github",
-    "ci",
-    "libfuzzer/CMakeLists.txt",
-    "libfuzzer/build.sh",
-    "libfuzzer/scripts/unbalanced_allocs.py",
-    "libfuzzer/standalone/StandaloneFuzzTargetMain.c",
-    "libfuzzer/tests/CMakeLists.txt",
-    "rust-toolchain",
-    "update-libfuzzer.sh",
-]
 autolib = false
 autobins = false
 autoexamples = false
@@ -49,11 +38,10 @@ path = "src/lib.rs"
 version = "1"
 
 [dev-dependencies.flate2]
-version = "1.1"
+version = "1.0.24"
 
 [dev-dependencies.rand]
-version = "0.10"
-default-features = false
+version = "0.8.5"
 
 [build-dependencies.cc]
 version = "1.0.83"

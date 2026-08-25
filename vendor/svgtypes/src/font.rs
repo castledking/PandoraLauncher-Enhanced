@@ -1,9 +1,13 @@
 // Copyright 2024 the SVG Types Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use crate::stream::{ByteExt, Stream};
 use crate::Error;
-use std::fmt::Display;
+use crate::stream::{ByteExt, Stream};
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt::Display;
 
 /// Parses a list of font families and generic families from a string.
 pub fn parse_font_families(text: &str) -> Result<Vec<FontFamily>, Error> {
@@ -36,16 +40,16 @@ pub enum FontFamily {
 }
 
 impl Display for FontFamily {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let str = match self {
-            FontFamily::Monospace => "monospace".to_string(),
-            FontFamily::Serif => "serif".to_string(),
-            FontFamily::SansSerif => "sans-serif".to_string(),
-            FontFamily::Cursive => "cursive".to_string(),
-            FontFamily::Fantasy => "fantasy".to_string(),
-            FontFamily::Named(s) => format!("\"{}\"", s),
+            Self::Monospace => "monospace".to_string(),
+            Self::Serif => "serif".to_string(),
+            Self::SansSerif => "sans-serif".to_string(),
+            Self::Cursive => "cursive".to_string(),
+            Self::Fantasy => "fantasy".to_string(),
+            Self::Named(s) => format!("\"{s}\""),
         };
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 
@@ -160,7 +164,7 @@ impl<'a> FontShorthand<'a> {
                 | "700" | "800" | "900" => font_weight = Some(ident),
                 "ultra-condensed" | "extra-condensed" | "condensed" | "semi-condensed"
                 | "semi-expanded" | "expanded" | "extra-expanded" | "ultra-expanded" => {
-                    font_stretch = Some(ident)
+                    font_stretch = Some(ident);
                 }
                 _ => {
                     // Not one of the 4 properties, so we backtrack and then start

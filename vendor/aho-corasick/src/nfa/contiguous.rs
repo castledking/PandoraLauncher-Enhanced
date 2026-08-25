@@ -821,7 +821,7 @@ impl<'a> State<'a> {
 
     /// Return an iterator over every explicitly defined transition in this
     /// state.
-    fn transitions(&self) -> impl Iterator<Item = (u8, StateID)> + '_ {
+    fn transitions<'b>(&'b self) -> impl Iterator<Item = (u8, StateID)> + 'b {
         let mut i = 0;
         core::iter::from_fn(move || match self.trans {
             StateTrans::Sparse { classes, nexts } => {

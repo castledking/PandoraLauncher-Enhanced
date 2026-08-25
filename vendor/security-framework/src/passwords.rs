@@ -238,6 +238,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "OSX_10_12")]
     fn update_generic() {
         let name = "update_generic";
         set_generic_password(name, name, name.as_bytes()).expect("set_generic_password");

@@ -26,9 +26,11 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#![cfg(feature = "lut")]
 #![allow(dead_code)]
 use crate::conversions::lut_transforms::LUT_SAMPLING;
 use crate::math::{FusedMultiplyAdd, FusedMultiplyNegAdd};
+use crate::mlaf::fmla;
 use crate::{Vector3f, Vector4f};
 use std::ops::{Add, Mul, Sub};
 
@@ -62,7 +64,7 @@ impl BarycentricWeight<f32> {
 
             let scale = (GRID_SIZE as i32 - 1) as f32 * SCALE;
 
-            let dr = index as f32 * scale - x as f32;
+            let dr = fmla(index as f32, scale, -x as f32);
             *weight = BarycentricWeight { x, x_n, w: dr };
         }
         weights
@@ -80,7 +82,7 @@ impl BarycentricWeight<f32> {
 
             let scale = (GRID_SIZE as i32 - 1) as f32 * b_scale;
 
-            let dr = index as f32 * scale - x as f32;
+            let dr = fmla(index as f32, scale, -x as f32);
             *weight = BarycentricWeight { x, x_n, w: dr };
         }
         weights
@@ -102,7 +104,7 @@ impl BarycentricWeight<i16> {
 
             const Q: f32 = ((1i32 << 15) - 1) as f32;
 
-            let dr = ((index as f32 * scale - x as f32) * Q)
+            let dr = (fmla(index as f32, scale, -x as f32) * Q)
                 .round()
                 .min(i16::MAX as f32)
                 .max(-i16::MAX as f32) as i16;
@@ -125,7 +127,7 @@ impl BarycentricWeight<i16> {
 
             const Q: f32 = ((1i32 << 15) - 1) as f32;
 
-            let dr = ((index as f32 * scale - x as f32) * Q)
+            let dr = (fmla(index as f32, scale, -x as f32) * Q)
                 .round()
                 .min(i16::MAX as f32)
                 .max(-i16::MAX as f32) as i16;
@@ -520,80 +522,5 @@ impl<const GRID_SIZE: usize> Trilinear<GRID_SIZE> {
         let dz = T::from(db);
 
         c0.neg_mla(c0, dz).mla(c1, w2)
-    }
-}
-
-pub(crate) trait LutBarycentricReduction<T, U> {
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: T) -> U;
-}
-
-impl LutBarycentricReduction<u8, u8> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: u8) -> u8 {
-        v
-    }
-}
-
-impl LutBarycentricReduction<u8, u16> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: u8) -> u16 {
-        if BINS == 65536 {
-            return u16::from_ne_bytes([v, v]);
-        }
-        if BINS == 16384 {
-            return u16::from_ne_bytes([v, v]) >> 2;
-        }
-        unimplemented!()
-    }
-}
-
-impl LutBarycentricReduction<f32, u8> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: f32) -> u8 {
-        (v * 255.).round().min(255.).max(0.) as u8
-    }
-}
-
-impl LutBarycentricReduction<f32, u16> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: f32) -> u16 {
-        let scale = (BINS - 1) as f32;
-        (v * scale).round().min(scale).max(0.) as u16
-    }
-}
-
-impl LutBarycentricReduction<f64, u8> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: f64) -> u8 {
-        (v * 255.).round().min(255.).max(0.) as u8
-    }
-}
-
-impl LutBarycentricReduction<f64, u16> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: f64) -> u16 {
-        let scale = (BINS - 1) as f64;
-        (v * scale).round().min(scale).max(0.) as u16
-    }
-}
-
-impl LutBarycentricReduction<u16, u16> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: u16) -> u16 {
-        let src_scale = 1. / ((1 << SRC_BP) - 1) as f32;
-        let scale = src_scale * (BINS - 1) as f32;
-        (v as f32 * scale).round().min(scale).max(0.) as u16
-    }
-}
-
-impl LutBarycentricReduction<u16, u8> for () {
-    #[inline(always)]
-    fn reduce<const SRC_BP: usize, const BINS: usize>(v: u16) -> u8 {
-        let shift = SRC_BP as u16 - 8;
-        if SRC_BP == 16 {
-            (v >> 8) as u8
-        } else {
-            (v >> shift).min(255) as u8
-        }
     }
 }

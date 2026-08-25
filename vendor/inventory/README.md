@@ -14,6 +14,8 @@ need to be a central list of all the plugins.
 inventory = "0.3"
 ```
 
+*Supports rustc 1.62+*
+
 <br>
 
 # Examples

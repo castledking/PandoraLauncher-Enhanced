@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = AudioDecoderConfig)]
+    #[wasm_bindgen(extends = "::js_sys::Object", js_name = "AudioDecoderConfig")]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `AudioDecoderConfig` dictionary."]
     #[doc = ""]
@@ -57,8 +57,11 @@ extern "C" {
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "The `val` slice must outlive any use of the dictionary on the JavaScript side. wasm-bindgen passes a raw view into wasm linear memory — if the underlying data is freed or moved before JS is done reading the field, the behaviour is undefined. Prefer the `_array` variant (takes `&Uint8Array`) for a safe alternative that copies the data."]
     #[wasm_bindgen(method, setter = "description")]
-    pub fn set_description_u8_slice(this: &AudioDecoderConfig, val: &mut [u8]);
+    pub unsafe fn set_description_u8_slice(this: &AudioDecoderConfig, val: &mut [u8]);
     #[cfg(web_sys_unstable_apis)]
     #[doc = "Change the `description` field of this object."]
     #[doc = ""]

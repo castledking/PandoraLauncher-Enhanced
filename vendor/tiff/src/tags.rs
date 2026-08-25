@@ -1,3 +1,6 @@
+use crate::encoder::TiffValue;
+use core::fmt;
+
 macro_rules! tags {
     {
         // Permit arbitrary meta items, which include documentation.
@@ -10,8 +13,9 @@ macro_rules! tags {
         $( #[$enum_attr] )*
         #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
         #[non_exhaustive]
+        #[repr($ty)]
         pub enum $name {
-            $($(#[$ident_attr])* $tag,)*
+            $($(#[$ident_attr])* $tag = $val,)*
             $(
                 #[$unknown_meta]
                 Unknown($ty),
@@ -20,7 +24,7 @@ macro_rules! tags {
 
         impl $name {
             #[inline(always)]
-            fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
+            const fn __from_inner_type(n: $ty) -> Result<Self, $ty> {
                 match n {
                     $( $val => Ok($name::$tag), )*
                     n => Err(n),
@@ -28,7 +32,7 @@ macro_rules! tags {
             }
 
             #[inline(always)]
-            fn __to_inner_type(&self) -> $ty {
+            const fn __to_inner_type(&self) -> $ty {
                 match *self {
                     $( $name::$tag => $val, )*
                     $( $name::Unknown($unknown_doc) => { $unknown_doc }, )*
@@ -42,19 +46,25 @@ macro_rules! tags {
     ($name:tt, u16, $($unknown_doc:ident)*) => {
         impl $name {
             #[inline(always)]
-            pub fn from_u16(val: u16) -> Option<Self> {
-                Self::__from_inner_type(val).ok()
+            pub const fn from_u16(val: u16) -> Option<Self> {
+                match Self::__from_inner_type(val) {
+                    Ok(v) => Some(v),
+                    Err(_) => None,
+                }
             }
 
             $(
             #[inline(always)]
-            pub fn from_u16_exhaustive($unknown_doc: u16) -> Self {
-                Self::__from_inner_type($unknown_doc).unwrap_or_else(|_| $name::Unknown($unknown_doc))
+            pub const fn from_u16_exhaustive($unknown_doc: u16) -> Self {
+                match Self::__from_inner_type($unknown_doc) {
+                    Ok(v) => v,
+                    Err(_) => $name::Unknown($unknown_doc),
+                }
             }
             )*
 
             #[inline(always)]
-            pub fn to_u16(&self) -> u16 {
+            pub const fn to_u16(&self) -> u16 {
                 Self::__to_inner_type(self)
             }
         }
@@ -122,6 +132,11 @@ pub enum Tag(u16) unknown(
     SMaxSampleValue = 341, // TODO add support
     // JPEG
     JPEGTables = 347,
+    // Subsampling
+    #[doc(alias = "YCbCrSubsampling")]
+    ChromaSubsampling = 530, // TODO add support
+    #[doc(alias = "YCbCrPositioning")]
+    ChromaPositioning = 531, // TODO add support
     // GeoTIFF
     ModelPixelScaleTag = 33550, // (SoftDesk)
     ModelTransformationTag = 34264, // (JPL Carto Group)
@@ -154,6 +169,18 @@ pub enum Tag(u16) unknown(
 // marker are imposed by the IFD. (It's unclear if Pointer tags such as Exif would allow `0` but in
 // practice it just returns garbage and the validity does not matter greatly to us).
 pub struct IfdPointer(pub u64);
+
+impl fmt::LowerHex for IfdPointer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl core::fmt::UpperHex for IfdPointer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::UpperHex::fmt(&self.0, f)
+    }
+}
 
 tags! {
 /// The type of an IFD entry (a 2 byte field).
@@ -193,6 +220,45 @@ pub enum Type(u16) {
 }
 }
 
+impl Type {
+    pub(crate) fn byte_len(&self) -> u8 {
+        match *self {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => 1,
+            Type::SHORT | Type::SSHORT => 2,
+            Type::LONG | Type::SLONG | Type::FLOAT | Type::IFD => 4,
+            Type::LONG8
+            | Type::SLONG8
+            | Type::DOUBLE
+            | Type::RATIONAL
+            | Type::SRATIONAL
+            | Type::IFD8 => 8,
+        }
+    }
+
+    pub(crate) fn value_bytes(&self, count: u64) -> Result<u64, crate::error::TiffError> {
+        let tag_size = u64::from(self.byte_len());
+
+        match count.checked_mul(tag_size) {
+            Some(n) => Ok(n),
+            None => Err(crate::error::TiffError::LimitsExceeded),
+        }
+    }
+
+    pub(crate) fn endian_bytes(self) -> EndianBytes {
+        match self {
+            Type::BYTE | Type::SBYTE | Type::ASCII | Type::UNDEFINED => EndianBytes::One,
+            Type::SHORT | Type::SSHORT => EndianBytes::Two,
+            Type::LONG
+            | Type::SLONG
+            | Type::FLOAT
+            | Type::IFD
+            | Type::RATIONAL
+            | Type::SRATIONAL => EndianBytes::Four,
+            Type::LONG8 | Type::SLONG8 | Type::DOUBLE | Type::IFD8 => EndianBytes::Eight,
+        }
+    }
+}
+
 tags! {
 /// See [TIFF compression tags](https://www.awaresystems.be/imaging/tiff/tifftags/compression.html)
 /// for reference.
@@ -214,6 +280,9 @@ pub enum CompressionMethod(u16) unknown(
 
     // Self-assigned by libtiff
     ZSTD = 0xC350,
+
+    // Self-assigned by libtiff
+    WebP = 0xC351,
 }
 }
 
@@ -227,6 +296,8 @@ pub enum PhotometricInterpretation(u16) {
     CMYK = 5,
     YCbCr = 6,
     CIELab = 8,
+    IccLab = 9,
+    ItuLab = 10,
 }
 }
 
@@ -270,4 +341,209 @@ pub enum SampleFormat(u16) unknown(
     IEEEFP = 3,
     Void = 4,
 }
+}
+
+tags! {
+pub enum ExtraSamples(u16) {
+    /// There is no specified association between the sample and the image.
+    Unspecified = 0,
+    /// The sample is associated alpha, i.e. pre-multiplied color.
+    AssociatedAlpha = 1,
+    /// The sample is unassociated alpha such as a mask. There might be more than one such sample.
+    UnassociatedAlpha = 2,
+}
+}
+
+/// A value represented as in-memory bytes with flexible byteorder.
+pub struct ValueBuffer {
+    /// The raw bytes of the value.
+    bytes: Vec<u8>,
+
+    /// The type of the value.
+    ty: Type,
+
+    /// The number of items, as `bytes` may be oversized while holding bytes that are initialized
+    /// but not used by any value.
+    count: u64,
+
+    /// The byte order of the value.
+    byte_order: ByteOrder,
+}
+
+impl ValueBuffer {
+    /// A value with a count of zero.
+    ///
+    /// The byte order is set to the native byte order of the platform.
+    pub fn empty(ty: Type) -> Self {
+        ValueBuffer {
+            bytes: vec![],
+            ty,
+            count: 0,
+            byte_order: ByteOrder::native(),
+        }
+    }
+
+    /// Create a value with native byte order from in-memory data.
+    pub fn from_value<T: TiffValue>(value: &T) -> Self {
+        ValueBuffer {
+            bytes: value.data().into_owned(),
+            ty: <T as TiffValue>::FIELD_TYPE,
+            count: value.count() as u64,
+            byte_order: ByteOrder::native(),
+        }
+    }
+
+    pub fn byte_order(&self) -> ByteOrder {
+        self.byte_order
+    }
+
+    pub fn data_type(&self) -> Type {
+        self.ty
+    }
+
+    /// The count of items in the value.
+    pub fn count(&self) -> u64 {
+        debug_assert!({
+            self.ty
+                .value_bytes(self.count)
+                .is_ok_and(|n| n <= self.bytes.len() as u64)
+        });
+
+        self.count
+    }
+
+    /// View the underlying raw bytes of this value.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.assumed_len_from_count()]
+    }
+
+    /// View the underlying mutable raw bytes of this value.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        let len = self.assumed_len_from_count();
+        &mut self.bytes[..len]
+    }
+
+    /// Change the byte order of the value representation.
+    pub fn set_byte_order(&mut self, byte_order: ByteOrder) {
+        let len = self.assumed_len_from_count();
+
+        self.byte_order
+            .convert(self.ty, &mut self.bytes[..len], byte_order);
+
+        self.byte_order = byte_order;
+    }
+
+    /// Prepare the internal for a value `to_len` bytes long.
+    ///
+    /// Shrinks the allocation if it is far too large or extends it if it is too small. In either
+    /// case ensures that at least `to_len` bytes are initialized for [`Self::raw_bytes_mut`].
+    pub(crate) fn prepare_length(&mut self, to_len: usize) {
+        if to_len > self.bytes.len() {
+            self.bytes.resize(to_len, 0);
+        }
+
+        if self.bytes.len() < to_len / 2 {
+            self.bytes.truncate(to_len);
+            self.bytes.shrink_to_fit();
+        }
+    }
+
+    /// Internal method to change the type and count while re-interpreting the byte buffer.
+    ///
+    /// Should only be called after writing bytes to the internal buffer prepared with
+    /// `Self::prepare_length`.
+    pub(crate) fn assume_type(&mut self, ty: Type, count: u64, bo: ByteOrder) {
+        debug_assert!({
+            ty.value_bytes(count)
+                .is_ok_and(|n| n <= self.bytes.len() as u64)
+        });
+
+        self.byte_order = bo;
+        self.ty = ty;
+        self.count = count;
+    }
+
+    pub(crate) fn raw_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes
+    }
+
+    fn assumed_len_from_count(&self) -> usize {
+        usize::from(self.ty.byte_len()) * self.count as usize
+    }
+}
+
+/// Byte order of the TIFF file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByteOrder {
+    /// little endian byte order
+    LittleEndian,
+    /// big endian byte order
+    BigEndian,
+}
+
+impl ByteOrder {
+    /// Get the byte order representing the running target.
+    ///
+    /// The infallibility of this method represents the fact that only little and big endian
+    /// systems are supported by the library. No mixed endian and no other weird stuff. (Note: as
+    /// of Rust 1.90 this is a tautology as Rust itself only has those two kinds).
+    pub const fn native() -> Self {
+        match () {
+            #[cfg(target_endian = "little")]
+            () => ByteOrder::LittleEndian,
+            #[cfg(target_endian = "big")]
+            () => ByteOrder::BigEndian,
+            #[cfg(not(any(target_endian = "big", target_endian = "little")))]
+            () => compile_error!("Unsupported target"),
+        }
+    }
+
+    /// Given a typed buffer, convert its contents to the specified byte order in-place.
+    ///
+    /// The buffer is assumed to represent an array of the given type. If the length of the buffer
+    /// is not divisible into an integer number of values, the behavior for the remaining bytes it
+    /// not specified.
+    pub fn convert(self, ty: Type, buffer: &mut [u8], to: ByteOrder) {
+        self.convert_endian_bytes(ty.endian_bytes(), buffer, to)
+    }
+
+    pub(crate) fn convert_endian_bytes(self, cls: EndianBytes, buffer: &mut [u8], to: ByteOrder) {
+        if self == to {
+            return;
+        }
+
+        // FIXME: at MSRV 1.89 or higher use `slice::as_chunks_mut`.
+        match cls {
+            EndianBytes::One => {
+                // No change needed
+            }
+            EndianBytes::Two => {
+                for chunk in buffer.chunks_exact_mut(2) {
+                    let chunk: &mut [u8; 2] = chunk.try_into().unwrap();
+                    *chunk = u16::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+            EndianBytes::Four => {
+                for chunk in buffer.chunks_exact_mut(4) {
+                    let chunk: &mut [u8; 4] = chunk.try_into().unwrap();
+                    *chunk = u32::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+            EndianBytes::Eight => {
+                for chunk in buffer.chunks_exact_mut(8) {
+                    let chunk: &mut [u8; 8] = chunk.try_into().unwrap();
+                    *chunk = u64::from_be_bytes(*chunk).to_le_bytes();
+                }
+            }
+        }
+    }
+}
+
+/// The size of individual byte-order corrected elements.
+#[derive(Clone, Copy)]
+pub(crate) enum EndianBytes {
+    One,
+    Two,
+    Four,
+    Eight,
 }

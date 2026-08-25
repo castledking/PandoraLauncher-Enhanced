@@ -12,11 +12,11 @@ use bridge::{
     instance::{ContentFolder, ContentSummary, ContentType, InstanceContentID, InstanceID},
     keep_alive::KeepAlive,
     message::{
-        AccountCapesResult, AccountSkinResult, BackendConfigWithPassword, EmbeddedOrRaw, LogFiles, MessageToBackend,
-        MessageToFrontend, QuickPlayLaunch,
+        AccountCapesResult, AccountSkinResult, BackendConfigWithPassword, EmbeddedOrRaw, GameOutputMsg, LogFiles,
+        MessageToBackend, MessageToFrontend, QuickPlayLaunch,
     },
     meta::MetadataResult,
-    modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
+    modal_action::{ModalAction, ModalActionVisitUrl, ProgressTrackerFinishType},
     serial::AtomicOptionSerial,
 };
 use futures::TryFutureExt;
@@ -40,25 +40,7 @@ use ustr::Ustr;
 use uuid::Uuid;
 
 use crate::{
-    BackendState, CachedMinecraftProfile, FolderChanges, LoginError,
-    account::BackendAccount,
-    arcfactory::ArcStrFactory,
-    instance::Instance,
-    launch::{ArgumentExpansionKey, LaunchError},
-    log_reader,
-    metadata::{
-        items::{
-            AssetsIndexMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem,
-            FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem,
-            MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem,
-            ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem,
-            MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem,
-            VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters,
-        },
-        manager::MetaLoadError,
-    },
-    mod_metadata::{ContentUpdateAction, ContentUpdateKey},
-    skin_manager::SkinManager,
+    BackendState, CachedMinecraftProfile, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, fs::FolderChanges, instance::Instance, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}, skin_manager::SkinManager
 };
 
 impl BackendState {
@@ -160,6 +142,12 @@ impl BackendState {
                     }
                 }
             },
+            MessageToBackend::DuplicateInstance { id, name, modal_action } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
+                });
+            },
             MessageToBackend::ExportInstance {
                 id,
                 format,
@@ -171,9 +159,6 @@ impl BackendState {
                 tokio::task::spawn(async move {
                     crate::export::export_instance(backend, id, format, options, output, modal_action).await;
                 });
-            },
-            MessageToBackend::DuplicateInstance { id } => {
-                self.duplicate_instance(id).await;
             },
             MessageToBackend::RenameInstance { id, name } => {
                 self.rename_instance(id, &name).await;
@@ -286,7 +271,7 @@ impl BackendState {
                         if let Ok(format) = image::guess_format(&*image_bytes) {
                             if format == image::ImageFormat::Png {
                                 let icon_path = root_path.join("icon.png");
-                                if let Err(err) = crate::write_safe(&icon_path, &*image_bytes) {
+                                if let Err(err) = crate::fs::write_safe(&icon_path, &*image_bytes) {
                                     log::error!("Unable to save instance icon: {:?}", err);
                                     self.send.send_error("Unable to save instance icon");
                                     return;
@@ -377,14 +362,15 @@ impl BackendState {
                 }
 
                 if let Some(id) = id {
-                    self.start_instance(id, quick_play, Default::default()).await
+                    self.start_instance(id, quick_play, None, Default::default()).await
                 }
             },
             MessageToBackend::StartInstance {
                 id,
                 quick_play,
+                live_game_output,
                 modal_action,
-            } => self.start_instance(id, quick_play, modal_action).await,
+            } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
             MessageToBackend::SetContentEnabled {
                 id,
                 content_ids: mod_ids,
@@ -470,7 +456,7 @@ impl BackendState {
                 if let Some(instance) = instance_state.instances.get_mut(id)
                     && let Some((instance_mod, folder)) = instance.try_get_content(mod_id)
                 {
-                    let Some(aux_path) = crate::pandora_aux_path_for_content(instance_mod) else {
+                    let Some(aux_path) = crate::fs::pandora_aux_path_for_content(instance_mod) else {
                         return;
                     };
 
@@ -514,7 +500,7 @@ impl BackendState {
                         }
                     }
 
-                    let mut aux: AuxiliaryContentMeta = crate::read_json(&aux_path).unwrap_or_default();
+                    let mut aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).unwrap_or_default();
 
                     let mut changed = false;
 
@@ -577,12 +563,12 @@ impl BackendState {
                                 return;
                             },
                         };
-                        if let Err(err) = crate::write_safe(&aux_path, &bytes) {
+                        if let Err(err) = crate::fs::write_safe(&aux_path, &bytes) {
                             log::error!("Unable to save aux meta: {err:?}");
                             self.send.send_error("Unable to save aux meta");
                         }
                         if let Some(backup_aux_path) = &backup_aux_path {
-                            if let Err(err) = crate::write_safe(backup_aux_path, &bytes) {
+                            if let Err(err) = crate::fs::write_safe(backup_aux_path, &bytes) {
                                 log::error!("Unable to save aux meta backup: {err:?}");
                             }
                         }
@@ -636,41 +622,31 @@ impl BackendState {
             MessageToBackend::CreateInstanceFromFile { file, modal_action } => {
                 let summary = self.mod_metadata_manager.get_path(&file);
 
-                // Supports Modrinth (.mrpack) and CurseForge (exported .zip) modpacks.
-                let (minecraft_version, loader) = match &summary.extra {
-                    ContentType::ModrinthModpack { dependencies, .. } => {
-                        let mut minecraft_version = None;
-                        let mut loader = Loader::Vanilla;
-                        for (key, value) in dependencies {
-                            match &**key {
-                                "forge" => loader = Loader::Forge,
-                                "neoforge" => loader = Loader::NeoForge,
-                                "fabric-loader" => loader = Loader::Fabric,
-                                "minecraft" => minecraft_version = Some(value.clone()),
-                                _ => {},
-                            }
-                        }
-                        (minecraft_version, loader)
-                    },
-                    ContentType::CurseforgeModpack { minecraft, .. } => {
-                        (minecraft.version.clone(), minecraft.get_loader().unwrap_or(Loader::Vanilla))
-                    },
-                    _ => {
-                        modal_action.set_error_message("Not a supported modpack file (.mrpack or CurseForge .zip)".into());
-                        modal_action.set_finished();
-                        return;
-                    },
-                };
-
-                let Some(name) = summary.name.clone() else {
-                    modal_action.set_error_message("Unable to determine name from modpack".into());
-                    modal_action.set_finished();
+                // right now only .mrpack importing is used
+                let ContentType::ModrinthModpack { dependencies, .. } = &summary.extra else {
+                    modal_action.set_finished_with_error("Not a .mrpack file".into());
                     return;
                 };
 
+                let Some(name) = summary.name.clone() else {
+                    modal_action.set_finished_with_error("Unable to determine name from modpack".into());
+                    return;
+                };
+
+                let mut minecraft_version = None;
+                let mut loader = Loader::Vanilla;
+                for (key, value) in dependencies {
+                    match &**key {
+                        "forge" => loader = Loader::Forge,
+                        "neoforge" => loader = Loader::NeoForge,
+                        "fabric-loader" => loader = Loader::Fabric,
+                        "minecraft" => minecraft_version = Some(value.clone()),
+                        _ => {},
+                    }
+                }
+
                 let Some(minecraft_version) = minecraft_version else {
-                    modal_action.set_error_message("Unable to determine minecraft version from modpack".into());
-                    modal_action.set_finished();
+                    modal_action.set_finished_with_error("Unable to determine minecraft version from modpack".into());
                     return;
                 };
 
@@ -723,7 +699,7 @@ impl BackendState {
                     }
 
                     let live_path = instance_mod.path.clone();
-                    let aux_path = crate::pandora_aux_path_for_content(instance_mod);
+                    let aux_path = crate::fs::pandora_aux_path_for_content(instance_mod);
                     // While the instance is running the live mods folder is a throwaway copy
                     // that gets restored from `original_mods/` on stop, so mirror the delete
                     // into the backup folder to make it persist.
@@ -766,8 +742,7 @@ impl BackendState {
                     (configuration.loader, configuration.minecraft_version)
                 } else {
                     self.send.send_error("Can't update instance, unknown id");
-                    modal_action.set_error_message("Can't update instance, unknown id".into());
-                    modal_action.set_finished();
+                    modal_action.set_finished_with_error("Can't update instance, unknown id".into());
                     return;
                 };
 
@@ -782,14 +757,12 @@ impl BackendState {
 
                 let modrinth_loader = loader.as_modrinth_loader();
                 if modrinth_loader == ModrinthLoader::Unknown {
-                    modal_action.set_error_message("Unable to update instance, unsupported loader".into());
-                    modal_action.set_finished();
+                    modal_action.set_finished_with_error("Unable to update instance, unsupported loader".into());
                     return;
                 }
 
-                let tracker = ProgressTracker::new("Checking content".into(), self.send.clone());
+                let tracker = modal_action.push_tracker("Checking content".into());
                 tracker.set_total(content.len());
-                modal_action.trackers.push(tracker.clone());
 
                 let semaphore = Semaphore::new(8);
 
@@ -852,7 +825,6 @@ impl BackendState {
                             match source {
                                 ContentSource::Manual => {
                                     tracker.add_count(1);
-                                    tracker.notify();
                                     Ok(ContentUpdateAction::ManualInstall)
                                 },
                                 ContentSource::ModrinthUnknown | ContentSource::ModrinthProject { .. } => {
@@ -904,7 +876,6 @@ impl BackendState {
                                     drop(permit);
 
                                     tracker.add_count(1);
-                                    tracker.notify();
 
                                     if let Err(MetaLoadError::NonOK(404)) = result {
                                         return Ok(ContentUpdateAction::ErrorNotFound);
@@ -967,7 +938,6 @@ impl BackendState {
                                     drop(permit);
 
                                     tracker.add_count(1);
-                                    tracker.notify();
 
                                     if let Err(MetaLoadError::NonOK(404)) = result {
                                         return Ok(ContentUpdateAction::ErrorNotFound);
@@ -1040,8 +1010,7 @@ impl BackendState {
                     },
                     Err(error) => {
                         tracker.set_finished(ProgressTrackerFinishType::Error);
-                        modal_action.set_error_message(format!("Error checking for updates: {}", error).into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(format!("Error checking for updates: {}", error).into());
                         return;
                     },
                 }
@@ -1187,6 +1156,34 @@ impl BackendState {
                 self.install_content(content_install, modal_action.clone()).await;
                 modal_action.set_finished();
                 self.send.send(MessageToFrontend::Refresh);
+            },
+            MessageToBackend::UnzipModpack { id, content_id, modal_action } => {
+                let (summary, loader, minecraft_version, dot_minecraft_dir, mods_dir) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let Some((summary, _)) = instance.try_get_content(content_id) else {
+                        return;
+                    };
+                    let summary = summary.clone();
+
+                    let cfg = instance.configuration.get();
+                    (summary, cfg.loader, cfg.minecraft_version, instance.dot_minecraft_path.clone(), instance.content_state[ContentFolder::Mods].path.clone())
+                } else {
+                    return;
+                };
+
+                let modpack_path = summary.path.clone();
+
+                let mod_copies = self.apply_modpack_and_collect_mods(loader, minecraft_version,
+                    &[summary], &dot_minecraft_dir, &mods_dir, &modal_action).await;
+
+                let copy_tracker = modal_action.push_tracker("Copying mod files".into());
+                self.apply_copies_to_mods_dir(mod_copies, &mods_dir, &copy_tracker);
+                copy_tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+                if let Err(err) = std::fs::remove_file(modpack_path) {
+                    self.send.send_error(format!("Unable to delete original modpack: {err}"));
+                }
+
+                modal_action.set_finished();
             },
             MessageToBackend::Sleep5s => {
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -1478,21 +1475,17 @@ impl BackendState {
                     Ok(file) => file,
                     Err(e) => {
                         let error = format!("Unable to read file: {e}");
-                        modal_action.set_error_message(log_reader::replace(&error).into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(log_reader::replace(&error).into());
                         return;
                     },
                 };
 
-                let tracker = ProgressTracker::new("Reading log file".into(), self.send.clone());
+                let tracker = modal_action.push_tracker("Reading log file".into());
                 tracker.set_total(4);
-                tracker.notify();
-                modal_action.trackers.push(tracker.clone());
 
                 let mut reader = std::io::BufReader::new(file);
                 let Ok(buffer) = reader.fill_buf() else {
                     tracker.set_finished(ProgressTrackerFinishType::Error);
-                    tracker.notify();
                     return;
                 };
 
@@ -1502,22 +1495,19 @@ impl BackendState {
                     let mut gz_decoder = flate2::bufread::GzDecoder::new(reader);
                     if let Err(e) = gz_decoder.read_to_string(&mut content) {
                         let error = format!("Error while reading file: {e}");
-                        modal_action.set_error_message(log_reader::replace(&error).into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(log_reader::replace(&error).into());
                         return;
                     }
                 } else {
                     if let Err(e) = reader.read_to_string(&mut content) {
                         let error = format!("Error while reading file: {e}");
-                        modal_action.set_error_message(log_reader::replace(&error).into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(log_reader::replace(&error).into());
                         return;
                     }
                 }
 
                 tracker.set_title("Redacting sensitive information".into());
                 tracker.set_count(1);
-                tracker.notify();
 
                 // Truncate to 11mb, mclo.gs limit as of right now is ~10.5mb
                 if content.len() > 11000000 {
@@ -1533,11 +1523,9 @@ impl BackendState {
 
                 tracker.set_title("Uploading to mclo.gs".into());
                 tracker.set_count(2);
-                tracker.notify();
 
                 if replaced.trim_ascii().is_empty() {
-                    modal_action.set_error_message("Log file was empty, didn't upload".into());
-                    modal_action.set_finished();
+                    modal_action.set_finished_with_error("Log file was empty, didn't upload".into());
                     return;
                 }
 
@@ -1552,21 +1540,18 @@ impl BackendState {
                     Ok(resp) => resp,
                     Err(e) => {
                         let error = format!("Error while uploading log: {e:?}");
-                        modal_action.set_error_message(error.into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(error.into());
                         return;
                     },
                 };
 
                 tracker.set_count(3);
-                tracker.notify();
 
                 let bytes = match resp.bytes().await {
                     Ok(bytes) => bytes,
                     Err(e) => {
                         let error = format!("Error while reading mclo.gs response: {e:?}");
-                        modal_action.set_error_message(error.into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(error.into());
                         return;
                     },
                 };
@@ -1582,8 +1567,7 @@ impl BackendState {
                     Ok(response) => response,
                     Err(e) => {
                         let error = format!("Error while deserializing mclo.gs response: {e:?}");
-                        modal_action.set_error_message(error.into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(error.into());
                         return;
                     },
                 };
@@ -1597,23 +1581,19 @@ impl BackendState {
                         });
                         modal_action.set_finished();
                     } else {
-                        modal_action.set_error_message("Success returned, but missing url".into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error("Success returned, but missing url".into());
                     }
                 } else {
                     if let Some(e) = response.error {
                         let error = format!("mclo.gs rejected upload: {e}");
-                        modal_action.set_error_message(error.into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error(error.into());
                     } else {
-                        modal_action.set_error_message("Failure returned, but missing error".into());
-                        modal_action.set_finished();
+                        modal_action.set_finished_with_error("Failure returned, but missing error".into());
                     }
                 }
 
                 tracker.set_count(4);
                 tracker.set_finished(ProgressTrackerFinishType::Normal);
-                tracker.notify();
             },
             MessageToBackend::AddNewAccount { modal_action } => {
                 self.login_flow(&modal_action, None).await;
@@ -1726,7 +1706,7 @@ impl BackendState {
                 let mut is_normal_instance_folder = false;
 
                 if let Ok(path) = path.strip_prefix(&self.directories.instances_dir)
-                    && crate::is_single_component_path(path)
+                    && crate::fs::is_single_component_path(path)
                 {
                     is_normal_instance_folder = true;
 
@@ -1756,7 +1736,7 @@ impl BackendState {
 
                     #[cfg(windows)]
                     if let Ok(target) = junction::get_target(&instance.root_path) {
-                        if let Err(err) = crate::rename_with_fallback_across_devices(&target, &path) {
+                        if let Err(err) = crate::fs::rename_with_fallback_across_devices(&target, &path) {
                             log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
                             self.send.send_error(format!("Unable to move instance files: {err}"));
                             return;
@@ -1774,7 +1754,7 @@ impl BackendState {
                     };
 
                     if let Ok(target) = std::fs::read_link(&instance.root_path) {
-                        if let Err(err) = crate::rename_with_fallback_across_devices(&target, &path) {
+                        if let Err(err) = crate::fs::rename_with_fallback_across_devices(&target, &path) {
                             log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
                             self.send.send_error(format!("Unable to move instance files: {err}"));
                             return;
@@ -1802,7 +1782,7 @@ impl BackendState {
                         return;
                     }
 
-                    if let Err(err) = crate::rename_with_fallback_across_devices(&instance.root_path, &path) {
+                    if let Err(err) = crate::fs::rename_with_fallback_across_devices(&instance.root_path, &path) {
                         log::error!("Unable to move instance files: {err:?}");
                         self.send.send_error(format!("Unable to move instance files: {err}"));
                         return;
@@ -2062,28 +2042,11 @@ impl BackendState {
                     return;
                 }
 
-                let filename = sanitize_filename::sanitize_with_options(
-                    filename,
-                    sanitize_filename::Options {
-                        windows: true,
-                        ..Default::default()
-                    },
-                );
+                let filename = sanitize_filename::sanitize_with_options(filename, sanitize_filename::Options { windows: true, ..Default::default() });
+                let filename = crate::fs::unique_name(&self.directories.skin_library_dir, &filename, false);
+                let path = self.directories.skin_library_dir.join(&*filename);
 
-                let mut path = self.directories.skin_library_dir.join(&filename);
-
-                if path.exists() {
-                    for i in 1..32 {
-                        let new_filename = format!("{filename} ({i})");
-                        let new_path = self.directories.skin_library_dir.join(&new_filename);
-                        if !new_path.exists() {
-                            path = new_path;
-                            break;
-                        }
-                    }
-                }
-
-                if let Err(err) = crate::write_safe(&path, &bytes) {
+                if let Err(err) = crate::fs::write_safe(&path, &bytes) {
                     log::error!("Error while saving skin: {:?}", err);
                     self.send.send_error("Error while saving skin, see logs for more details");
                 }
@@ -2211,27 +2174,11 @@ impl BackendState {
                     return;
                 }
 
-                let filename = sanitize_filename::sanitize_with_options(
-                    filename,
-                    sanitize_filename::Options {
-                        windows: true,
-                        ..Default::default()
-                    },
-                );
+                let filename = sanitize_filename::sanitize_with_options(filename, sanitize_filename::Options { windows: true, ..Default::default() });
+                let filename = crate::fs::unique_name(&self.directories.skin_library_dir, &filename, false);
+                let path = self.directories.skin_library_dir.join(&*filename);
 
-                let mut path = self.directories.skin_library_dir.join(&filename);
-                if path.exists() {
-                    for i in 1..32 {
-                        let new_filename = format!("{filename} ({i})");
-                        let new_path = self.directories.skin_library_dir.join(&new_filename);
-                        if !new_path.exists() {
-                            path = new_path;
-                            break;
-                        }
-                    }
-                }
-
-                if let Err(err) = crate::write_safe(&path, &bytes) {
+                if let Err(err) = crate::fs::write_safe(&path, &bytes) {
                     log::error!("CopyPlayerSkin: failed to save skin: {:?}", err);
                     self.send.send_error("Error while saving skin, see logs for more details");
                 }
@@ -2250,16 +2197,14 @@ impl BackendState {
         self: &Arc<Self>,
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
-        modal_action: ModalAction,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
+        modal_action: ModalAction
     ) {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            if let Some(launch_keepalive) = &instance.launch_keepalive
-                && launch_keepalive.is_alive()
-            {
-                modal_action.set_error_message("Can't launch instance, already launching".into());
-                modal_action.set_finished();
+            if let Some(launch_keepalive) = &instance.launch_keepalive && launch_keepalive.is_alive() {
+                modal_action.set_finished_with_error("Can't launch instance, already launching".into());
                 return;
             }
 
@@ -2271,8 +2216,7 @@ impl BackendState {
             (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
         } else {
             self.send.send_error("Can't launch instance, unknown id");
-            modal_action.set_error_message("Can't launch instance, unknown id".into());
-            modal_action.set_finished();
+            modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
             return;
         };
 
@@ -2289,52 +2233,41 @@ impl BackendState {
         }
 
         let Some(login_info) = self.get_login_info(&modal_action, configuration.preferred_account).await else {
-            modal_action.set_error_message("Unable to log in to Minecraft account".into());
+            modal_action.set_finished_with_error("Unable to log in to Minecraft account".into());
             return;
         };
+
+        if modal_action.get_finished_at().is_some() || modal_action.has_requested_cancel() {
+            return;
+        }
+        modal_action.clear_trackers();
 
         tokio::select! {
             _ = self.prelaunch(id, &modal_action) => {},
             _ = modal_action.request_cancel.cancelled() => {
-                self.send.send(MessageToFrontend::CloseModal);
                 return;
             }
         };
 
-        if modal_action.error.read().is_some() {
-            self.send.send(MessageToFrontend::Refresh);
+        if modal_action.get_finished_at().is_some() || modal_action.has_requested_cancel() {
             return;
         }
+        modal_action.clear_trackers();
 
-        let game_output = !self.config.write().get().dont_open_game_output_when_launching;
-
-        let launch_tracker = ProgressTracker::new(Arc::from("Launching"), self.send.clone());
-        modal_action.trackers.push(launch_tracker.clone());
-        let result = self
-            .launcher
-            .launch(
-                &self.redirecting_http_client,
-                dot_minecraft,
-                configuration,
-                quick_play,
-                login_info,
-                game_output,
-                &launch_tracker,
-                &modal_action,
-            )
-            .await;
+        let launch_tracker = modal_action.push_tracker("Launching".into());
+        let result = self.launcher.launch(&self.redirecting_http_client, dot_minecraft, configuration, quick_play, login_info, live_game_output.is_some(), &launch_tracker, &modal_action).await;
 
         if matches!(result, Err(LaunchError::CancelledByUser)) {
-            self.send.send(MessageToFrontend::CloseModal);
             return;
         }
 
         let is_err = result.is_err();
         match result {
             Ok(mut child) => {
-                if game_output {
+                if let Some(live_game_output) = live_game_output {
                     if let Some(stdout) = child.stdout.take() {
-                        log_reader::start_game_output(stdout, child.stderr.take(), self.send.clone());
+                        let receiver = log_reader::start_game_output(stdout, child.stderr.take());
+                        _ = live_game_output.send(receiver);
                     }
                 }
 
@@ -2351,12 +2284,11 @@ impl BackendState {
             },
             Err(ref err) => {
                 log::error!("Failed to launch due to error: {:?}", &err);
-                modal_action.set_error_message(format!("{}", &err).into());
+                modal_action.set_finished_with_error(format!("{}", &err).into());
             },
         }
 
         launch_tracker.set_finished(ProgressTrackerFinishType::from_err(is_err));
-        launch_tracker.notify();
     }
 
     fn extract_skin_url_from_profile(profile_json: &str) -> Option<Arc<str>> {
@@ -2464,8 +2396,7 @@ impl BackendState {
             Err(error) => {
                 log::error!("Error initializing secret storage: {error}");
                 if let Some(modal_action) = modal_action {
-                    modal_action.set_error_message(format!("Error initializing secret storage: {error}").into());
-                    modal_action.set_finished();
+                    modal_action.set_finished_with_error(format!("Error initializing secret storage: {error}").into());
                 }
                 return None;
             },
@@ -2505,13 +2436,12 @@ impl BackendState {
             }
         }
 
-        let login_tracker = ProgressTracker::new(Arc::from("Logging in"), self.send.clone());
-        modal_action.trackers.push(login_tracker.clone());
+        let login_tracker = modal_action.push_tracker("Logging in".into());
 
         let login_result = self.login(&mut credentials, Some(&login_tracker), Some(&modal_action)).await;
 
         if matches!(login_result, Err(LoginError::CancelledByUser)) {
-            self.send.send(MessageToFrontend::CloseModal);
+            modal_action.set_finished();
             return None;
         }
 
@@ -2520,7 +2450,6 @@ impl BackendState {
         let (profile, access_token) = match login_result {
             Ok(login_result) => {
                 login_tracker.set_finished(ProgressTrackerFinishType::Normal);
-                login_tracker.notify();
                 login_result
             },
             Err(ref err) => {
@@ -2530,10 +2459,8 @@ impl BackendState {
                     let _ = secret_storage.delete_credentials(selected_account).await;
                 }
 
-                modal_action.set_error_message(format!("Error logging in: {}", &err).into());
                 login_tracker.set_finished(ProgressTrackerFinishType::Error);
-                login_tracker.notify();
-                modal_action.set_finished();
+                modal_action.set_finished_with_error(format!("Error logging in: {}", &err).into());
                 return None;
             },
         };

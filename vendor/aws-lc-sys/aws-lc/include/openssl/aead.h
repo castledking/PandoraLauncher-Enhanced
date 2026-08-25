@@ -1,16 +1,5 @@
-/* Copyright (c) 2014, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+// Copyright (c) 2014, Google Inc.
+// SPDX-License-Identifier: ISC
 
 #ifndef OPENSSL_HEADER_AEAD_H
 #define OPENSSL_HEADER_AEAD_H
@@ -282,8 +271,9 @@ OPENSSL_EXPORT void EVP_AEAD_CTX_cleanup(EVP_AEAD_CTX *ctx);
 // authenticates |ad_len| bytes from |ad| and writes the result to |out|. It
 // returns one on success and zero otherwise.
 //
-// This function may be called concurrently with itself or any other seal/open
-// function on the same |EVP_AEAD_CTX|.
+// This function generally CANNOT be called concurrently with itself or any
+// other seal/open function on the same |EVP_AEAD_CTX|. Which |EVP_AEAD|
+// implementations that support concurrency is not documented.
 //
 // At most |max_out_len| bytes are written to |out| and, in order to ensure
 // success, |max_out_len| should be |in_len| plus the result of
@@ -308,8 +298,9 @@ OPENSSL_EXPORT int EVP_AEAD_CTX_seal(const EVP_AEAD_CTX *ctx, uint8_t *out,
 // from |ad| and decrypts at most |in_len| bytes into |out|. It returns one on
 // success and zero otherwise.
 //
-// This function may be called concurrently with itself or any other seal/open
-// function on the same |EVP_AEAD_CTX|.
+// This function generally CANNOT be called concurrently with itself or any
+// other seal/open function on the same |EVP_AEAD_CTX|. Which |EVP_AEAD|
+// implementations that support concurrency is not documented.
 //
 // At most |in_len| bytes are written to |out|. In order to ensure success,
 // |max_out_len| should be at least |in_len|. On successful return, |*out_len|
@@ -334,8 +325,9 @@ OPENSSL_EXPORT int EVP_AEAD_CTX_open(const EVP_AEAD_CTX *ctx, uint8_t *out,
 // ciphertext to |out| and the authentication tag to |out_tag|. It returns one
 // on success and zero otherwise.
 //
-// This function may be called concurrently with itself or any other seal/open
-// function on the same |EVP_AEAD_CTX|.
+// This function generally CANNOT be called concurrently with itself or any
+// other seal/open function on the same |EVP_AEAD_CTX|. Which |EVP_AEAD|
+// implementations that support concurrency is not documented.
 //
 // Exactly |in_len| bytes are written to |out|, and up to
 // |EVP_AEAD_max_overhead+extra_in_len| bytes to |out_tag|. On successful
@@ -369,8 +361,9 @@ OPENSSL_EXPORT int EVP_AEAD_CTX_seal_scatter(
 // authentication tag from |in_tag|. If successful, it writes |in_len| bytes of
 // plaintext to |out|. It returns one on success and zero otherwise.
 //
-// This function may be called concurrently with itself or any other seal/open
-// function on the same |EVP_AEAD_CTX|.
+// This function generally CANNOT be called concurrently with itself or any
+// other seal/open function on the same |EVP_AEAD_CTX|. Which |EVP_AEAD|
+// implementations that support concurrency is not documented.
 //
 // The length of |nonce|, |nonce_len|, must be equal to the result of
 // |EVP_AEAD_nonce_length| for this AEAD.

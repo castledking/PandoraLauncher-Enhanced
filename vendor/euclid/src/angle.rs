@@ -17,8 +17,6 @@ use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, S
 
 #[cfg(feature = "bytemuck")]
 use bytemuck::{Pod, Zeroable};
-#[cfg(feature = "malloc_size_of")]
-use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use num_traits::real::Real;
 use num_traits::{Float, FloatConst, NumCast, One, Zero};
 #[cfg(feature = "serde")]
@@ -51,13 +49,6 @@ where
 
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
         <T as arbitrary::Arbitrary>::size_hint(depth)
-    }
-}
-
-#[cfg(feature = "malloc_size_of")]
-impl<T: MallocSizeOf> MallocSizeOf for Angle<T> {
-    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
-        self.radians.size_of(ops)
     }
 }
 

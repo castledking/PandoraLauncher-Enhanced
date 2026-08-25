@@ -346,7 +346,10 @@ where
         // resolve the future again.
         let output = match AssertUnwindSafe(fut).catch_unwind().await {
             // Resolved.
-            Ok(output) => output,
+            Ok(output) => {
+                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
+                output
+            }
             // Panicked.
             Err(payload) => {
                 waiter_guard.set_waiter_value(WaiterValue::InitFuturePanicked);
@@ -354,12 +357,8 @@ where
             }
         };
 
-        // Defer waiter removal until after the cache mutation so that concurrent
-        // callers cannot insert their own waiter and observe stale cache state
-        // between the waiter removal and the cache write.
-        match post_init(output) {
-            Ok(Op::Nop) => {
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
+        match post_init(output)? {
+            Op::Nop => {
                 if let Some(value) = maybe_value {
                     Ok(CompResult::Unchanged(Entry::new(
                         Some(c_key),
@@ -371,11 +370,10 @@ where
                     Ok(CompResult::StillNone(c_key))
                 }
             }
-            Ok(Op::Put(value)) => {
+            Op::Put(value) => {
                 cache
                     .insert_with_hash(Arc::clone(&c_key), c_hash, value.clone())
                     .await;
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
                 if entry_existed {
                     crossbeam_epoch::pin().flush();
                     let entry = Entry::new(Some(c_key), value, true, true);
@@ -385,9 +383,8 @@ where
                     Ok(CompResult::Inserted(entry))
                 }
             }
-            Ok(Op::Remove) => {
+            Op::Remove => {
                 let maybe_prev_v = cache.invalidate_with_hash(&*c_key, c_hash, true).await;
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
                 if let Some(prev_v) = maybe_prev_v {
                     crossbeam_epoch::pin().flush();
                     let entry = Entry::new(Some(c_key), prev_v, false, false);
@@ -395,10 +392,6 @@ where
                 } else {
                     Ok(CompResult::StillNone(c_key))
                 }
-            }
-            Err(e) => {
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
-                Err(e)
             }
         }
 
@@ -491,7 +484,10 @@ where
         // resolve the future again.
         let output = match AssertUnwindSafe(fut).catch_unwind().await {
             // Resolved.
-            Ok(output) => output,
+            Ok(output) => {
+                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
+                output
+            }
             // Panicked.
             Err(payload) => {
                 waiter_guard.set_waiter_value(WaiterValue::InitFuturePanicked);
@@ -499,12 +495,8 @@ where
             }
         };
 
-        // Defer waiter removal until after the cache mutation so that concurrent
-        // callers cannot insert their own waiter and observe stale cache state
-        // between the waiter removal and the cache write.
-        match post_init(output) {
-            Ok(Op::Nop) => {
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
+        match post_init(output)? {
+            Op::Nop => {
                 if let Some(value) = maybe_value {
                     Ok(CompResult::Unchanged(Entry::new(
                         Some(c_key),
@@ -516,11 +508,10 @@ where
                     Ok(CompResult::StillNone(c_key))
                 }
             }
-            Ok(Op::Put(value)) => {
+            Op::Put(value) => {
                 cache
                     .insert_with_hash(Arc::clone(&c_key), c_hash, value.clone())
                     .await;
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
                 if entry_existed {
                     crossbeam_epoch::pin().flush();
                     let entry = Entry::new(Some(c_key), value, true, true);
@@ -530,9 +521,8 @@ where
                     Ok(CompResult::Inserted(entry))
                 }
             }
-            Ok(Op::Remove) => {
+            Op::Remove => {
                 let maybe_prev_v = cache.invalidate_with_hash(&*c_key, c_hash, true).await;
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
                 if let Some(prev_v) = maybe_prev_v {
                     crossbeam_epoch::pin().flush();
                     let entry = Entry::new(Some(c_key), prev_v, false, false);
@@ -540,10 +530,6 @@ where
                 } else {
                     Ok(CompResult::StillNone(c_key))
                 }
-            }
-            Err(e) => {
-                waiter_guard.set_waiter_value(WaiterValue::ReadyNone);
-                Err(e)
             }
         }
 

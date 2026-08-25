@@ -1,27 +1,14 @@
-# RustCrypto: PBKDF2
+# [RustCrypto]: PBKDF2
 
 [![crate][crate-image]][crate-link]
 [![Docs][docs-image]][docs-link]
+[![Build Status][build-image]][build-link]
 ![Apache2/MIT licensed][license-image]
 ![Rust Version][rustc-image]
 [![Project Chat][chat-image]][chat-link]
-[![Build Status][build-image]][build-link]
 
-Pure Rust implementation of the [Password-Based Key Derivation Function v2 (PBKDF2)][1].
-
-[Documentation][docs-link]
-
-## Minimum Supported Rust Version
-
-Rust **1.60** or higher.
-
-Minimum supported Rust version can be changed in the future, but it will be
-done with a minor version bump.
-
-## SemVer Policy
-
-- All on-by-default features of this library are covered by SemVer
-- MSRV is considered exempt from SemVer as noted above
+Pure Rust implementation of the [Password-Based Key Derivation Function v2 (PBKDF2)][1] as specified
+in [RFC 2898][2].
 
 ## License
 
@@ -40,17 +27,21 @@ dual licensed as above, without any additional terms or conditions.
 
 [//]: # (badges)
 
-[crate-image]: https://buildstats.info/crate/pbkdf2
+[crate-image]: https://img.shields.io/crates/v/pbkdf2
 [crate-link]: https://crates.io/crates/pbkdf2
 [docs-image]: https://docs.rs/pbkdf2/badge.svg
 [docs-link]: https://docs.rs/pbkdf2/
+[build-image]: https://github.com/RustCrypto/password-hashes/actions/workflows/pbkdf2.yml/badge.svg
+[build-link]: https://github.com/RustCrypto/password-hashes/actions/workflows/pbkdf2.yml
 [license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
-[rustc-image]: https://img.shields.io/badge/rustc-1.51+-blue.svg
+[rustc-image]: https://img.shields.io/badge/rustc-1.85+-blue.svg
 [chat-image]: https://img.shields.io/badge/zulip-join_chat-blue.svg
 [chat-link]: https://rustcrypto.zulipchat.com/#narrow/stream/260046-password-hashes
 [build-image]: https://github.com/RustCrypto/password-hashes/workflows/pbkdf2/badge.svg?branch=master&event=push
 [build-link]: https://github.com/RustCrypto/password-hashes/actions?query=workflow%3Apbkdf2
 
-[//]: # (general links)
+[//]: # (links)
 
+[RustCrypto]: https://github.com/RustCrypto
 [1]: https://en.wikipedia.org/wiki/PBKDF2
+[2]: https://datatracker.ietf.org/doc/html/rfc2898

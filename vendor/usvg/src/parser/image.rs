@@ -6,7 +6,7 @@ use std::sync::Arc;
 use svgtypes::{AspectRatio, Length};
 
 use super::svgtree::{AId, SvgNode};
-use super::{converter, OptionLog, Options};
+use super::{OptionLog, Options, converter};
 use crate::{
     ClipPath, Group, Image, ImageKind, ImageRendering, Node, NonZeroRect, Path, Size, Transform,
     Tree, Visibility,
@@ -234,7 +234,7 @@ pub(crate) fn convert_inner(
     );
 
     let abs_transform = parent.abs_transform.pre_concat(image_ts);
-    let abs_bounding_box = rect.transform(abs_transform)?;
+    let abs_bounding_box = view_box.transform(parent.abs_transform)?;
 
     let mut g = Group::empty();
     g.id = id;
@@ -323,51 +323,15 @@ fn get_image_data_format(data: &[u8]) -> Option<ImageFormat> {
     }
 }
 
-/// Tries to load the `ImageData` content as an SVG image.
-///
-/// Unlike `Tree::from_*` methods, this one will also remove all `image` elements
-/// from the loaded SVG, as required by the spec.
+/// Tries to load the `ImageData` content as an SVG image or emits a warning and returns `None`.
 pub(crate) fn load_sub_svg(data: &[u8], opt: &Options) -> Option<ImageKind> {
-    let sub_opt = Options {
-        resources_dir: None,
-        dpi: opt.dpi,
-        font_size: opt.font_size,
-        languages: opt.languages.clone(),
-        shape_rendering: opt.shape_rendering,
-        text_rendering: opt.text_rendering,
-        image_rendering: opt.image_rendering,
-        default_size: opt.default_size,
-        // The referenced SVG image cannot have any 'image' elements by itself.
-        // Not only recursive. Any. Don't know why.
-        image_href_resolver: ImageHrefResolver {
-            resolve_data: Box::new(|_, _, _| None),
-            resolve_string: Box::new(|_, _| None),
-        },
-        // In the referenced SVG, we start with the unmodified user-provided
-        // fontdb, not the one from the cache.
-        #[cfg(feature = "text")]
-        fontdb: opt.fontdb.clone(),
-        // Can't clone the resolver, so we create a new one that forwards to it.
-        #[cfg(feature = "text")]
-        font_resolver: crate::FontResolver {
-            select_font: Box::new(|font, db| (opt.font_resolver.select_font)(font, db)),
-            select_fallback: Box::new(|c, used_fonts, db| {
-                (opt.font_resolver.select_fallback)(c, used_fonts, db)
-            }),
-        },
-        ..Options::default()
-    };
-
-    let tree = Tree::from_data(data, &sub_opt);
-    let tree = match tree {
-        Ok(tree) => tree,
+    match Tree::from_data_nested(data, opt) {
+        Ok(tree) => Some(ImageKind::SVG(tree)),
         Err(_) => {
-            log::warn!("Failed to load subsvg image.");
-            return None;
+            log::warn!("Failed to load nested SVG image.");
+            None
         }
-    };
-
-    Some(ImageKind::SVG(tree))
+    }
 }
 
 /// Fits size into a viewbox.

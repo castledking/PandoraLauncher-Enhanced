@@ -86,8 +86,6 @@ where
     }
 
     /// Construct a `Box<ZeroSlice<T>>` from a boxed slice of ULEs
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[inline]
     #[cfg(feature = "alloc")]
     pub fn from_boxed_slice(slice: alloc::boxed::Box<[T::ULE]>) -> alloc::boxed::Box<Self> {

@@ -193,32 +193,27 @@ impl<T> Deque<T> {
             self.advance_cursor();
         }
 
-        // Extract the prev and next pointers before we start modifying the node
-        let (prev, next) = {
-            let node_ref = node.as_ref();
-            (node_ref.prev, node_ref.next)
-        };
+        let node = node.as_mut(); // this one is ours now, we can create an &mut.
 
         // Not creating new mutable (unique!) references overlapping `element`.
-        match prev {
-            Some(prev_node) if next.is_some() => (*prev_node.as_ptr()).next = next,
+        match node.prev {
+            Some(prev) if node.next.is_some() => (*prev.as_ptr()).next = node.next,
             Some(..) => (),
             // This node is the head node.
-            None => self.head = next,
+            None => self.head = node.next,
         };
 
         // This node is not the tail node.
-        if let Some(next_node) = next {
-            (*next_node.as_ptr()).prev = prev;
+        if let Some(next) = node.next.take() {
+            (*next.as_ptr()).prev = node.prev;
 
-            // Update the node's pointers directly without creating conflicting references
-            let node_mut = node.as_mut();
-            node_mut.prev = self.tail;
-            node_mut.next = None;
-
+            let mut node = NonNull::from(node);
             match self.tail {
                 // Not creating new mutable (unique!) references overlapping `element`.
-                Some(tail) => (*tail.as_ptr()).next = Some(node),
+                Some(tail) => {
+                    node.as_mut().prev = Some(tail);
+                    (*tail.as_ptr()).next = Some(node);
+                }
                 None => unreachable!(),
             }
             self.tail = Some(node);

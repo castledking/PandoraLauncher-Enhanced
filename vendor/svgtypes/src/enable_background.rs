@@ -19,7 +19,7 @@ pub enum EnableBackground {
     },
 }
 
-impl std::str::FromStr for EnableBackground {
+impl core::str::FromStr for EnableBackground {
     type Err = Error;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
@@ -32,12 +32,12 @@ impl std::str::FromStr for EnableBackground {
                 return Err(Error::UnexpectedData(s.calc_char_pos()));
             }
 
-            Ok(EnableBackground::Accumulate)
+            Ok(Self::Accumulate)
         } else if s.starts_with(b"new") {
             s.advance(3);
             s.skip_spaces();
             if s.at_end() {
-                return Ok(EnableBackground::New);
+                return Ok(Self::New);
             }
 
             let x = s.parse_list_number()?;
@@ -55,7 +55,7 @@ impl std::str::FromStr for EnableBackground {
                 return Err(Error::InvalidValue);
             }
 
-            Ok(EnableBackground::NewWithRegion {
+            Ok(Self::NewWithRegion {
                 x,
                 y,
                 width,
@@ -71,7 +71,8 @@ impl std::str::FromStr for EnableBackground {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use alloc::string::ToString;
+    use core::str::FromStr;
 
     #[test]
     fn parse_1() {

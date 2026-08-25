@@ -13,8 +13,14 @@
 edition = "2021"
 rust-version = "1.60"
 name = "roxmltree"
-version = "0.20.0"
+version = "0.21.1"
 authors = ["Yevhenii Reizner <razrfalcon@gmail.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "Represent an XML as a read-only tree."
 documentation = "https://docs.rs/roxmltree/"
 readme = "README.md"
@@ -34,4 +40,36 @@ default = [
     "positions",
 ]
 positions = []
-std = []
+std = ["memchr/std"]
+
+[lib]
+name = "roxmltree"
+path = "src/lib.rs"
+
+[[example]]
+name = "ast"
+path = "examples/ast.rs"
+
+[[example]]
+name = "print_pos"
+path = "examples/print_pos.rs"
+
+[[example]]
+name = "stats"
+path = "examples/stats.rs"
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[[test]]
+name = "ast"
+path = "tests/ast.rs"
+
+[[test]]
+name = "dom-api"
+path = "tests/dom-api.rs"
+
+[dependencies.memchr]
+version = "2"
+default-features = false

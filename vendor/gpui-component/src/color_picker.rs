@@ -1,5 +1,5 @@
 use gpui::{
-    App, AppContext, Context, Corner, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    Anchor, App, AppContext, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement as _, IntoElement, KeyBinding, ParentElement, Render, RenderOnce,
     SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Subscription,
     TextAlign, Window, div, hsla, linear_color_stop, linear_gradient, prelude::FluentBuilder as _,
@@ -9,10 +9,10 @@ use rust_i18n::t;
 use crate::{
     ActiveTheme as _, Colorize as _, Icon, Selectable, Sizable, Size, StyleSized,
     actions::Confirm,
-    divider::Divider,
     h_flex,
     input::{Input, InputEvent, InputState},
     popover::Popover,
+    separator::Separator,
     slider::{Slider, SliderEvent, SliderState},
     tab::{Tab, TabBar},
     tooltip::{ManagedTooltipExt as _, Tooltip},
@@ -249,6 +249,23 @@ impl ColorPickerState {
         self.value
     }
 
+    /// Open or close the picker popover.
+    ///
+    /// Lets a caller drive the picker from something other than its own
+    /// trigger, e.g. selecting a color by clicking the element it paints.
+    pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        cx.notify();
+    }
+
+    /// Whether the picker popover is open.
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
     fn on_confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
         self.open = !self.open;
         cx.notify();
@@ -336,7 +353,7 @@ pub struct ColorPicker {
     label: Option<SharedString>,
     icon: Option<Icon>,
     size: Size,
-    anchor: Corner,
+    anchor: Anchor,
 }
 
 impl ColorPicker {
@@ -350,7 +367,7 @@ impl ColorPicker {
             size: Size::Medium,
             label: None,
             icon: None,
-            anchor: Corner::TopLeft,
+            anchor: Anchor::TopLeft,
         }
     }
 
@@ -382,8 +399,8 @@ impl ColorPicker {
 
     /// Set the anchor corner of the color picker.
     ///
-    /// Default is `Corner::TopLeft`.
-    pub fn anchor(mut self, anchor: Corner) -> Self {
+    /// Default is `Anchor::TopLeft`.
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = anchor;
         self
     }
@@ -407,7 +424,6 @@ impl ColorPicker {
                 this.hover(|this| {
                     this.border_color(color.darken(0.3))
                         .bg(color.lighten(0.1))
-                        .shadow_xs()
                 })
                 .active(|this| this.border_color(color.darken(0.5)).bg(color.darken(0.2)))
                 .on_mouse_move(window.listener_for(&state, move |state, _, window, cx| {
@@ -470,7 +486,7 @@ impl ColorPicker {
                     .into_any_element(),
             })
             .when_some(hovered_color, |this, hovered_color| {
-                this.child(Divider::horizontal()).child(
+                this.child(Separator::horizontal()).child(
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -483,7 +499,7 @@ impl ColorPicker {
                                 .size_5()
                                 .rounded(cx.theme().radius),
                         )
-                        .child(Input::new(&self.state.read(cx).state).small()),
+                        .child(Input::new(&self.state.read(cx).state).small().px_2p5()),
                 )
             })
     }
@@ -513,7 +529,7 @@ impl ColorPicker {
                         .map(|color| self.render_item(*color, true, window, cx)),
                 ),
             )
-            .child(Divider::horizontal())
+            .child(Separator::horizontal())
             .child(
                 v_flex()
                     .gap_1()
@@ -827,10 +843,9 @@ impl RenderOnce for ColorPickerButton {
                 this.child(
                     div()
                         .id("square")
-                        .bg(cx.theme().background)
+                        .bg(cx.theme().tokens.background)
                         .border_1()
                         .border_color(cx.theme().input)
-                        .when(cx.theme().shadow, |this| this.shadow_xs())
                         .rounded(cx.theme().radius)
                         .overflow_hidden()
                         .size_with(self.size)

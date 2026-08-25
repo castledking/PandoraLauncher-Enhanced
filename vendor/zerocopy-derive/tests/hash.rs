@@ -13,7 +13,6 @@
 include!("include.rs");
 
 #[derive(imp::IntoBytes, imp::Immutable, imp::ByteHash)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 struct Struct {
     a: u64,

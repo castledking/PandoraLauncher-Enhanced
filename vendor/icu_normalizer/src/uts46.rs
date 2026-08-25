@@ -154,7 +154,7 @@ impl Uts46Mapper {
 
     /// Construct with compiled data.
     #[cfg(feature = "compiled_data")]
-    #[expect(clippy::new_ret_no_self)]
+    #[allow(clippy::new_ret_no_self)]
     pub const fn new() -> Uts46MapperBorrowed<'static> {
         Uts46MapperBorrowed::new()
     }

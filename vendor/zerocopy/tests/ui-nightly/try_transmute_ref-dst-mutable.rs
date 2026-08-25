@@ -6,6 +6,8 @@
 // This file may not be copied, modified, or distributed except according to
 // those terms.
 
+extern crate zerocopy;
+
 use zerocopy::try_transmute_ref;
 
 fn main() {}

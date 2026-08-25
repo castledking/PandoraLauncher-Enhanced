@@ -6,7 +6,7 @@
 use core::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 use core::ops::{Add, Sub};
 
-use crate::{arc::ArcAppendIter, Arc, PathEl, Point, Rect, RoundedRectRadii, Shape, Size, Vec2};
+use crate::{Arc, PathEl, Point, Rect, RoundedRectRadii, Shape, Size, Vec2, arc::ArcAppendIter};
 
 #[allow(unused_imports)] // This is unused in later versions of Rust because of additions to core::f32
 #[cfg(not(feature = "std"))]
@@ -97,25 +97,25 @@ impl RoundedRect {
 
     /// The width of the rectangle.
     #[inline]
-    pub fn width(&self) -> f64 {
+    pub const fn width(&self) -> f64 {
         self.rect.width()
     }
 
     /// The height of the rectangle.
     #[inline]
-    pub fn height(&self) -> f64 {
+    pub const fn height(&self) -> f64 {
         self.rect.height()
     }
 
     /// Radii of the rounded corners.
     #[inline(always)]
-    pub fn radii(&self) -> RoundedRectRadii {
+    pub const fn radii(&self) -> RoundedRectRadii {
         self.radii
     }
 
     /// The (non-rounded) rectangle.
     #[inline(always)]
-    pub fn rect(&self) -> Rect {
+    pub const fn rect(&self) -> Rect {
         self.rect
     }
 
@@ -123,25 +123,25 @@ impl RoundedRect {
     ///
     /// This is the top left corner in a y-down space.
     #[inline(always)]
-    pub fn origin(&self) -> Point {
+    pub const fn origin(&self) -> Point {
         self.rect.origin()
     }
 
     /// The center point of the rectangle.
     #[inline]
-    pub fn center(&self) -> Point {
+    pub const fn center(&self) -> Point {
         self.rect.center()
     }
 
     /// Is this rounded rectangle finite?
     #[inline]
-    pub fn is_finite(&self) -> bool {
+    pub const fn is_finite(&self) -> bool {
         self.rect.is_finite() && self.radii.is_finite()
     }
 
     /// Is this rounded rectangle NaN?
     #[inline]
-    pub fn is_nan(&self) -> bool {
+    pub const fn is_nan(&self) -> bool {
         self.rect.is_nan() || self.radii.is_nan()
     }
 }
@@ -301,13 +301,26 @@ impl Shape for RoundedRect {
 
         // 2. Pick a radius value to use based on which quadrant the point is
         //    in.
-        let radii = self.radii();
-        let radius = match pt {
-            pt if pt.x < 0.0 && pt.y < 0.0 => radii.top_left,
-            pt if pt.x >= 0.0 && pt.y < 0.0 => radii.top_right,
-            pt if pt.x >= 0.0 && pt.y >= 0.0 => radii.bottom_right,
-            pt if pt.x < 0.0 && pt.y >= 0.0 => radii.bottom_left,
-            _ => 0.0,
+        let radius = {
+            /// Calculates `if !cond { a } else { b }`.
+            ///
+            /// This function is theoretically pretty nonsensical to have, as the compiler should
+            /// pretty trivially be able to compile both this function and the explicit
+            /// `if`-statement equivalent to the same thing. However, for some reason, writing
+            /// these bit operations explicitly causes the compiler to be better about prefetching
+            /// the rounded rect data.
+            ///
+            /// See <https://github.com/linebender/kurbo/pull/534> for more.
+            #[inline(always)]
+            fn select(a: f64, b: f64, cond: bool) -> f64 {
+                let mask = (cond as u64).wrapping_neg(); // 0 or !0
+                f64::from_bits((a.to_bits() & !mask) | (b.to_bits() & mask))
+            }
+
+            let radii = self.radii();
+            let radius_top = select(radii.top_left, radii.top_right, pt.x >= 0.);
+            let radius_bottom = select(radii.bottom_left, radii.bottom_right, pt.x >= 0.);
+            select(radius_top, radius_bottom, pt.y >= 0.)
         };
 
         // 3. This is the width and height of a rectangle with one corner at
@@ -334,11 +347,7 @@ impl Shape for RoundedRect {
         //    (px, py) is inside a circle centered around the origin with the
         //    given radius.
         let inside = px * px + py * py <= radius * radius;
-        if inside {
-            1
-        } else {
-            0
-        }
+        if inside { 1 } else { 0 }
     }
 
     #[inline]

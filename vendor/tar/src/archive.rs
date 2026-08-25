@@ -79,10 +79,10 @@ impl<R: Read> Archive<R> {
     /// sequence. If entries are processed out of sequence (from what the
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
-    pub fn entries(&mut self) -> io::Result<Entries<R>> {
+    pub fn entries(&mut self) -> io::Result<Entries<'_, R>> {
         let me: &mut Archive<dyn Read> = self;
         me._entries(None).map(|fields| Entries {
-            fields: fields,
+            fields,
             _ignored: marker::PhantomData,
         })
     }
@@ -93,9 +93,11 @@ impl<R: Read> Archive<R> {
     /// extracting each file in turn to the location specified by the entry's
     /// path name.
     ///
-    /// This operation is relatively sensitive in that it will not write files
-    /// outside of the path specified by `dst`. Files in the archive which have
-    /// a '..' in their path are skipped during the unpacking process.
+    /// # Security
+    ///
+    /// See the [crate-level security documentation][crate#security]. If `dst`
+    /// does not exist, it is created. Unpacking into an existing directory
+    /// merges content.
     ///
     /// # Examples
     ///
@@ -184,11 +186,11 @@ impl<R: Seek + Read> Archive<R> {
     /// sequence. If entries are processed out of sequence (from what the
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
-    pub fn entries_with_seek(&mut self) -> io::Result<Entries<R>> {
+    pub fn entries_with_seek(&mut self) -> io::Result<Entries<'_, R>> {
         let me: &Archive<dyn Read> = self;
         let me_seekable: &Archive<dyn SeekRead> = self;
         me._entries(Some(me_seekable)).map(|fields| Entries {
-            fields: fields,
+            fields,
             _ignored: marker::PhantomData,
         })
     }
@@ -216,7 +218,7 @@ impl Archive<dyn Read + '_> {
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
         if dst.symlink_metadata().is_err() {
-            fs::create_dir_all(&dst)
+            fs::create_dir_all(dst)
                 .map_err(|e| TarError::new(format!("failed to create `{}`", dst.display()), e))?;
         }
 
@@ -228,7 +230,7 @@ impl Archive<dyn Read + '_> {
         let dst = &dst.canonicalize().unwrap_or(dst.to_path_buf());
 
         // Delay any directory entries until the end (they will be created if needed by
-        // descendants), to ensure that directory permissions do not interfer with descendant
+        // descendants), to ensure that directory permissions do not interfere with descendant
         // extraction.
         let mut directories = Vec::new();
         for entry in self._entries(None)? {
@@ -264,10 +266,7 @@ impl<'a, R: Read> Entries<'a, R> {
     /// or long link archive members. Raw iteration is disabled by default.
     pub fn raw(self, raw: bool) -> Entries<'a, R> {
         Entries {
-            fields: EntriesFields {
-                raw: raw,
-                ..self.fields
-            },
+            fields: EntriesFields { raw, ..self.fields },
             _ignored: marker::PhantomData,
         }
     }
@@ -325,8 +324,16 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"));
         }
 
+        // PAX extensions describe the *next file entry*, not intermediary
+        // extension headers (GNU LongName `L`, GNU LongLink `K`, PAX `x`/`g`).
+        let entry_type = header.entry_type();
+        let is_extension_header = entry_type.is_gnu_longname()
+            || entry_type.is_gnu_longlink()
+            || entry_type.is_pax_local_extensions()
+            || entry_type.is_pax_global_extensions();
+
         let mut pax_size: Option<u64> = None;
-        if let Some(pax_extensions_ref) = &pax_extensions {
+        if let Some(pax_extensions_ref) = pax_extensions.filter(|_| !is_extension_header) {
             pax_size = pax_extensions_value(pax_extensions_ref, PAX_SIZE);
 
             if let Some(pax_uid) = pax_extensions_value(pax_extensions_ref, PAX_UID) {
@@ -340,17 +347,18 @@ impl<'a> EntriesFields<'a> {
 
         let file_pos = self.next;
         let mut size = header.entry_size()?;
-        if size == 0 {
-            if let Some(pax_size) = pax_size {
-                size = pax_size;
-            }
+        // If this exists, it must override the header size. Disagreement among
+        // parsers allows construction of malicious archives that appear different
+        // when parsed.
+        if let Some(pax_size) = pax_size {
+            size = pax_size;
         }
         let ret = EntryFields {
-            size: size,
-            header_pos: header_pos,
-            file_pos: file_pos,
+            size,
+            header_pos,
+            file_pos,
             data: vec![EntryIo::Data((&self.archive.inner).take(size))],
-            header: header,
+            header,
             long_pathname: None,
             long_linkname: None,
             pax_extensions: None,
@@ -587,7 +595,7 @@ impl<'a> Iterator for EntriesFields<'a> {
     }
 }
 
-impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
+impl<R: ?Sized + Read> Read for &ArchiveInner<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         let i = self.obj.borrow_mut().read(into)?;
         self.pos.set(self.pos.get() + i as u64);
@@ -595,7 +603,7 @@ impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
     }
 }
 
-impl<'a, R: ?Sized + Seek> Seek for &'a ArchiveInner<R> {
+impl<R: ?Sized + Seek> Seek for &ArchiveInner<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let pos = self.obj.borrow_mut().seek(pos)?;
         self.pos.set(pos);

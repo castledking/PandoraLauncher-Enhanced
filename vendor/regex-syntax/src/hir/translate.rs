@@ -1047,7 +1047,7 @@ impl<'t, 'p> TranslatorI<'t, 'p> {
         if let Ok(ref mut class) = result {
             self.unicode_fold_and_negate(
                 &ast_class.span,
-                ast_class.is_negated(),
+                ast_class.negated,
                 class,
             )?;
         }
@@ -2471,10 +2471,6 @@ mod tests {
             hir_uclass_query(ClassQuery::Binary("Z"))
         );
         assert_eq!(
-            t(r"\p{gc!=Separator}"),
-            hir_negate(hir_uclass_query(ClassQuery::Binary("Z")))
-        );
-        assert_eq!(
             t(r"\p{Other}"),
             hir_uclass_query(ClassQuery::Binary("Other"))
         );
@@ -2490,7 +2486,7 @@ mod tests {
         );
         assert_eq!(
             t(r"\P{gc!=separator}"),
-            hir_uclass_query(ClassQuery::Binary("Z"))
+            hir_negate(hir_uclass_query(ClassQuery::Binary("Z")))
         );
 
         assert_eq!(t(r"\p{any}"), hir_uclass_query(ClassQuery::Binary("Any")));

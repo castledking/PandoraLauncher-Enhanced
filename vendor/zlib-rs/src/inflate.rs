@@ -152,24 +152,8 @@ impl<'a> InflateStream<'a> {
 
 const MAX_BITS: u8 = 15; // maximum number of bits in a code
 const MAX_DIST_EXTRA_BITS: u8 = 13; // maximum number of extra distance bits
-
-/// Decompresses `input` into the provided `output` buffer.
-///
-/// Returns a subslice of `output` containing the decompressed bytes and a
-/// [`ReturnCode`] indicating the result of the operation. Returns [`ReturnCode::BufError`] if
-/// there is insufficient output space.
-///
-/// # Example
-///
-/// ```
-/// # use zlib_rs::*;
-/// # fn foo(compressed: &[u8]) {
-/// let mut buffer = [0u8; 1024];
-/// let (decompressed, rc) = decompress_slice(&mut buffer, compressed, InflateConfig::default());
-/// assert_eq!(rc, ReturnCode::Ok);
-/// # }
-/// ```
-pub fn decompress_slice<'a>(
+                                    //
+pub fn uncompress_slice<'a>(
     output: &'a mut [u8],
     input: &[u8],
     config: InflateConfig,
@@ -1646,7 +1630,8 @@ impl State<'_> {
 
                         let InflateTable::Success { root, used } = inflate_table(
                             CodeType::Codes,
-                            &self.lens[..19],
+                            &self.lens,
+                            19,
                             &mut self.codes_codes,
                             7,
                             &mut self.work,
@@ -1744,7 +1729,8 @@ impl State<'_> {
 
                         let InflateTable::Success { root, used } = inflate_table(
                             CodeType::Lens,
-                            &self.lens[..self.nlen],
+                            &self.lens,
+                            self.nlen,
                             &mut self.len_codes,
                             10,
                             &mut self.work,
@@ -1759,7 +1745,8 @@ impl State<'_> {
 
                         let InflateTable::Success { root, used } = inflate_table(
                             CodeType::Dists,
-                            &self.lens[self.nlen..][..self.ndist],
+                            &self.lens[self.nlen..],
+                            self.ndist,
                             &mut self.dist_codes,
                             9,
                             &mut self.work,
@@ -2186,29 +2173,24 @@ impl InflateAllocOffsets {
     fn new() -> Self {
         use core::mem::size_of;
 
-        // 64B padding for SIMD operations. This allows unaligned operations (up to 512-bit) to run
-        // off the end of the object without issue.
+        // 64B padding for SIMD operations
         const WINDOW_PAD_SIZE: usize = 64;
 
-        // 64B alignment of individual items in the alloc.
-        // Note that changing this also requires changes in 'init' and 'copy'.
-        const ALIGN_SIZE: usize = 64;
         let mut curr_size = 0usize;
 
         /* Define sizes */
-        let state_size = size_of::<State>();
         let window_size = (1 << MAX_WBITS) + WINDOW_PAD_SIZE;
+        let state_size = size_of::<State>();
 
         /* Calculate relative buffer positions and paddings */
-        let state_pos = curr_size.next_multiple_of(ALIGN_SIZE);
-        curr_size = state_pos + state_size;
+        let window_pos = curr_size.next_multiple_of(WINDOW_PAD_SIZE);
+        curr_size += window_pos + window_size;
 
-        let window_pos = curr_size.next_multiple_of(ALIGN_SIZE);
-        curr_size = window_pos + window_size;
+        let state_pos = curr_size.next_multiple_of(64);
+        curr_size += state_pos + state_size;
 
-        /* Add ALIGN_SIZE-1 to allow alignment (done in the 'init' and 'copy' functions), and round
-         * size of buffer up to next multiple of ALIGN_SIZE */
-        let total_size = (curr_size + (ALIGN_SIZE - 1)).next_multiple_of(ALIGN_SIZE);
+        /* Add 64-1 or 4096-1 to allow window alignment, and round size of buffer up to multiple of 64 */
+        let total_size = (curr_size + (WINDOW_PAD_SIZE - 1)).next_multiple_of(64);
 
         Self {
             total_size,
@@ -2218,9 +2200,6 @@ impl InflateAllocOffsets {
     }
 }
 
-/// Configuration for decompresssion.
-///
-/// Used with [`decompress_slice`].
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InflateConfig {
     pub window_bits: i32,
@@ -2381,7 +2360,7 @@ pub fn codes_used(stream: &InflateStream) -> usize {
 
 pub unsafe fn inflate(stream: &mut InflateStream, flush: InflateFlush) -> ReturnCode {
     if stream.next_out.is_null() || (stream.next_in.is_null() && stream.avail_in != 0) {
-        return ReturnCode::StreamError;
+        return ReturnCode::StreamError as _;
     }
 
     let state = &mut stream.state;
@@ -2410,7 +2389,7 @@ pub unsafe fn inflate(stream: &mut InflateStream, flush: InflateFlush) -> Return
     let out_written = state.out_available - (state.writer.capacity() - state.writer.len());
 
     stream.total_in += in_read as z_size;
-    state.total = state.total.wrapping_add(out_written);
+    state.total += out_written;
     stream.total_out = state.total as _;
 
     stream.avail_in = state.bit_reader.bytes_remaining() as u32;
@@ -2453,12 +2432,12 @@ pub unsafe fn inflate(stream: &mut InflateStream, flush: InflateFlush) -> Return
 
     stream.data_type = state.decoding_state();
 
-    if ((in_read == 0 && out_written == 0) || flush == InflateFlush::Finish)
-        && err == ReturnCode::Ok
+    if ((in_read == 0 && out_written == 0) || flush == InflateFlush::Finish as _)
+        && err == (ReturnCode::Ok as _)
     {
-        ReturnCode::BufError
+        ReturnCode::BufError as _
     } else {
-        err
+        err as _
     }
 }
 
@@ -2734,7 +2713,7 @@ mod tests {
 
         let config = InflateConfig { window_bits: 15 };
 
-        let (_decompressed, err) = decompress_slice(&mut output, &input, config);
+        let (_decompressed, err) = uncompress_slice(&mut output, &input, config);
         assert_eq!(err, ReturnCode::DataError);
     }
 }

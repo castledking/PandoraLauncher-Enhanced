@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.89"
 name = "smol_str"
-version = "0.3.5"
+version = "0.3.6"
 authors = [
     "Aleksey Kladov <aleksey.kladov@gmail.com>",
     "Lukas Wirth <lukastw97@gmail.com>",

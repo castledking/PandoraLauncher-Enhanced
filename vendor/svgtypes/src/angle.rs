@@ -26,8 +26,8 @@ pub struct Angle {
 impl Angle {
     /// Constructs a new angle.
     #[inline]
-    pub fn new(number: f64, unit: AngleUnit) -> Angle {
-        Angle { number, unit }
+    pub fn new(number: f64, unit: AngleUnit) -> Self {
+        Self { number, unit }
     }
 
     /// Converts angle to degrees.
@@ -42,7 +42,7 @@ impl Angle {
     }
 }
 
-impl std::str::FromStr for Angle {
+impl core::str::FromStr for Angle {
     type Err = Error;
 
     #[inline]
@@ -54,7 +54,7 @@ impl std::str::FromStr for Angle {
             return Err(Error::UnexpectedData(s.calc_char_pos()));
         }
 
-        Ok(Angle::new(l.number, l.unit))
+        Ok(Self::new(l.number, l.unit))
     }
 }
 
@@ -99,7 +99,8 @@ impl Stream<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use alloc::string::ToString;
+    use core::str::FromStr;
 
     macro_rules! test_p {
         ($name:ident, $text:expr, $result:expr) => (

@@ -28,9 +28,9 @@ fn test_add_hundred() {
     drop(w);
 
     let stats = dhat::HeapStats::get();
+    dhat::assert_eq!(stats.total_bytes, 18296);
     dhat::assert_eq!(stats.total_blocks, 106);
-    dhat::assert_eq!(stats.total_bytes, 15980);
 
-    dhat::assert_eq!(stats.curr_blocks, 0);
     dhat::assert_eq!(stats.curr_bytes, 0);
+    dhat::assert_eq!(stats.curr_blocks, 0);
 }

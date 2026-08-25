@@ -17,11 +17,12 @@ this module and use fallback implementation instead.
 Refs:
 - RISC-V Instruction Set Manual
   "Zacas" Extension for Atomic Compare-and-Swap (CAS) Instructions
-  https://github.com/riscv/riscv-isa-manual/blob/riscv-isa-release-56e76be-2025-08-26/src/zacas.adoc
+  https://github.com/riscv/riscv-isa-manual/blob/riscv-isa-release-8b9dc50-2024-08-30/src/zacas.adoc
 - RISC-V Atomics ABI Specification
-  https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/draft-20250812-301374e92976e298e676e7129a6212926b2299ce/riscv-atomic.adoc
+  https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/draft-20240829-13bfa9f54634cb60d86b9b333e109f077805b4b3/riscv-atomic.adoc
 
-See tests/asm-test/asm/portable-atomic for generated assembly.
+Generated asm:
+- riscv32imac (+zacas) https://godbolt.org/z/9bTdfhKre
 */
 
 // TODO: merge duplicated code with atomic128/riscv64.rs
@@ -56,7 +57,7 @@ macro_rules! debug_assert_zacas {
 // `.option arch, +zacas` directive requires LLVM 20, so we use .4byte directive for old LLVM.
 // Note that `.insn <value>` directive requires LLVM 19.
 // https://github.com/llvm/llvm-project/commit/2a086dce691e3cc34a2fc27f4fb255bb2cbbfac9
-// https://github.com/riscv-non-isa/riscv-asm-manual/blob/v0.0.1/src/asm-manual.adoc#arch
+// https://github.com/riscv-non-isa/riscv-asm-manual/blob/ad0de8c004e29c9a7ac33cfd054f4d4f9392f2fb/src/asm-manual.adoc#arch
 #[cfg(not(portable_atomic_pre_llvm_20))]
 macro_rules! start_zacas {
     () => {
@@ -611,6 +612,7 @@ const IS_ALWAYS_LOCK_FREE: bool =
 atomic64!(AtomicI64, i64, atomic_max, atomic_min);
 atomic64!(AtomicU64, u64, atomic_umax, atomic_umin);
 
+#[allow(clippy::undocumented_unsafe_blocks, clippy::wildcard_imports)]
 #[cfg(test)]
 mod tests {
     use super::*;

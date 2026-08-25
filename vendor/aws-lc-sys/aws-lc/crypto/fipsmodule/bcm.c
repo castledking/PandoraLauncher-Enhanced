@@ -1,16 +1,5 @@
-/* Copyright (c) 2017, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+// Copyright (c) 2017, Google Inc.
+// SPDX-License-Identifier: ISC
 
 #if !defined(_GNU_SOURCE)
 #define _GNU_SOURCE  // needed for syscall() on Linux.
@@ -32,6 +21,10 @@
 #pragma data_seg(".fipsda$b")
 #pragma const_seg(".fipsco$b")
 #pragma bss_seg(".fipsbs$b")
+// Explicitly declare the FIPS rodata section with correct attributes. This
+// ensures the section is known to the compiler/linker even if #pragma const_seg
+// is not fully supported (e.g. clang-cl on ARM64).
+#pragma section(".fipsco$b", read)
 #endif
 
 #include <openssl/chacha.h>
@@ -128,7 +121,6 @@
 #include "kdf/kbkdf.c"
 #include "kdf/sskdf.c"
 #include "kem/kem.c"
-#include "md4/md4.c"
 #include "md5/md5.c"
 #include "ml_dsa/ml_dsa.c"
 #include "ml_kem/ml_kem.c"
@@ -164,7 +156,7 @@
 
 #if defined(BORINGSSL_FIPS)
 
-#if !defined(OPENSSL_ASAN)
+#if !defined(OPENSSL_ASAN) && !defined(OPENSSL_MSAN)
 
 static const void* function_entry_ptr(const void* func_sym) {
 #if defined(OPENSSL_PPC64BE)
@@ -206,7 +198,7 @@ static void assert_within(const void *start, const void *symbol,
     return;
   }
 
-  assert(sizeof(symbol_name) < MAX_FUNCTION_NAME);
+  assert(strlen(symbol_name) < MAX_FUNCTION_NAME);
   char message[MAX_WITHIN_MSG_LEN] = {0};
   snprintf(message, sizeof(message), ASSERT_WITHIN_MSG, symbol_name, start, symbol, end);
   AWS_LC_FIPS_failure(message);
@@ -222,8 +214,8 @@ static void assert_not_within(const void *start, const void *symbol,
     return;
   }
 
-  assert(sizeof(symbol_name) < MAX_FUNCTION_NAME);
-  char message[MAX_WITHIN_MSG_LEN] = {0};
+  assert(strlen(symbol_name) < MAX_FUNCTION_NAME);
+  char message[MAX_OUTSIDE_MSG_LEN] = {0};
   snprintf(message, sizeof(message), ASSERT_OUTSIDE_MSG, symbol_name, symbol, start, symbol, end);
   AWS_LC_FIPS_failure(message);
 }
@@ -251,7 +243,7 @@ static void BORINGSSL_maybe_set_module_text_permissions(int permission) {
 static void BORINGSSL_maybe_set_module_text_permissions(int _permission) {}
 #endif  // !ANDROID
 
-#endif  // !ASAN
+#endif  // !ASAN && !MSAN
 
 #if defined(AWSLC_FIPS_FAILURE_CALLBACK)
 #if defined(__ELF__) && defined(__GNUC__)
@@ -279,20 +271,21 @@ static void BORINGSSL_bcm_power_on_self_test(void) {
     AWS_LC_FIPS_failure("CPU Jitter entropy RNG initialization failed");
   }
 
-#if !defined(OPENSSL_ASAN)
-  // Integrity tests cannot run under ASAN because it involves reading the full
-  // .text section, which triggers the global-buffer overflow detection.
+#if !defined(OPENSSL_ASAN) && !defined(OPENSSL_MSAN)
+  // Integrity tests cannot run under ASAN or MSAN because it involves reading
+  // the full .text section, which triggers the global-buffer overflow detection
+  // (ASAN) or use of uninstrumented code (MSAN).
   if (!BORINGSSL_integrity_test()) {
     AWS_LC_FIPS_failure("Integrity test failed");
   }
-#endif  // OPENSSL_ASAN
+#endif  // !ASAN && !MSAN
 
   if (!boringssl_self_test_startup()) {
     AWS_LC_FIPS_failure("Power on self test failed");
   }
 }
 
-#if !defined(OPENSSL_ASAN)
+#if !defined(OPENSSL_ASAN) && !defined(OPENSSL_MSAN)
 int BORINGSSL_integrity_test(void) {
   const uint8_t *const start = BORINGSSL_bcm_text_start;
   const uint8_t *const end = BORINGSSL_bcm_text_end;
@@ -393,7 +386,7 @@ int BORINGSSL_integrity_test(void) {
   OPENSSL_cleanse(result, sizeof(result)); // FIPS 140-3, AS05.10.
   return 1;
 }
-#endif  // OPENSSL_ASAN
+#endif  // !ASAN && !MSAN
 
 void AWS_LC_FIPS_failure(const char* message) {
 #if defined(AWSLC_FIPS_FAILURE_CALLBACK)

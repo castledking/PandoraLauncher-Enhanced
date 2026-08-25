@@ -12,8 +12,8 @@ use crate::{Line, QuadSpline, Vec2};
 use arrayvec::ArrayVec;
 
 use crate::common::{
-    solve_quadratic, solve_quartic, GAUSS_LEGENDRE_COEFFS_16_HALF, GAUSS_LEGENDRE_COEFFS_24_HALF,
-    GAUSS_LEGENDRE_COEFFS_8, GAUSS_LEGENDRE_COEFFS_8_HALF,
+    GAUSS_LEGENDRE_COEFFS_8, GAUSS_LEGENDRE_COEFFS_8_HALF, GAUSS_LEGENDRE_COEFFS_16_HALF,
+    GAUSS_LEGENDRE_COEFFS_24_HALF, solve_cubic, solve_quadratic, solve_quartic,
 };
 use crate::{
     Affine, Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea, ParamCurveCurvature,
@@ -163,7 +163,16 @@ impl CubicBez {
     /// Returns a quadratic approximating the given cubic that maintains
     /// endpoint tangents if that is within tolerance, or `None` otherwise.
     fn try_approx_quadratic(&self, accuracy: f64) -> Option<QuadBez> {
-        if let Some(q1) = Line::new(self.p0, self.p1).crossing_point(Line::new(self.p2, self.p3)) {
+        if let Some(q1) = Line::new(self.p0, self.p1)
+            .crossing_point(Line::new(self.p2, self.p3))
+            .or_else(|| {
+                // with 3 to 4 consecutive equal points (with no valid crossing_point),
+                // we can try to use the common point as the quadratic control point.
+                // This matches fonttools' cu2qu: https://github.com/fonttools/fonttools/pull/3904
+                (self.p1 == self.p2 && (self.p0 == self.p1 || self.p2 == self.p3))
+                    .then_some(self.p1)
+            })
+        {
             let c1 = self.p0.lerp(q1, 2.0 / 3.0);
             let c2 = self.p3.lerp(q1, 2.0 / 3.0);
             if !CubicBez::new(
@@ -330,13 +339,13 @@ impl CubicBez {
 
     /// Is this cubic Bezier curve finite?
     #[inline]
-    pub fn is_finite(&self) -> bool {
+    pub const fn is_finite(&self) -> bool {
         self.p0.is_finite() && self.p1.is_finite() && self.p2.is_finite() && self.p3.is_finite()
     }
 
     /// Is this cubic Bezier curve NaN?
     #[inline]
-    pub fn is_nan(&self) -> bool {
+    pub const fn is_nan(&self) -> bool {
         self.p0.is_nan() || self.p1.is_nan() || self.p2.is_nan() || self.p3.is_nan()
     }
 
@@ -381,36 +390,13 @@ impl CubicBez {
 
     /// Preprocess a cubic Bézier to ease numerical robustness.
     ///
-    /// If the cubic Bézier segment has zero or near-zero derivatives, perturb
-    /// the control points to make it easier to process (especially offset and
-    /// stroke), avoiding numerical robustness problems.
-    pub(crate) fn regularize(&self, dimension: f64) -> CubicBez {
+    /// If the cubic Bézier segment has zero or near-zero derivatives as an interior
+    /// cusp, perturb the control points to make curvature finite, avoiding
+    /// numerical robustness problems in offset and stroke.
+    pub(crate) fn regularize_cusp(&self, dimension: f64) -> CubicBez {
         let mut c = *self;
         // First step: if control point is too near the endpoint, nudge it away
         // along the tangent.
-        let dim2 = dimension * dimension;
-        if c.p0.distance_squared(c.p1) < dim2 {
-            let d02 = c.p0.distance_squared(c.p2);
-            if d02 >= dim2 {
-                // TODO: moderate if this would move closer to p3
-                c.p1 = c.p0.lerp(c.p2, (dim2 / d02).sqrt());
-            } else {
-                c.p1 = c.p0.lerp(c.p3, 1.0 / 3.0);
-                c.p2 = c.p3.lerp(c.p0, 1.0 / 3.0);
-                return c;
-            }
-        }
-        if c.p3.distance_squared(c.p2) < dim2 {
-            let d13 = c.p1.distance_squared(c.p2);
-            if d13 >= dim2 {
-                // TODO: moderate if this would move closer to p0
-                c.p2 = c.p3.lerp(c.p1, (dim2 / d13).sqrt());
-            } else {
-                c.p1 = c.p0.lerp(c.p3, 1.0 / 3.0);
-                c.p2 = c.p3.lerp(c.p0, 1.0 / 3.0);
-                return c;
-            }
-        }
         if let Some(cusp_type) = self.detect_cusp(dimension) {
             let d01 = c.p1 - c.p0;
             let d01h = d01.hypot();
@@ -471,6 +457,40 @@ impl CubicBez {
             }
         }
         None
+    }
+
+    /// Finds the value of `t` for which `self.eval(t)` is about `y`.
+    ///
+    /// Assumes that this segment is monotonic in `y` and that it crosses
+    /// the height `y`. (Under these assumptions, there is a unique answer.)
+    pub(crate) fn solve_monotonic_for_y(&self, y: f64) -> f64 {
+        let start = self.start();
+        let end = self.end();
+
+        debug_assert!(start.y.min(end.y) <= y && y <= start.y.max(end.y));
+
+        let p1 = self.p1;
+        let p2 = self.p2;
+        let a = end.y - 3.0 * p2.y + 3.0 * p1.y - start.y;
+        let b = 3.0 * (p2.y - 2.0 * p1.y + start.y);
+        let c = 3.0 * (p1.y - start.y);
+        let d = start.y - y;
+        for t in solve_cubic(d, c, b, a) {
+            if (0.0..=1.0).contains(&t) {
+                return t;
+            }
+        }
+
+        // Even though we asserted that our y range contains `y`, it's possible
+        // that we failed to find a solution numerically. (For example, rounding
+        // of a, b, or c might have pushed the root outside of [0.0, 1.0].)
+        // If we failed to find a solution, the real solution should be close
+        // to one of the endpoints. So just find whichever endpoint was closer.
+        if (start.y - y).abs() <= (end.y - y).abs() {
+            0.0
+        } else {
+            1.0
+        }
     }
 }
 
@@ -668,23 +688,52 @@ impl ParamCurveArea for CubicBez {
 }
 
 impl ParamCurveNearest for CubicBez {
-    /// Find the nearest point, using subdivision.
+    /// Find the nearest point using a quintic solver.
+    ///
+    /// The polynomial `|self - p|^2` has degree 6, so we find its critical
+    /// points and evaluate them all to find the best one.
     fn nearest(&self, p: Point, accuracy: f64) -> Nearest {
-        let mut best_r = None;
-        let mut best_t = 0.0;
-        for (t0, t1, q) in self.to_quads(accuracy) {
-            let nearest = q.nearest(p, accuracy);
-            if best_r
-                .map(|best_r| nearest.distance_sq < best_r)
-                .unwrap_or(true)
-            {
-                best_t = t0 + nearest.t * (t1 - t0);
-                best_r = Some(nearest.distance_sq);
+        fn eval_t(p: Point, t_best: &mut f64, r_best: &mut Option<f64>, t: f64, p0: Point) {
+            let r = (p0 - p).hypot2();
+            if r_best.map(|r_best| r < r_best).unwrap_or(true) {
+                *r_best = Some(r);
+                *t_best = t;
             }
         }
+
+        let mut r_best = None;
+        let mut t_best = 0.0;
+
+        // Reparameterize `self - p` as q0 + q1 t + q2 t^2 + q3 t^3.
+        let q0 = self.p0 - p;
+        let q1 = 3.0 * (self.p1 - self.p0);
+        let q2 = 3.0 * (self.p0.to_vec2() - 2.0 * self.p1.to_vec2() + self.p2.to_vec2());
+        let q3 = -self.p0.to_vec2() + 3.0 * self.p1.to_vec2() - 3.0 * self.p2.to_vec2()
+            + self.p3.to_vec2();
+
+        // Coefficients of the degree-5 polynomial (self - p) \cdot tangent.
+        let c0 = q0.dot(q1);
+        let c1 = q1.hypot2() + 2.0 * q2.dot(q0);
+        let c2 = 3.0 * (q2.dot(q1) + q3.dot(q0));
+        let c3 = 4.0 * q3.dot(q1) + 2.0 * q2.hypot2();
+        let c4 = 5.0 * q3.dot(q2);
+        let c5 = 3.0 * q3.hypot2();
+
+        let roots = polycool::Poly::new([c0, c1, c2, c3, c4, c5]).roots_between(0.0, 1.0, accuracy);
+
+        for &t in &roots {
+            eval_t(p, &mut t_best, &mut r_best, t, self.eval(t));
+        }
+
+        // If we found all 5 critical points, we can skip evaluating the endpoints.
+        if roots.len() != 5 {
+            eval_t(p, &mut t_best, &mut r_best, 0.0, self.p0);
+            eval_t(p, &mut t_best, &mut r_best, 1.0, self.p3);
+        }
+
         Nearest {
-            t: best_t,
-            distance_sq: best_r.unwrap(),
+            t: t_best,
+            distance_sq: r_best.unwrap(),
         }
     }
 }
@@ -782,9 +831,9 @@ pub fn cubics_to_quadratic_splines(curves: &[CubicBez], accuracy: f64) -> Option
 #[cfg(test)]
 mod tests {
     use crate::{
-        cubics_to_quadratic_splines, Affine, CubicBez, Nearest, ParamCurve, ParamCurveArclen,
-        ParamCurveArea, ParamCurveDeriv, ParamCurveExtrema, ParamCurveNearest, Point, QuadBez,
-        QuadSpline,
+        Affine, CubicBez, Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea, ParamCurveDeriv,
+        ParamCurveExtrema, ParamCurveNearest, Point, QuadBez, QuadSpline,
+        cubics_to_quadratic_splines,
     };
 
     #[test]
@@ -924,6 +973,22 @@ mod tests {
         verify(c.nearest((-0.1, 0.0).into(), 1e-6), 0.0);
         let a = Affine::rotate(0.5);
         verify((a * c).nearest(a * Point::new(0.1, 0.001), 1e-6), 0.1);
+
+        // Here's a case that tripped up the old solver because the start is close to
+        // degenerate and the end is actually degenerate; see #446.
+        let curve = CubicBez::new(
+            (461.0, 123.0),
+            (460.99999999999994, 123.00000000000004),
+            (111.0, 319.0),
+            (111.0, 319.0),
+        );
+        let p = Point::new(282.0379003395483, 223.21877580985594);
+        let eps = 0.0005;
+        let nearest = curve.nearest(p, eps);
+        let q = curve.eval(nearest.t);
+        let r = curve.eval(0.5075474297354187);
+
+        assert!((q - p).hypot() <= (r - p).hypot() + eps);
     }
 
     // ensure to_quads returns something given collinear points
@@ -1115,6 +1180,38 @@ mod tests {
 
         // FontTools can solve this with accuracy 0.001, we can too
         assert!(cubics_to_quadratic_splines(&[cubic], 0.001).is_some());
+    }
+
+    #[test]
+    fn cubic_to_quadratic_all_points_equal() {
+        let pt = Point::new(5.0, 5.0);
+        let cubic = CubicBez::new(pt, pt, pt, pt);
+        let quads = cubics_to_quadratic_splines(&[cubic], 0.1).unwrap();
+        assert_eq!(quads, [QuadSpline::new(vec![pt, pt, pt])]);
+    }
+
+    #[test]
+    fn cubic_to_quadratic_3_points_equal_single_quad_within_tolerance() {
+        let p0 = Point::new(5.0, 5.0);
+        let p1 = Point::new(5.0, 5.1);
+        let cubic = CubicBez::new(p0, p0, p0, p1);
+        let quads = cubics_to_quadratic_splines(&[cubic], 0.1).unwrap();
+        // a single quadratic bezier approximates this cubic for the given tolerance
+        assert_eq!(quads, [QuadSpline::new(vec![p0, p0, p1])]);
+    }
+
+    #[test]
+    fn cubic_to_quadratic_3_points_equal_exceeding_tolerance() {
+        let p0 = Point::new(5.0, 5.0);
+        let p1 = Point::new(5.0, 5.1);
+        let cubic = CubicBez::new(p0, p0, p0, p1);
+        let quads = cubics_to_quadratic_splines(&[cubic], 0.01).unwrap();
+        // 2 quadratic off-curves are required to approximate the same cubic
+        // given the smaller tolerance
+        assert_eq!(
+            quads,
+            [QuadSpline::new(vec![p0, p0, (5.0, 5.025).into(), p1])]
+        );
     }
 
     #[test]

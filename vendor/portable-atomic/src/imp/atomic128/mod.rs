@@ -36,7 +36,7 @@ pub(super) mod aarch64;
         any(miri, portable_atomic_sanitize_thread),
         not(portable_atomic_atomic_intrinsics),
     )),
-    not(portable_atomic_no_asm),
+    portable_atomic_unstable_asm_experimental_arch,
     any(
         target_feature = "quadword-atomics",
         portable_atomic_target_feature = "quadword-atomics",

@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.2.0
+
+Adds:
+
+* Bump kqueue-sys to 1.1.1
+* Handle `NOTE_READ` on FreeBSD
+* Better documentation of errors
+* Add fd-based benchmarks
+
+Fixes:
+
+* Remove all panics, returning errors instead
+* Do not close `File` or fd's on drop, since we do not own them
+* `Vnode::Extend` has nothing to do with `truncate(2)`
+* Allow removal of non-utf8 pathnames (although imperfect)
+* Remove a bunch of unchecked casts and fail if data is out-of-range
+* `from_error`, `is_err`, `poll`, `poll_forever` and `iter` are `#[must_use]`
+* Internally use `OwnedFd` to track our `kqueue` object
+* `Ident.PartialEq` did not compare enum discriminants
+* Track watches in a `HashMap`, leading to much faster `remove_*` performance
+* Preallocate internal vec when watching objects, reduces memory usage and
+  increase perf
+* Fast fail returning events from unstarted `Watcher`s
+* Don't unconditionally declare ourselves as started
+* Don't include drops in benchmark results
+
 ## 1.1.1
 
 Fixes:

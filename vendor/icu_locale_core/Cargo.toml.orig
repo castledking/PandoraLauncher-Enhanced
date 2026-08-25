@@ -21,19 +21,34 @@ all-features = true
 
 [dependencies]
 displaydoc = { workspace = true }
-litemap = { workspace = true }
-tinystr = { workspace = true }
+litemap = { workspace = true, features = ["alloc"] }
+tinystr = { workspace = true, features = ["alloc"] }
 writeable = { workspace = true }
 
 databake = { workspace = true, features = ["derive"], optional = true }
-serde = { workspace = true, optional = true }
+serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 zerovec = { workspace = true, optional = true }
+
+[dev-dependencies]
+iai = { workspace = true }
+icu = { path = "../../components/icu", default-features = false }
+icu_provider = { path = "../../provider/core" }
+icu_benchmark_macros = { path = "../../tools/benchmark/macros" }
+litemap = { path = "../../utils/litemap", features = ["testing"] }
+postcard = { workspace = true, features = ["use-std"] }
+potential_utf = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { workspace = true }
 
 [features]
 databake = ["dep:databake", "alloc"]
-serde = ["dep:serde", "tinystr/serde"]
+serde = ["dep:serde", "tinystr/serde", "alloc"]
 zerovec = ["dep:zerovec", "tinystr/zerovec"]
-alloc = ["litemap/alloc", "tinystr/alloc", "writeable/alloc", "serde?/alloc"]
+alloc = []
 
 [lib]
 bench = false # This option is required for Benchmark CI
@@ -53,3 +68,11 @@ harness = false
 [[bench]]
 name = "iai_langid"
 harness = false
+
+[[example]]
+name = "filter_langids"
+test = true
+
+[[example]]
+name = "syntatically_canonicalize_locales"
+test = true

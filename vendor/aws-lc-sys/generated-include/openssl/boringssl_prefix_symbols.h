@@ -1,23 +1,12 @@
 // Copyright (c) 2018, Google Inc.
-//
-// Permission to use, copy, modify, and/or distribute this software for any
-// purpose with or without fee is hereby granted, provided that the above
-// copyright notice and this permission notice appear in all copies.
-//
-// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
-// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
-// OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
-// CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+// SPDX-License-Identifier: ISC
 
 #ifndef BORINGSSL_PREFIX_SYMBOLS_H
 
 #define BORINGSSL_PREFIX_SYMBOLS_H	
 
 #ifndef BORINGSSL_PREFIX
-#define BORINGSSL_PREFIX aws_lc_0_37_1
+#define BORINGSSL_PREFIX aws_lc_0_42_0
 #endif // BORINGSSL_PREFIX
 
 
@@ -771,6 +760,7 @@
 #define CRYPTO_set_thread_local BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CRYPTO_set_thread_local)
 #define CRYPTO_sysrand BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CRYPTO_sysrand)
 #define CRYPTO_sysrand_if_available BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CRYPTO_sysrand_if_available)
+#define CRYPTO_tls13_hkdf_expand_label BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CRYPTO_tls13_hkdf_expand_label)
 #define CRYPTO_tls1_prf BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CRYPTO_tls1_prf)
 #define CRYPTO_xts128_encrypt BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CRYPTO_xts128_encrypt)
 #define CTR_DRBG_clear BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, CTR_DRBG_clear)
@@ -1279,6 +1269,7 @@
 #define EVP_PKEY_CTX_set0_rsa_oaep_label BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set0_rsa_oaep_label)
 #define EVP_PKEY_CTX_set1_hkdf_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set1_hkdf_key)
 #define EVP_PKEY_CTX_set1_hkdf_salt BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set1_hkdf_salt)
+#define EVP_PKEY_CTX_set1_signature_context_string BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set1_signature_context_string)
 #define EVP_PKEY_CTX_set_app_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set_app_data)
 #define EVP_PKEY_CTX_set_cb BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set_cb)
 #define EVP_PKEY_CTX_set_dh_pad BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_CTX_set_dh_pad)
@@ -1341,6 +1332,7 @@
 #define EVP_PKEY_get1_EC_KEY BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_get1_EC_KEY)
 #define EVP_PKEY_get1_RSA BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_get1_RSA)
 #define EVP_PKEY_get1_tls_encodedpoint BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_get1_tls_encodedpoint)
+#define EVP_PKEY_get_private_seed BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_get_private_seed)
 #define EVP_PKEY_get_raw_private_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_get_raw_private_key)
 #define EVP_PKEY_get_raw_public_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_get_raw_public_key)
 #define EVP_PKEY_hkdf_pkey_meth BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_hkdf_pkey_meth)
@@ -1348,6 +1340,7 @@
 #define EVP_PKEY_id BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_id)
 #define EVP_PKEY_is_opaque BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_is_opaque)
 #define EVP_PKEY_kem_check_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_kem_check_key)
+#define EVP_PKEY_kem_get_type BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_kem_get_type)
 #define EVP_PKEY_kem_new_raw_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_kem_new_raw_key)
 #define EVP_PKEY_kem_new_raw_public_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_kem_new_raw_public_key)
 #define EVP_PKEY_kem_new_raw_secret_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_kem_new_raw_secret_key)
@@ -1364,6 +1357,7 @@
 #define EVP_PKEY_param_check BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_param_check)
 #define EVP_PKEY_paramgen BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_paramgen)
 #define EVP_PKEY_paramgen_init BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_paramgen_init)
+#define EVP_PKEY_pqdsa_get_type BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_pqdsa_get_type)
 #define EVP_PKEY_pqdsa_new_raw_private_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_pqdsa_new_raw_private_key)
 #define EVP_PKEY_pqdsa_new_raw_public_key BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_pqdsa_new_raw_public_key)
 #define EVP_PKEY_pqdsa_pkey_meth BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, EVP_PKEY_pqdsa_pkey_meth)
@@ -1538,9 +1532,9 @@
 #define FIPS_is_entropy_cpu_jitter BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_is_entropy_cpu_jitter)
 #define FIPS_mode BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_mode)
 #define FIPS_mode_set BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_mode_set)
-#define FIPS_read_counter BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_read_counter)
 #define FIPS_service_indicator_after_call BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_service_indicator_after_call)
 #define FIPS_service_indicator_before_call BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_service_indicator_before_call)
+#define FIPS_version BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, FIPS_version)
 #define GENERAL_NAMES_free BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, GENERAL_NAMES_free)
 #define GENERAL_NAMES_it BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, GENERAL_NAMES_it)
 #define GENERAL_NAMES_new BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, GENERAL_NAMES_new)
@@ -2087,6 +2081,7 @@
 #define RAND_poll BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_poll)
 #define RAND_priv_bytes BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_priv_bytes)
 #define RAND_pseudo_bytes BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_pseudo_bytes)
+#define RAND_public_bytes BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_public_bytes)
 #define RAND_seed BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_seed)
 #define RAND_set_rand_method BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_set_rand_method)
 #define RAND_status BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RAND_status)
@@ -2142,6 +2137,7 @@
 #define RSA_get0_p BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get0_p)
 #define RSA_get0_pss_params BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get0_pss_params)
 #define RSA_get0_q BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get0_q)
+#define RSA_get0_ssa_pss_params BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get0_ssa_pss_params)
 #define RSA_get_default_method BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get_default_method)
 #define RSA_get_ex_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get_ex_data)
 #define RSA_get_ex_new_index BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, RSA_get_ex_new_index)
@@ -2823,6 +2819,7 @@
 #define X509v3_get_ext_count BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, X509v3_get_ext_count)
 #define __local_stdio_printf_options BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, __local_stdio_printf_options)
 #define __local_stdio_scanf_options BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, __local_stdio_scanf_options)
+#define a2i_ASN1_INTEGER BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, a2i_ASN1_INTEGER)
 #define a2i_IPADDRESS BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, a2i_IPADDRESS)
 #define a2i_IPADDRESS_NC BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, a2i_IPADDRESS_NC)
 #define abi_test_bad_unwind_epilog BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, abi_test_bad_unwind_epilog)
@@ -3559,8 +3556,8 @@
 #define edwards25519_scalarmulbase_alt BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, edwards25519_scalarmulbase_alt)
 #define edwards25519_scalarmuldouble BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, edwards25519_scalarmuldouble)
 #define edwards25519_scalarmuldouble_alt BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, edwards25519_scalarmuldouble_alt)
+#define evp_pkey_set0 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, evp_pkey_set0)
 #define evp_pkey_set_cb_translate BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, evp_pkey_set_cb_translate)
-#define evp_pkey_set_method BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, evp_pkey_set_method)
 #define extract_multiplier_2x20_win5 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, extract_multiplier_2x20_win5)
 #define extract_multiplier_2x30_win5 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, extract_multiplier_2x30_win5)
 #define extract_multiplier_2x40_win5 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, extract_multiplier_2x40_win5)
@@ -3591,9 +3588,11 @@
 #define gcm_setiv_avx512 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, gcm_setiv_avx512)
 #define get_entropy_source BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_entropy_source)
 #define get_entropy_source_method_id_FOR_TESTING BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_entropy_source_method_id_FOR_TESTING)
+#define get_private_thread_generate_calls_since_seed BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_private_thread_generate_calls_since_seed)
+#define get_private_thread_reseed_calls_since_initialization BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_private_thread_reseed_calls_since_initialization)
+#define get_public_thread_generate_calls_since_seed BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_public_thread_generate_calls_since_seed)
+#define get_public_thread_reseed_calls_since_initialization BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_public_thread_reseed_calls_since_initialization)
 #define get_thread_and_global_tree_drbg_calls_FOR_TESTING BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_thread_and_global_tree_drbg_calls_FOR_TESTING)
-#define get_thread_generate_calls_since_seed BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_thread_generate_calls_since_seed)
-#define get_thread_reseed_calls_since_initialization BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, get_thread_reseed_calls_since_initialization)
 #define handle_cpu_env BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, handle_cpu_env)
 #define have_hw_rng_aarch64_for_testing BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, have_hw_rng_aarch64_for_testing)
 #define have_hw_rng_x86_64_for_testing BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, have_hw_rng_x86_64_for_testing)
@@ -3866,13 +3865,46 @@
 #define ml_kem_common_encapsulate_deterministic BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, ml_kem_common_encapsulate_deterministic)
 #define ml_kem_common_keypair BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, ml_kem_common_keypair)
 #define mldsa_ct_opt_blocker_u64 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_ct_opt_blocker_u64)
+#define mldsa_intt_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_intt_aarch64_asm)
+#define mldsa_invntt_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_invntt_avx2_asm)
+#define mldsa_ntt_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_ntt_aarch64_asm)
+#define mldsa_ntt_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_ntt_avx2_asm)
+#define mldsa_nttunpack_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_nttunpack_avx2_asm)
+#define mldsa_pointwise_acc_l4_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_pointwise_acc_l4_avx2_asm)
+#define mldsa_pointwise_acc_l5_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_pointwise_acc_l5_avx2_asm)
+#define mldsa_pointwise_acc_l7_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_pointwise_acc_l7_avx2_asm)
+#define mldsa_pointwise_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_pointwise_avx2_asm)
+#define mldsa_poly_caddq_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_caddq_aarch64_asm)
+#define mldsa_poly_caddq_avx2_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_caddq_avx2_asm)
+#define mldsa_poly_chknorm_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_chknorm_aarch64_asm)
+#define mldsa_poly_decompose_32_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_decompose_32_aarch64_asm)
+#define mldsa_poly_decompose_88_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_decompose_88_aarch64_asm)
+#define mldsa_poly_pointwise_montgomery_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_pointwise_montgomery_aarch64_asm)
+#define mldsa_poly_use_hint_32_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_use_hint_32_aarch64_asm)
+#define mldsa_poly_use_hint_88_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_poly_use_hint_88_aarch64_asm)
+#define mldsa_polyvecl_pointwise_acc_montgomery_l4_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_polyvecl_pointwise_acc_montgomery_l4_aarch64_asm)
+#define mldsa_polyvecl_pointwise_acc_montgomery_l5_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_polyvecl_pointwise_acc_montgomery_l5_aarch64_asm)
+#define mldsa_polyvecl_pointwise_acc_montgomery_l7_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_polyvecl_pointwise_acc_montgomery_l7_aarch64_asm)
+#define mldsa_polyz_unpack_17_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_polyz_unpack_17_aarch64_asm)
+#define mldsa_polyz_unpack_19_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_polyz_unpack_19_aarch64_asm)
+#define mldsa_rej_uniform_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_rej_uniform_aarch64_asm)
+#define mldsa_rej_uniform_eta2_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_rej_uniform_eta2_aarch64_asm)
+#define mldsa_rej_uniform_eta4_aarch64_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mldsa_rej_uniform_eta4_aarch64_asm)
 #define mlkem_aarch64_invntt_zetas_layer12345 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_aarch64_invntt_zetas_layer12345)
 #define mlkem_aarch64_invntt_zetas_layer67 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_aarch64_invntt_zetas_layer67)
 #define mlkem_aarch64_ntt_zetas_layer12345 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_aarch64_ntt_zetas_layer12345)
 #define mlkem_aarch64_ntt_zetas_layer67 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_aarch64_ntt_zetas_layer67)
 #define mlkem_aarch64_zetas_mulcache_native BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_aarch64_zetas_mulcache_native)
 #define mlkem_aarch64_zetas_mulcache_twisted_native BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_aarch64_zetas_mulcache_twisted_native)
+#define mlkem_compress_d10_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_compress_d10_data)
+#define mlkem_compress_d11_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_compress_d11_data)
+#define mlkem_compress_d4_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_compress_d4_data)
+#define mlkem_compress_d5_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_compress_d5_data)
 #define mlkem_ct_opt_blocker_u64 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_ct_opt_blocker_u64)
+#define mlkem_decompress_d10_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_decompress_d10_data)
+#define mlkem_decompress_d11_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_decompress_d11_data)
+#define mlkem_decompress_d4_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_decompress_d4_data)
+#define mlkem_decompress_d5_data BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_decompress_d5_data)
 #define mlkem_intt_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_intt_asm)
 #define mlkem_invntt_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_invntt_avx2)
 #define mlkem_ntt_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_ntt_asm)
@@ -3880,6 +3912,14 @@
 #define mlkem_nttfrombytes_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_nttfrombytes_avx2)
 #define mlkem_ntttobytes_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_ntttobytes_avx2)
 #define mlkem_nttunpack_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_nttunpack_avx2)
+#define mlkem_poly_compress_d10_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_compress_d10_avx2)
+#define mlkem_poly_compress_d11_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_compress_d11_avx2)
+#define mlkem_poly_compress_d4_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_compress_d4_avx2)
+#define mlkem_poly_compress_d5_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_compress_d5_avx2)
+#define mlkem_poly_decompress_d10_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_decompress_d10_avx2)
+#define mlkem_poly_decompress_d11_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_decompress_d11_avx2)
+#define mlkem_poly_decompress_d4_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_decompress_d4_avx2)
+#define mlkem_poly_decompress_d5_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_decompress_d5_avx2)
 #define mlkem_poly_mulcache_compute_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_mulcache_compute_asm)
 #define mlkem_poly_mulcache_compute_avx2 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_mulcache_compute_avx2)
 #define mlkem_poly_reduce_asm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, mlkem_poly_reduce_asm)
@@ -3954,6 +3994,7 @@
 #define poly_Rq_mul BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, poly_Rq_mul)
 #define pqdsa_asn1_meth BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, pqdsa_asn1_meth)
 #define rand_fips_library_destructor BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, rand_fips_library_destructor)
+#define rand_thread_local_state_clear_all_FOR_TESTING BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, rand_thread_local_state_clear_all_FOR_TESTING)
 #define rdrand_multiple8 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, rdrand_multiple8)
 #define rndr_multiple8 BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, rndr_multiple8)
 #define rsa_asn1_meth BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, rsa_asn1_meth)
@@ -4101,6 +4142,7 @@
 #define x509V3_add_value_asn1_string BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509V3_add_value_asn1_string)
 #define x509_check_cert_time BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509_check_cert_time)
 #define x509_check_issued_with_callback BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509_check_issued_with_callback)
+#define x509_digest_nid_ok BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509_digest_nid_ok)
 #define x509_digest_sign_algorithm BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509_digest_sign_algorithm)
 #define x509_digest_verify_init BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509_digest_verify_init)
 #define x509_init_signature_info BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, x509_init_signature_info)

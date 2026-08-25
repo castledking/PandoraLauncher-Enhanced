@@ -150,7 +150,7 @@ impl InnerBackend {
     }
 
     pub fn connect(stream: UnixStream) -> Result<Self, NoWaylandLib> {
-        let socket = BufferedSocket::new(Socket::from(stream));
+        let socket = BufferedSocket::new(Socket::from(stream), None);
         let mut map = ObjectMap::new();
         map.insert_at(
             1,
@@ -463,6 +463,9 @@ impl InnerBackend {
                     let next_interface = arg_interfaces.next().unwrap();
                     if o.id.id != 0 {
                         let arg_object = guard.get_object(o.id.clone())?;
+                        if arg_object.data.client_destroyed {
+                            return Err(InvalidId);
+                        }
                         if !same_interface_or_anonymous(next_interface, arg_object.interface) {
                             panic!("Request {}@{}.{} expects an argument of interface {} but {} was provided instead.", object.interface.name, id.id, message_desc.name, next_interface.name, arg_object.interface.name);
                         }
@@ -526,6 +529,12 @@ impl InnerBackend {
     // Nothing to do here, we don't have an inner queue
     pub fn dispatch_inner_queue(&self) -> Result<usize, WaylandError> {
         Ok(0)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_max_buffer_size(&self, max_buffer_size: Option<usize>) {
+        let mut guard = self.state.lock_protocol();
+        guard.socket.set_max_buffer_size(max_buffer_size);
     }
 }
 

@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.63"
 name = "hyper"
-version = "1.8.1"
+version = "1.7.0"
 authors = ["Sean McArthur <sean@seanmonstar.com>"]
 build = false
 include = [

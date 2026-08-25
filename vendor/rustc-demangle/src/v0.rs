@@ -1074,11 +1074,7 @@ impl<'a, 'b, 's> Printer<'a, 'b, 's> {
             let name = parse!(self, ident);
             self.print(name)?;
             self.print(" = ")?;
-            if self.eat(b'K') {
-                self.print_const(false)
-            } else {
-                self.print_type()
-            }?;
+            self.print_type()?;
         }
 
         if open {
@@ -1352,11 +1348,6 @@ mod tests {
             "_RINbNbCskIICzLVDPPb_5alloc5alloc8box_freeDINbNiB4_5boxed5FnBoxuEp6OutputuEL_ECs1iopQbuBiw2_3std",
             "alloc::alloc::box_free::<dyn alloc::boxed::FnBox<(), Output = ()>>"
         );
-    }
-
-    #[test]
-    fn demangle_dyn_trait_assoc_const_binding() {
-        t_nohash_type!("DNtC5krate5Traitp1NKj0_EL_", "dyn krate::Trait<N = 0>");
     }
 
     #[test]

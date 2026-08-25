@@ -670,19 +670,9 @@ impl FinderBuilder {
         self.build_forward_with_ranker(DefaultFrequencyRank, needle)
     }
 
-    /// Build an owned forward finder using the given needle from the current
-    /// settings.
-    #[cfg(feature = "alloc")]
-    pub fn build_forward_owned<B: Into<alloc::boxed::Box<[u8]>>>(
-        &self,
-        needle: B,
-    ) -> Finder<'static> {
-        self.build_forward_with_ranker_owned(DefaultFrequencyRank, needle)
-    }
-
-    /// Build a forward finder using the given needle and a custom heuristic
-    /// for determining the frequency of a given byte in the dataset. See
-    /// [`HeuristicFrequencyRank`] for more details.
+    /// Build a forward finder using the given needle and a custom heuristic for
+    /// determining the frequency of a given byte in the dataset.
+    /// See [`HeuristicFrequencyRank`] for more details.
     pub fn build_forward_with_ranker<
         'n,
         R: HeuristicFrequencyRank,
@@ -699,23 +689,6 @@ impl FinderBuilder {
         }
     }
 
-    /// Build an owned forward finder using the given needle and a custom
-    /// heuristic for determining the frequency of a given byte in the dataset.
-    /// See [`HeuristicFrequencyRank`] for more details.
-    #[cfg(feature = "alloc")]
-    pub fn build_forward_with_ranker_owned<
-        R: HeuristicFrequencyRank,
-        B: Into<alloc::boxed::Box<[u8]>>,
-    >(
-        &self,
-        ranker: R,
-        needle: B,
-    ) -> Finder<'static> {
-        let needle = needle.into();
-        let searcher = Searcher::new(self.prefilter, ranker, &needle);
-        Finder { needle: CowBytes::new_owned(needle), searcher }
-    }
-
     /// Build a reverse finder using the given needle from the current
     /// settings.
     pub fn build_reverse<'n, B: ?Sized + AsRef<[u8]>>(
@@ -727,18 +700,6 @@ impl FinderBuilder {
             needle: CowBytes::new(needle),
             searcher: SearcherRev::new(needle),
         }
-    }
-
-    /// Build an owned reverse finder using the given needle from the current
-    /// settings.
-    #[cfg(feature = "alloc")]
-    pub fn build_reverse_owned<B: Into<alloc::boxed::Box<[u8]>>>(
-        &self,
-        needle: B,
-    ) -> FinderRev<'static> {
-        let needle = needle.into();
-        let searcher = SearcherRev::new(&needle);
-        FinderRev { needle: CowBytes::new_owned(needle), searcher }
     }
 
     /// Configure the prefilter setting for the finder.

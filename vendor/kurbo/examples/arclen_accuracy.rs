@@ -3,10 +3,7 @@
 
 //! A test program to plot the error of arclength approximation.
 
-// Lots of stuff is commented out or was just something to try.
-#![allow(unused)]
-#![allow(clippy::unreadable_literal)]
-#![allow(clippy::many_single_char_names)]
+#![allow(unused, reason = "a bunch of experiments in the code")]
 
 // TODO: make more functionality accessible from command line rather than uncommenting.
 
@@ -15,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use kurbo::{ParamCurve, ParamCurveArclen, ParamCurveDeriv, QuadBez};
 
-use kurbo::common::{GAUSS_LEGENDRE_COEFFS_24, GAUSS_LEGENDRE_COEFFS_5, GAUSS_LEGENDRE_COEFFS_7};
+use kurbo::common::{GAUSS_LEGENDRE_COEFFS_5, GAUSS_LEGENDRE_COEFFS_7, GAUSS_LEGENDRE_COEFFS_24};
 
 /// Calculate arclength using Gauss-Legendre quadrature using formula from Behdad
 /// in <https://github.com/Pomax/BezierInfo-2/issues/77>

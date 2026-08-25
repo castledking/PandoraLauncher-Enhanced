@@ -56,6 +56,8 @@ external_library!(WaylandServer, "wayland-server",
         fn wl_client_add_destroy_listener(*mut wl_client, *mut wl_listener) -> (),
         fn wl_client_get_destroy_listener(*mut wl_client, wl_notify_func_t) -> *mut wl_listener,
         fn wl_client_post_no_memory(*mut wl_client) -> (),
+        #[cfg(feature = "libwayland_server_1_23")]
+        fn wl_client_set_max_buffer_size(*mut wl_client, usize) -> (),
         fn wl_resource_create(*mut wl_client, *const wl_interface, c_int, u32) -> *mut wl_resource,
         fn wl_client_get_link(*mut wl_client) -> *mut wl_list,
         fn wl_client_from_link(*mut wl_list) -> *mut wl_client,
@@ -82,6 +84,8 @@ external_library!(WaylandServer, "wayland-server",
         fn wl_display_add_client_created_listener(*mut wl_display, *mut wl_listener) -> (),
         fn wl_display_set_global_filter(*mut wl_display, wl_display_global_filter_func_t, *mut c_void) -> (),
         fn wl_display_get_client_list(*mut wl_display) -> *mut wl_list,
+        #[cfg(feature = "libwayland_server_1_23")]
+        fn wl_display_set_default_max_buffer_size(*mut wl_display, usize) -> (),
     // wl_event_loop
         fn wl_event_loop_create() -> *mut wl_event_loop,
         fn wl_event_loop_destroy(*mut wl_event_loop) -> (),
@@ -102,6 +106,8 @@ external_library!(WaylandServer, "wayland-server",
     // wl_global
         fn wl_global_remove(*mut wl_global) -> (),
         fn wl_global_destroy(*mut wl_global) -> (),
+        #[cfg(feature = "libwayland_server_1_22")]
+        fn wl_global_get_name(*mut wl_global, *mut wl_client) -> u32,
         fn wl_global_get_user_data(*const wl_global) -> *mut c_void,
     // wl_resource
         fn wl_resource_post_event_array(*mut wl_resource, u32, *mut wl_argument) -> (),

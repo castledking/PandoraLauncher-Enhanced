@@ -35,8 +35,4 @@ impl hyper::rt::Timer for Timer {
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
         self.0.sleep_until(deadline)
     }
-
-    fn now(&self) -> Instant {
-        self.0.now()
-    }
 }

@@ -1,9 +1,10 @@
+use futures_core::ready;
 use pin_project_lite::pin_project;
 use std::{
     fmt,
     future::Future,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tower_service::Service;
 
@@ -88,7 +89,7 @@ where
         loop {
             match this.state.as_mut().project() {
                 StateProj::NotReady { svc, req } => {
-                    ready!(svc.poll_ready(cx))?;
+                    let _ = ready!(svc.poll_ready(cx))?;
                     let f = svc.call(req.take().expect("already called"));
                     this.state.set(State::called(f));
                 }

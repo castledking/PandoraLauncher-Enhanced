@@ -1,9 +1,12 @@
 // Copyright 2021 the SVG Types Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::f64;
+use core::f64;
 
 use crate::{Error, Stream};
+
+#[cfg(not(feature = "std"))]
+use kurbo::common::FloatFuncs;
 
 /// Representation of the [`<transform>`] type.
 ///
@@ -23,14 +26,14 @@ impl Transform {
     /// Constructs a new transform.
     #[inline]
     pub fn new(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) -> Self {
-        Transform { a, b, c, d, e, f }
+        Self { a, b, c, d, e, f }
     }
 }
 
 impl Default for Transform {
     #[inline]
-    fn default() -> Transform {
-        Transform::new(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    fn default() -> Self {
+        Self::new(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     }
 }
 
@@ -223,23 +226,23 @@ impl TransformListParser<'_> {
     }
 }
 
-impl std::str::FromStr for Transform {
+impl core::str::FromStr for Transform {
     type Err = Error;
 
     fn from_str(text: &str) -> Result<Self, Error> {
         let tokens = TransformListParser::from(text);
-        let mut ts = Transform::default();
+        let mut ts = Self::default();
 
         for token in tokens {
             match token? {
                 TransformListToken::Matrix { a, b, c, d, e, f } => {
-                    ts = multiply(&ts, &Transform::new(a, b, c, d, e, f))
+                    ts = multiply(&ts, &Self::new(a, b, c, d, e, f));
                 }
                 TransformListToken::Translate { tx, ty } => {
-                    ts = multiply(&ts, &Transform::new(1.0, 0.0, 0.0, 1.0, tx, ty))
+                    ts = multiply(&ts, &Self::new(1.0, 0.0, 0.0, 1.0, tx, ty));
                 }
                 TransformListToken::Scale { sx, sy } => {
-                    ts = multiply(&ts, &Transform::new(sx, 0.0, 0.0, sy, 0.0, 0.0))
+                    ts = multiply(&ts, &Self::new(sx, 0.0, 0.0, sy, 0.0, 0.0));
                 }
                 TransformListToken::Rotate { angle } => {
                     let v = angle.to_radians();
@@ -247,15 +250,15 @@ impl std::str::FromStr for Transform {
                     let b = v.sin();
                     let c = -b;
                     let d = a;
-                    ts = multiply(&ts, &Transform::new(a, b, c, d, 0.0, 0.0))
+                    ts = multiply(&ts, &Self::new(a, b, c, d, 0.0, 0.0));
                 }
                 TransformListToken::SkewX { angle } => {
                     let c = angle.to_radians().tan();
-                    ts = multiply(&ts, &Transform::new(1.0, 0.0, c, 1.0, 0.0, 0.0))
+                    ts = multiply(&ts, &Self::new(1.0, 0.0, c, 1.0, 0.0, 0.0));
                 }
                 TransformListToken::SkewY { angle } => {
                     let b = angle.to_radians().tan();
-                    ts = multiply(&ts, &Transform::new(1.0, b, 0.0, 1.0, 0.0, 0.0))
+                    ts = multiply(&ts, &Self::new(1.0, b, 0.0, 1.0, 0.0, 0.0));
                 }
             }
         }
@@ -279,8 +282,10 @@ fn multiply(ts1: &Transform, ts2: &Transform) -> Transform {
 #[rustfmt::skip]
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
     use super::*;
+    use alloc::format;
+    use alloc::string::ToString;
+    use core::str::FromStr;
 
     macro_rules! test {
         ($name:ident, $text:expr, $result:expr) => (

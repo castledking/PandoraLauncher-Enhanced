@@ -34,7 +34,7 @@ impl CodePointSetData {
     /// ✨ *Enabled with the `compiled_data` Cargo feature.*
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
-    #[expect(clippy::new_ret_no_self)]
+    #[allow(clippy::new_ret_no_self)]
     #[cfg(feature = "compiled_data")]
     pub const fn new<P: BinaryProperty>() -> CodePointSetDataBorrowed<'static> {
         CodePointSetDataBorrowed::new::<P>()

@@ -503,11 +503,7 @@ impl GlobSet {
                     required_exts.add(i, ext, p.regex().to_owned());
                 }
                 MatchStrategy::Regex => {
-                    debug!(
-                        "glob `{:?}` converted to regex: `{:?}`",
-                        p,
-                        p.regex()
-                    );
+                    debug!("glob converted to regex: {:?}", p);
                     regexes.add(i, p.regex().to_owned());
                 }
             }

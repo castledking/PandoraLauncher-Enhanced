@@ -19,7 +19,6 @@ include!("include.rs");
 // - `repr(packed)`
 
 #[derive(imp::IntoBytes, Clone, Copy)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 union CZst {
     a: (),
@@ -28,7 +27,6 @@ union CZst {
 util_assert_impl_all!(CZst: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 union C {
     a: u8,
@@ -50,7 +48,6 @@ util_assert_impl_all!(C: imp::IntoBytes);
 // is_as_bytes!(Transparent);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 union CZstPacked {
     a: (),
@@ -59,7 +56,6 @@ union CZstPacked {
 util_assert_impl_all!(CZstPacked: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 union CPacked {
     a: u8,
@@ -69,7 +65,6 @@ union CPacked {
 util_assert_impl_all!(CPacked: imp::IntoBytes);
 
 #[derive(imp::IntoBytes)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C, packed)]
 union CMultibytePacked {
     a: i32,

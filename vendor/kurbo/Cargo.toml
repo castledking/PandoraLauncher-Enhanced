@@ -10,11 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.65"
+edition = "2024"
+rust-version = "1.85"
 name = "kurbo"
-version = "0.11.3"
-authors = ["Raph Levien <raph.levien@gmail.com>"]
+version = "0.13.1"
 build = false
 autolib = false
 autobins = false
@@ -33,6 +32,7 @@ keywords = [
 categories = ["graphics"]
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/linebender/kurbo"
+resolver = "2"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -44,6 +44,7 @@ default = ["std"]
 euclid = ["dep:euclid"]
 libm = [
     "dep:libm",
+    "polycool/libm",
     "euclid?/libm",
 ]
 mint = ["dep:mint"]
@@ -55,7 +56,10 @@ serde = [
     "smallvec/serde",
     "dep:serde",
 ]
-std = ["euclid?/std"]
+std = [
+    "polycool/std",
+    "euclid?/std",
+]
 
 [lib]
 name = "kurbo"
@@ -82,16 +86,46 @@ name = "fit_poly"
 path = "examples/fit_poly.rs"
 
 [[example]]
-name = "offset"
-path = "examples/offset.rs"
-
-[[example]]
 name = "quad_intersect"
 path = "examples/quad_intersect.rs"
 
 [[example]]
 name = "simplify"
 path = "examples/simplify.rs"
+
+[[example]]
+name = "stroke"
+path = "examples/stroke.rs"
+
+[[bench]]
+name = "cubic"
+path = "benches/cubic.rs"
+harness = false
+
+[[bench]]
+name = "cubic_arclen"
+path = "benches/cubic_arclen.rs"
+harness = false
+
+[[bench]]
+name = "nearest"
+path = "benches/nearest.rs"
+harness = false
+
+[[bench]]
+name = "quad_arclen"
+path = "benches/quad_arclen.rs"
+harness = false
+
+[[bench]]
+name = "quartic"
+path = "benches/quartic.rs"
+harness = false
+
+[[bench]]
+name = "rect_expand"
+path = "benches/rect_expand.rs"
+harness = false
 
 [dependencies.arrayvec]
 version = "0.7.6"
@@ -103,19 +137,23 @@ optional = true
 default-features = false
 
 [dependencies.libm]
-version = "0.2.15"
+version = "0.2.16"
 optional = true
 
 [dependencies.mint]
 version = "0.5.9"
 optional = true
 
+[dependencies.polycool]
+version = "0.4.0"
+default-features = false
+
 [dependencies.schemars]
 version = "0.8.22"
 optional = true
 
 [dependencies.serde]
-version = "1.0.219"
+version = "1.0.228"
 features = [
     "alloc",
     "derive",
@@ -125,60 +163,58 @@ default-features = false
 
 [dependencies.smallvec]
 version = "1.15.1"
+features = ["const_new"]
+
+[dev-dependencies.criterion]
+version = "0.7.0"
+features = [
+    "plotters",
+    "cargo_bench_support",
+]
+default-features = false
 
 [dev-dependencies.rand]
-version = "0.9.2"
+version = "0.9.4"
 
 [target.wasm32-unknown-unknown.dev-dependencies.getrandom]
-version = "0.3.3"
+version = "0.3.4"
 features = ["wasm_js"]
 
 [lints.clippy]
-allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
 cargo_common_metadata = "warn"
 cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
 collection_is_never_read = "warn"
 dbg_macro = "warn"
 debug_assert_with_mut_call = "warn"
+default_trait_access = "warn"
 doc_markdown = "warn"
-exhaustive_enums = "warn"
-fn_to_numeric_cast_any = "forbid"
+fn_to_numeric_cast_any = "warn"
 infinite_loop = "warn"
-large_include_file = "warn"
 large_stack_arrays = "warn"
-match_same_arms = "warn"
 mismatching_type_param_order = "warn"
 missing_assert_message = "warn"
-missing_errors_doc = "warn"
 missing_fields_in_debug = "warn"
-missing_panics_doc = "warn"
 negative_feature_names = "warn"
-partial_pub_fields = "warn"
 redundant_feature_names = "warn"
-return_self_not_must_use = "warn"
 same_functions_in_if_condition = "warn"
 semicolon_if_nothing_returned = "warn"
-shadow_unrelated = "warn"
 should_panic_without_expect = "warn"
 todo = "warn"
-trivially_copy_pass_by_ref = "warn"
+too_many_arguments = "allow"
 unseparated_literal_suffix = "warn"
 use_self = "warn"
 wildcard_dependencies = "warn"
-wildcard_imports = "warn"
 
 [lints.rust]
 elided_lifetimes_in_paths = "warn"
 keyword_idents_2024 = "forbid"
-let_underscore_drop = "warn"
 missing_debug_implementations = "warn"
 missing_docs = "warn"
 non_ascii_idents = "forbid"
 non_local_definitions = "forbid"
-single_use_lifetimes = "warn"
 trivial_numeric_casts = "warn"
-unit_bindings = "warn"
 unnameable_types = "warn"
 unreachable_pub = "warn"
 unsafe_code = "forbid"
@@ -187,7 +223,6 @@ unused_import_braces = "warn"
 unused_lifetimes = "warn"
 unused_macro_rules = "warn"
 unused_qualifications = "warn"
-variant_size_differences = "warn"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

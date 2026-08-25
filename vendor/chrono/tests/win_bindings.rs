@@ -1,29 +1,20 @@
+#![cfg(all(windows, feature = "clock", feature = "std"))]
+
 use std::fs;
 use windows_bindgen::bindgen;
 
 #[test]
 fn gen_bindings() {
-    let existing = fs::read_to_string(BINDINGS).unwrap();
+    let input = "src/offset/local/win_bindings.txt";
+    let output = "src/offset/local/win_bindings.rs";
+    let existing = fs::read_to_string(output).unwrap();
 
-    bindgen([
-        "--out",
-        BINDINGS,
-        "--flat",
-        "--no-comment",
-        "--no-deps",
-        "--sys",
-        "--filter",
-        "GetTimeZoneInformationForYear",
-        "SystemTimeToFileTime",
-        "SystemTimeToTzSpecificLocalTime",
-        "TzSpecificLocalTimeToSystemTime",
-    ])
-    .unwrap();
+    bindgen(["--no-deps", "--etc", input]).unwrap();
 
     // Check the output is the same as before.
     // Depending on the git configuration the file may have been checked out with `\r\n` newlines or
     // with `\n`. Compare line-by-line to ignore this difference.
-    let mut new = fs::read_to_string(BINDINGS).unwrap();
+    let mut new = fs::read_to_string(output).unwrap();
     if existing.contains("\r\n") && !new.contains("\r\n") {
         new = new.replace("\n", "\r\n");
     } else if !existing.contains("\r\n") && new.contains("\r\n") {
@@ -32,8 +23,6 @@ fn gen_bindings() {
 
     similar_asserts::assert_eq!(existing, new);
     if !new.lines().eq(existing.lines()) {
-        panic!("generated file `{BINDINGS}` is changed.");
+        panic!("generated file `{output}` is changed.");
     }
 }
-
-const BINDINGS: &str = "src/offset/local/win_bindings.rs";

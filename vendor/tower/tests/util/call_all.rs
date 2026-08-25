@@ -1,11 +1,13 @@
 use super::support;
 use futures_core::Stream;
-use futures_util::pin_mut;
+use futures_util::{
+    future::{ready, Ready},
+    pin_mut,
+};
 use std::fmt;
-use std::future::{ready, Future, Ready};
+use std::future::Future;
 use std::task::{Context, Poll};
 use std::{cell::Cell, rc::Rc};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_test::{assert_pending, assert_ready, task};
 use tower::util::ServiceExt;
 use tower_service::*;
@@ -51,7 +53,7 @@ fn ordered() {
         admit: admit.clone(),
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let ca = srv.call_all(UnboundedReceiverStream::new(rx));
+    let ca = srv.call_all(support::IntoStream::new(rx));
     pin_mut!(ca);
 
     assert_pending!(mock.enter(|cx, _| ca.as_mut().poll_next(cx)));
@@ -153,7 +155,7 @@ async fn pending() {
     let mut task = task::spawn(());
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let ca = mock.call_all(UnboundedReceiverStream::new(rx));
+    let ca = mock.call_all(support::IntoStream::new(rx));
     pin_mut!(ca);
 
     assert_pending!(task.enter(|cx, _| ca.as_mut().poll_next(cx)));

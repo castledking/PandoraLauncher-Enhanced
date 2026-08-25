@@ -1,6 +1,7 @@
 {
   "git": {
-    "sha1": "52bb972c34c3a3423f1ed2228e7ee030c2d91eb7"
+    "sha1": "3c4ae110c7682cfc723f9f0adb49c19e2e7a0893",
+    "dirty": true
   },
   "path_in_vcs": "lib/smol_str"
 }

@@ -18,7 +18,6 @@ use validation::ValidationAttrs;
 
 use crate::ast::Data;
 use crate::idents::SCHEMA;
-use crate::schema_exprs::SchemaExpr;
 
 pub use custom_meta::*;
 pub use schemars_to_serde::process_serde_attrs;
@@ -180,9 +179,7 @@ impl CommonAttrs {
         )
     }
 
-    pub fn add_mutators(&self, expr: &mut SchemaExpr) {
-        let mutators = &mut expr.mutators;
-
+    pub fn add_mutators(&self, mutators: &mut Vec<TokenStream>) {
         let mut title = self.title.as_ref().map(ToTokens::to_token_stream);
         let mut description = self.description.as_ref().map(ToTokens::to_token_stream);
         if let Some(doc) = &self.doc {
@@ -227,16 +224,14 @@ impl CommonAttrs {
             });
         }
 
-        // Post-Mutators - extensions and transforms will be applied after all other mutators
-
         for (k, v) in &self.extensions {
-            expr.post_mutators.push(quote! {
+            mutators.push(quote! {
                 #SCHEMA.insert(#k.into(), schemars::_private::serde_json::json!(#v));
             });
         }
 
         for transform in &self.transforms {
-            expr.post_mutators.push(quote_spanned! {transform.span()=>
+            mutators.push(quote_spanned! {transform.span()=>
                 schemars::transform::Transform::transform(&mut #transform, &mut #SCHEMA);
             });
         }

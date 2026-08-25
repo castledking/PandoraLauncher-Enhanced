@@ -14,6 +14,12 @@ edition = "2018"
 name = "wasm_thread"
 version = "0.3.3"
 authors = ["Jurgis Balciunas <chemicstry@gmail.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "An std thread replacement for wasm32 target"
 homepage = "https://github.com/chemicstry/wasm_thread"
 documentation = "https://docs.rs/wasm_thread"
@@ -34,26 +40,36 @@ repository = "https://github.com/chemicstry/wasm_thread"
 [package.metadata.docs.rs]
 targets = ["wasm32-unknown-unknown"]
 
-[dev-dependencies.env_logger]
-version = "0.11.5"
-
-[dev-dependencies.log]
-version = "0.4.22"
-
 [features]
 default = ["es_modules"]
 es_modules = []
 
-[target."cfg(target_arch = \"wasm32\")".dependencies.futures]
-version = "0.3.31"
+[lib]
+name = "wasm_thread"
+path = "src/lib.rs"
 
-[target."cfg(target_arch = \"wasm32\")".dependencies.js-sys]
-version = "0.3.72"
+[[example]]
+name = "simple"
+path = "examples/simple.rs"
 
-[target."cfg(target_arch = \"wasm32\")".dependencies.wasm-bindgen]
-version = "0.2.95"
+[[test]]
+name = "native"
+path = "tests/native.rs"
 
-[target."cfg(target_arch = \"wasm32\")".dependencies.web-sys]
+[[test]]
+name = "wasm"
+path = "tests/wasm.rs"
+
+[dev-dependencies]
+env_logger = "0.11.5"
+log = "0.4.22"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = "0.3.31"
+js-sys = "0.3.72"
+wasm-bindgen = "0.2.95"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
 version = "0.3.72"
 features = [
     "Blob",
@@ -68,15 +84,11 @@ features = [
     "WorkerNavigator",
 ]
 
-[target."cfg(target_arch = \"wasm32\")".dev-dependencies.async-channel]
-version = "2.3.1"
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+async-channel = "2.3.1"
+console_error_panic_hook = "0.1.7"
+wasm-bindgen-test = "0.3.45"
 
-[target."cfg(target_arch = \"wasm32\")".dev-dependencies.console_error_panic_hook]
-version = "0.1.7"
-
-[target."cfg(target_arch = \"wasm32\")".dev-dependencies.console_log]
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.console_log]
 version = "1.0.0"
 features = ["color"]
-
-[target."cfg(target_arch = \"wasm32\")".dev-dependencies.wasm-bindgen-test]
-version = "0.3.45"

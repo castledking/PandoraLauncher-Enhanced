@@ -37,21 +37,17 @@
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
 )]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![allow(clippy::unused_unit)] // false positive fixed in Rust 1.89
 
-extern crate alloc;
-
-use alloc::rc::Rc;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::fmt;
-use core::marker::PhantomData;
-use core::panic::{RefUnwindSafe, UnwindSafe};
-use core::pin::Pin;
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-use core::task::{Context, Poll, Waker};
-use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
+use std::fmt;
+use std::marker::PhantomData;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::pin::Pin;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
+use std::task::{Context, Poll, Waker};
 
 use async_task::{Builder, Runnable};
 use concurrent_queue::ConcurrentQueue;
@@ -97,7 +93,7 @@ pub struct Executor<'a> {
     state: AtomicPtr<State>,
 
     /// Makes the `'a` lifetime invariant.
-    _marker: PhantomData<core::cell::UnsafeCell<&'a ()>>,
+    _marker: PhantomData<std::cell::UnsafeCell<&'a ()>>,
 }
 
 // SAFETY: Executor stores no thread local state that can be accessed via other thread.
@@ -124,9 +120,9 @@ impl<'a> Executor<'a> {
     ///
     /// let ex = Executor::new();
     /// ```
-    pub const fn new() -> Self {
-        Self {
-            state: AtomicPtr::new(core::ptr::null_mut()),
+    pub const fn new() -> Executor<'a> {
+        Executor {
+            state: AtomicPtr::new(std::ptr::null_mut()),
             _marker: PhantomData,
         }
     }
@@ -167,11 +163,10 @@ impl<'a> Executor<'a> {
     /// });
     /// ```
     pub fn spawn<T: Send + 'a>(&self, future: impl Future<Output = T> + Send + 'a) -> Task<T> {
-        let state = self.state();
-        let mut active = state.active();
+        let mut active = self.state().active();
 
         // SAFETY: `T` and the future are `Send`.
-        unsafe { Self::spawn_inner(state, future, &mut active) }
+        unsafe { self.spawn_inner(future, &mut active) }
     }
 
     /// Spawns many tasks onto the executor.
@@ -190,7 +185,7 @@ impl<'a> Executor<'a> {
     /// ```
     /// use async_executor::Executor;
     /// use futures_lite::{stream, prelude::*};
-    /// use core::future::ready;
+    /// use std::future::ready;
     ///
     /// # futures_lite::future::block_on(async {
     /// let mut ex = Executor::new();
@@ -219,13 +214,12 @@ impl<'a> Executor<'a> {
         futures: impl IntoIterator<Item = F>,
         handles: &mut impl Extend<Task<F::Output>>,
     ) {
-        let state = self.state();
-        let mut active = Some(state.as_ref().active());
+        let mut active = Some(self.state().active());
 
         // Convert the futures into tasks.
         let tasks = futures.into_iter().enumerate().map(move |(i, future)| {
             // SAFETY: `T` and the future are `Send`.
-            let task = unsafe { Self::spawn_inner(state, future, active.as_mut().unwrap()) };
+            let task = unsafe { self.spawn_inner(future, active.as_mut().unwrap()) };
 
             // Yield the lock every once in a while to ease contention.
             if i.wrapping_sub(1) % 500 == 0 {
@@ -246,13 +240,14 @@ impl<'a> Executor<'a> {
     ///
     /// If this is an `Executor`, `F` and `T` must be `Send`.
     unsafe fn spawn_inner<T: 'a>(
-        state: Pin<&'a State>,
+        &self,
         future: impl Future<Output = T> + 'a,
         active: &mut Slab<Waker>,
     ) -> Task<T> {
         // Remove the task from the set of active tasks when the future finishes.
         let entry = active.vacant_entry();
         let index = entry.key();
+        let state = self.state_as_arc();
         let future = AsyncCallOnDrop::new(future, move || drop(state.active().try_remove(index)));
 
         // Create the task and register it in the set of active tasks.
@@ -274,16 +269,12 @@ impl<'a> Executor<'a> {
         // the `Executor` is drained of all of its runnables. This ensures that
         // runnables are dropped and this precondition is satisfied.
         //
-        // `Self::schedule` is `Send` and `Sync`, as checked below.
-        // Therefore we do not need to worry about which thread the `Waker` is used
-        // and dropped on.
-        //
-        // `Self::schedule` may not be `'static`, but we make sure that the `Waker` does
-        // not outlive `'a`. When the executor is dropped, the `active` field is
-        // drained and all of the `Waker`s are woken.
+        // `self.schedule()` is `Send`, `Sync` and `'static`, as checked below.
+        // Therefore we do not need to worry about what is done with the
+        // `Waker`.
         let (runnable, task) = Builder::new()
             .propagate_panic(true)
-            .spawn_unchecked(|()| future, Self::schedule(state));
+            .spawn_unchecked(|()| future, self.schedule());
         entry.insert(runnable.waker());
 
         runnable.schedule();
@@ -354,7 +345,9 @@ impl<'a> Executor<'a> {
     }
 
     /// Returns a function that schedules a runnable task when it gets woken up.
-    fn schedule(state: Pin<&'a State>) -> impl Fn(Runnable) + Send + Sync + 'a {
+    fn schedule(&self) -> impl Fn(Runnable) + Send + Sync + 'static {
+        let state = self.state_as_arc();
+
         // TODO: If possible, push into the current local queue and notify the ticker.
         move |runnable| {
             let result = state.queue.push(runnable);
@@ -365,13 +358,14 @@ impl<'a> Executor<'a> {
 
     /// Returns a pointer to the inner state.
     #[inline]
-    fn state(&self) -> Pin<&'a State> {
+    fn state_ptr(&self) -> *const State {
         #[cold]
         fn alloc_state(atomic_ptr: &AtomicPtr<State>) -> *mut State {
             let state = Arc::new(State::new());
-            let ptr = Arc::into_raw(state).cast_mut();
+            // TODO: Switch this to use cast_mut once the MSRV can be bumped past 1.65
+            let ptr = Arc::into_raw(state) as *mut State;
             if let Err(actual) = atomic_ptr.compare_exchange(
-                core::ptr::null_mut(),
+                std::ptr::null_mut(),
                 ptr,
                 Ordering::AcqRel,
                 Ordering::Acquire,
@@ -388,10 +382,26 @@ impl<'a> Executor<'a> {
         if ptr.is_null() {
             ptr = alloc_state(&self.state);
         }
+        ptr
+    }
 
+    /// Returns a reference to the inner state.
+    #[inline]
+    fn state(&self) -> &State {
         // SAFETY: So long as an Executor lives, it's state pointer will always be valid
-        // and will never be moved until it's dropped.
-        Pin::new(unsafe { &*ptr })
+        // when accessed through state_ptr.
+        unsafe { &*self.state_ptr() }
+    }
+
+    // Clones the inner state Arc
+    #[inline]
+    fn state_as_arc(&self) -> Arc<State> {
+        // SAFETY: So long as an Executor lives, it's state pointer will always be a valid
+        // Arc when accessed through state_ptr.
+        let arc = unsafe { Arc::from_raw(self.state_ptr()) };
+        let clone = arc.clone();
+        std::mem::forget(arc);
+        clone
     }
 }
 
@@ -406,7 +416,7 @@ impl Drop for Executor<'_> {
         // via Arc::into_raw in state_ptr.
         let state = unsafe { Arc::from_raw(ptr) };
 
-        let mut active = state.pin().active();
+        let mut active = state.active();
         for w in active.drain() {
             w.wake();
         }
@@ -417,8 +427,8 @@ impl Drop for Executor<'_> {
 }
 
 impl<'a> Default for Executor<'a> {
-    fn default() -> Self {
-        Self::new()
+    fn default() -> Executor<'a> {
+        Executor::new()
     }
 }
 
@@ -465,8 +475,8 @@ impl<'a> LocalExecutor<'a> {
     ///
     /// let local_ex = LocalExecutor::new();
     /// ```
-    pub const fn new() -> Self {
-        Self {
+    pub const fn new() -> LocalExecutor<'a> {
+        LocalExecutor {
             inner: Executor::new(),
             _marker: PhantomData,
         }
@@ -508,12 +518,11 @@ impl<'a> LocalExecutor<'a> {
     /// });
     /// ```
     pub fn spawn<T: 'a>(&self, future: impl Future<Output = T> + 'a) -> Task<T> {
-        let state = self.inner().state();
-        let mut active = state.active();
+        let mut active = self.inner().state().active();
 
         // SAFETY: This executor is not thread safe, so the future and its result
         //         cannot be sent to another thread.
-        unsafe { Executor::spawn_inner(state, future, &mut active) }
+        unsafe { self.inner().spawn_inner(future, &mut active) }
     }
 
     /// Spawns many tasks onto the executor.
@@ -531,7 +540,7 @@ impl<'a> LocalExecutor<'a> {
     /// ```
     /// use async_executor::LocalExecutor;
     /// use futures_lite::{stream, prelude::*};
-    /// use core::future::ready;
+    /// use std::future::ready;
     ///
     /// # futures_lite::future::block_on(async {
     /// let mut ex = LocalExecutor::new();
@@ -555,19 +564,19 @@ impl<'a> LocalExecutor<'a> {
     /// ```
     ///
     /// [`spawn`]: LocalExecutor::spawn
+    /// [`Executor::spawn_many`]: Executor::spawn_many
     pub fn spawn_many<T: 'a, F: Future<Output = T> + 'a>(
         &self,
         futures: impl IntoIterator<Item = F>,
         handles: &mut impl Extend<Task<F::Output>>,
     ) {
-        let state = self.inner().state();
-        let mut active = state.active();
+        let mut active = self.inner().state().active();
 
         // Convert all of the futures to tasks.
         let tasks = futures.into_iter().map(|future| {
             // SAFETY: This executor is not thread safe, so the future and its result
             //         cannot be sent to another thread.
-            unsafe { Executor::spawn_inner(state, future, &mut active) }
+            unsafe { self.inner().spawn_inner(future, &mut active) }
 
             // As only one thread can spawn or poll tasks at a time, there is no need
             // to release lock contention here.
@@ -647,8 +656,8 @@ impl<'a> LocalExecutor<'a> {
 }
 
 impl<'a> Default for LocalExecutor<'a> {
-    fn default() -> Self {
-        Self::new()
+    fn default() -> LocalExecutor<'a> {
+        LocalExecutor::new()
     }
 }
 
@@ -672,8 +681,8 @@ struct State {
 
 impl State {
     /// Creates state for a new executor.
-    const fn new() -> Self {
-        Self {
+    const fn new() -> State {
+        State {
             queue: ConcurrentQueue::unbounded(),
             local_queues: RwLock::new(Vec::new()),
             notified: AtomicBool::new(true),
@@ -686,16 +695,9 @@ impl State {
         }
     }
 
-    fn pin(&self) -> Pin<&Self> {
-        Pin::new(self)
-    }
-
     /// Returns a reference to currently active tasks.
-    fn active(self: Pin<&Self>) -> MutexGuard<'_, Slab<Waker>> {
-        self.get_ref()
-            .active
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn active(&self) -> MutexGuard<'_, Slab<Waker>> {
+        self.active.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Notifies a sleeping ticker.
@@ -845,10 +847,10 @@ struct Ticker<'a> {
     sleeping: usize,
 }
 
-impl<'a> Ticker<'a> {
+impl Ticker<'_> {
     /// Creates a ticker.
-    fn new(state: &'a State) -> Self {
-        Self { state, sleeping: 0 }
+    fn new(state: &State) -> Ticker<'_> {
+        Ticker { state, sleeping: 0 }
     }
 
     /// Moves the ticker into sleeping and unnotified state.
@@ -974,10 +976,10 @@ struct Runner<'a> {
     ticks: usize,
 }
 
-impl<'a> Runner<'a> {
+impl Runner<'_> {
     /// Creates a runner and registers it in the executor state.
-    fn new(state: &'a State) -> Self {
-        let runner = Self {
+    fn new(state: &State) -> Runner<'_> {
+        let runner = Runner {
             state,
             ticker: Ticker::new(state),
             local: Arc::new(ConcurrentQueue::bounded(512)),
@@ -1207,14 +1209,13 @@ fn _ensure_send_and_sync() {
     is_sync::<Executor<'_>>(Executor::new());
 
     let ex = Executor::new();
-    let state = ex.state();
     is_send(ex.run(pending::<()>()));
     is_sync(ex.run(pending::<()>()));
     is_send(ex.tick());
     is_sync(ex.tick());
-    is_send(Executor::schedule(state));
-    is_sync(Executor::schedule(state));
-    is_static(Executor::schedule(state));
+    is_send(ex.schedule());
+    is_sync(ex.schedule());
+    is_static(ex.schedule());
 
     /// ```compile_fail
     /// use async_executor::LocalExecutor;

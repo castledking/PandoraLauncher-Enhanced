@@ -6,12 +6,14 @@
 // This file may not be copied, modified, or distributed except according to
 // those terms.
 
-include!("../include.rs");
+include!("../../zerocopy-derive/tests/include.rs");
+
+#[macro_use]
+extern crate zerocopy;
 
 use util::NotZerocopy;
 
 fn main() {}
 
 // Should fail because `NotZerocopy<u32>: !FromBytes`.
-const NOT_FROM_BYTES: NotZerocopy<u32> =
-    zerocopy::include_value!("../../testdata/include_value/data");
+const NOT_FROM_BYTES: NotZerocopy<u32> = include_value!("../../testdata/include_value/data");

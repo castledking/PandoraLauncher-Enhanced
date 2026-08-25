@@ -8,7 +8,7 @@ use crate::parser::str::{
     strip_ascii_char_prefix,
 };
 use crate::spec::Spec;
-use crate::validate::{Error, ErrorKind};
+use crate::validate::Error;
 
 /// Returns `Ok(_)` if the string matches `userinfo` or `iuserinfo`.
 pub(crate) fn validate_userinfo<S: Spec>(i: &str) -> Result<(), Error> {
@@ -20,7 +20,7 @@ pub(crate) fn validate_userinfo<S: Spec>(i: &str) -> Result<(), Error> {
     if is_valid {
         Ok(())
     } else {
-        Err(Error::with_kind(ErrorKind::InvalidUserInfo))
+        Err(Error::new())
     }
 }
 
@@ -41,25 +41,20 @@ fn is_dec_octet(i: &str) -> bool {
 
 /// Returns `Ok(_)` if the string matches `IPv4address`.
 fn validate_ipv4address(i: &str) -> Result<(), Error> {
-    /// Returns `Ok(_)` if the string matches `IPv4address`, or `Err(())` if not.
-    fn validate_ipv4address_impl(i: &str) -> Result<(), ()> {
-        let (first, rest) = find_split_hole(i, b'.').ok_or(())?;
-        if !is_dec_octet(first) {
-            return Err(());
-        }
-        let (second, rest) = find_split_hole(rest, b'.').ok_or(())?;
-        if !is_dec_octet(second) {
-            return Err(());
-        }
-        let (third, fourth) = find_split_hole(rest, b'.').ok_or(())?;
-        if is_dec_octet(third) && is_dec_octet(fourth) {
-            Ok(())
-        } else {
-            Err(())
-        }
+    let (first, rest) = find_split_hole(i, b'.').ok_or_else(Error::new)?;
+    if !is_dec_octet(first) {
+        return Err(Error::new());
     }
-
-    validate_ipv4address_impl(i).map_err(|_| Error::with_kind(ErrorKind::InvalidHost))
+    let (second, rest) = find_split_hole(rest, b'.').ok_or_else(Error::new)?;
+    if !is_dec_octet(second) {
+        return Err(Error::new());
+    }
+    let (third, fourth) = find_split_hole(rest, b'.').ok_or_else(Error::new)?;
+    if is_dec_octet(third) && is_dec_octet(fourth) {
+        Ok(())
+    } else {
+        Err(Error::new())
+    }
 }
 
 /// A part of IPv6 addr.
@@ -83,20 +78,20 @@ fn split_v6_addr_part(i: &str) -> Result<(&str, V6AddrPart), Error> {
     match find_split_hole(i, b':') {
         Some((prefix, rest)) => {
             if prefix.len() >= 5 {
-                return Err(Error::with_kind(ErrorKind::InvalidHost));
+                return Err(Error::new());
             }
 
             if prefix.is_empty() {
                 return match strip_ascii_char_prefix(rest, b':') {
                     Some(rest) => Ok((rest, V6AddrPart::Omit)),
-                    None => Err(Error::with_kind(ErrorKind::InvalidHost)),
+                    None => Err(Error::new()),
                 };
             }
 
             // Should be `h16`.
             debug_assert!((1..=4).contains(&prefix.len()));
             if !prefix.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(Error::with_kind(ErrorKind::InvalidHost));
+                return Err(Error::new());
             }
             match strip_ascii_char_prefix(rest, b':') {
                 Some(rest) => Ok((rest, V6AddrPart::H16Omit)),
@@ -112,7 +107,7 @@ fn split_v6_addr_part(i: &str) -> Result<(&str, V6AddrPart), Error> {
             if i.bytes().all(|b| b.is_ascii_hexdigit()) {
                 Ok(("", V6AddrPart::H16End))
             } else {
-                Err(Error::with_kind(ErrorKind::InvalidHost))
+                Err(Error::new())
             }
         }
     }
@@ -129,14 +124,14 @@ fn validate_ipv6address(mut i: &str) -> Result<(), Error> {
                 h16_count += 1;
                 if mem::replace(&mut is_omitted, true) {
                     // Omitted twice.
-                    return Err(Error::with_kind(ErrorKind::InvalidHost));
+                    return Err(Error::new());
                 }
             }
             V6AddrPart::H16Cont => {
                 h16_count += 1;
                 if rest.is_empty() {
                     // `H16Cont` cannot be the last part of an IPv6 address.
-                    return Err(Error::with_kind(ErrorKind::InvalidHost));
+                    return Err(Error::new());
                 }
             }
             V6AddrPart::H16End => {
@@ -151,12 +146,12 @@ fn validate_ipv6address(mut i: &str) -> Result<(), Error> {
             V6AddrPart::Omit => {
                 if mem::replace(&mut is_omitted, true) {
                     // Omitted twice.
-                    return Err(Error::with_kind(ErrorKind::InvalidHost));
+                    return Err(Error::new());
                 }
             }
         }
         if h16_count > 8 {
-            return Err(Error::with_kind(ErrorKind::InvalidHost));
+            return Err(Error::new());
         }
         i = rest;
     }
@@ -168,12 +163,12 @@ fn validate_ipv6address(mut i: &str) -> Result<(), Error> {
     if is_valid {
         Ok(())
     } else {
-        Err(Error::with_kind(ErrorKind::InvalidHost))
+        Err(Error::new())
     }
 }
 
 /// Returns `Ok(_)` if the string matches `authority` or `iauthority`.
-pub(crate) fn validate_authority<S: Spec>(i: &str) -> Result<(), Error> {
+pub(super) fn validate_authority<S: Spec>(i: &str) -> Result<(), Error> {
     // Strip and validate `userinfo`.
     let (i, _userinfo) = match find_split_hole(i, b'@') {
         Some((maybe_userinfo, i)) => {
@@ -208,11 +203,11 @@ pub(crate) fn validate_host<S: Spec>(i: &str) -> Result<(), Error> {
                 .or_else(|| strip_ascii_char_prefix(maybe_addr, b'V'))
             {
                 // `IPvFuture`.
-                let (maybe_ver, maybe_addr) = find_split_hole(maybe_addr_rest, b'.')
-                    .ok_or(Error::with_kind(ErrorKind::InvalidHost))?;
+                let (maybe_ver, maybe_addr) =
+                    find_split_hole(maybe_addr_rest, b'.').ok_or_else(Error::new)?;
                 // Validate version.
                 if maybe_ver.is_empty() || !maybe_ver.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return Err(Error::with_kind(ErrorKind::InvalidHost));
+                    return Err(Error::new());
                 }
                 // Validate address.
                 if !maybe_addr.is_empty()
@@ -223,7 +218,7 @@ pub(crate) fn validate_host<S: Spec>(i: &str) -> Result<(), Error> {
                 {
                     Ok(())
                 } else {
-                    Err(Error::with_kind(ErrorKind::InvalidHost))
+                    Err(Error::new())
                 }
             } else {
                 // `IPv6address`.
@@ -231,8 +226,7 @@ pub(crate) fn validate_host<S: Spec>(i: &str) -> Result<(), Error> {
             }
         }
         None => {
-            // `IPv4address` or `reg-name`. No need to distinguish them here
-            // because `IPv4address` is also syntactically valid as `reg-name`.
+            // `IPv4address` or `reg-name`. No need to distinguish them here.
             let is_valid = satisfy_chars_with_pct_encoded(
                 i,
                 char::is_ascii_regname,
@@ -241,7 +235,7 @@ pub(crate) fn validate_host<S: Spec>(i: &str) -> Result<(), Error> {
             if is_valid {
                 Ok(())
             } else {
-                Err(Error::with_kind(ErrorKind::InvalidHost))
+                Err(Error::new())
             }
         }
     }

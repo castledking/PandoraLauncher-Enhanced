@@ -189,10 +189,14 @@ pub fn type_macro_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Adds [`Serialize`] implementation to structs to be serialized as `a{sv}` type.
+/// Adds [`Serialize`] implementation to structs to be serialized as a D-Bus dictionary type.
 ///
-/// This macro serializes the deriving struct as a D-Bus dictionary type, where keys are strings and
-/// values are generic values. Such dictionary types are very commonly used with
+/// The dictionary type is determined by the `signature` attribute. The default is `a{sv}`
+/// (string keys, variant values), but nested forms like `a{sa{sv}}` and `a{oa{sv}}` are also
+/// supported — fields whose value type is itself a dict (or any non-`Variant` type) are
+/// serialized directly through their own `Serialize` impl rather than wrapped as a variant.
+///
+/// Such dictionary types are very commonly used with
 /// [D-Bus](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-properties)
 /// and GVariant.
 ///
@@ -238,6 +242,30 @@ pub fn type_macro_derive(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// ## Nested dictionaries
+///
+/// To represent shapes like `a{sa{sv}}` (the body type of
+/// `org.freedesktop.DBus.ObjectManager.GetManagedObjects` and similar APIs), nest one
+/// `SerializeDict`/`DeserializeDict` struct inside another:
+///
+/// ```
+/// use zvariant::{DeserializeDict, SerializeDict, Type};
+///
+/// #[derive(SerializeDict, DeserializeDict, Type, Default)]
+/// #[zvariant(signature = "a{sv}", rename_all = "PascalCase")]
+/// pub struct AdapterProperties {
+///     address: Option<String>,
+///     name: Option<String>,
+/// }
+///
+/// #[derive(SerializeDict, DeserializeDict, Type, Default)]
+/// #[zvariant(signature = "a{sa{sv}}")]
+/// pub struct InterfaceProperties {
+///     #[zvariant(rename = "org.bluez.Adapter1")]
+///     adapter: Option<AdapterProperties>,
+/// }
+/// ```
+///
 /// # Custom crate path
 ///
 /// If you've renamed `zvariant` in your `Cargo.toml` or are using it through a re-export,
@@ -263,10 +291,15 @@ pub fn serialize_dict_macro_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Adds [`Deserialize`] implementation to structs to be deserialized from `a{sv}` type.
+/// Adds [`Deserialize`] implementation to structs to be deserialized from a D-Bus dictionary type.
 ///
-/// This macro deserializes a D-Bus dictionary type as a struct, where keys are strings and values
-/// are generic values. Such dictionary types are very commonly used with
+/// The dictionary type is determined by the `signature` attribute. The default is `a{sv}`
+/// (string keys, variant values), but nested forms like `a{sa{sv}}` and `a{oa{sv}}` are also
+/// supported — fields whose value type is itself a dict (or any non-`Variant` type) are
+/// deserialized directly through their own `Deserialize` impl rather than unwrapped from a
+/// variant. See [`SerializeDict`] for a nested example.
+///
+/// Such dictionary types are very commonly used with
 /// [D-Bus](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-properties)
 /// and GVariant.
 ///

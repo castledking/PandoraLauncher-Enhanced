@@ -27,6 +27,7 @@
 #![doc(html_root_url = "https://docs.rs/js-sys/0.2")]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(target_feature = "atomics", feature(thread_local))]
+#![cfg_attr(target_feature = "atomics", feature(stdarch_wasm_atomic_wait))]
 
 extern crate alloc;
 
@@ -52,7 +53,7 @@ use wasm_bindgen::JsError;
 
 // Re-export sys types as js-sys types
 pub use wasm_bindgen::sys::{JsOption, Null, Promising, Undefined};
-pub use wasm_bindgen::JsGeneric;
+pub use wasm_bindgen::{IntoJsGeneric, JsGeneric};
 
 // When adding new imports:
 //
@@ -1676,9 +1677,15 @@ macro_rules! impl_tuple {
                 self.$last()
             }
 
-            /// Convert the ArrayTuple into its corresponding Rust tuple
-            pub fn into_parts(self) -> ($($T,)+) {
+            /// Convert the ArrayTuple into its corresponding Rust tuple.
+            pub fn into_tuple(self) -> ($($T,)+) {
                 ($(self.$vars(),)+)
+            }
+
+            /// Deprecated alias for [`ArrayTuple::into_tuple`].
+            #[deprecated(note = "renamed to `into_tuple`")]
+            pub fn into_parts(self) -> ($($T,)+) {
+                self.into_tuple()
             }
 
             /// Create a new ArrayTuple from the corresponding parts.
@@ -1940,47 +1947,40 @@ impl<T: JsGeneric> core::iter::IntoIterator for Array<T> {
     }
 }
 
-#[cfg(not(js_sys_unstable_apis))]
-impl<A, T: JsGeneric> core::iter::FromIterator<A> for Array<T>
+// `FromIterator` / `Extend` for `Array` (= `Array<JsValue>` via the default
+// type parameter) preserve the long-standing stable behaviour: any iterator
+// of items convertible to `&JsValue` collects into an erased `Array<JsValue>`.
+//
+// Typed collection (where the element type is inferred from the iterator
+// item via [`IntoJsGeneric`]) is exposed as the inherent constructor
+// [`Array::from_iter_typed`] rather than a second `FromIterator` impl. A
+// blanket `impl<A: IntoJsGeneric> FromIterator<A> for Array<A::JsCanon>`
+// would overlap with the stable `AsRef<JsValue>` impl on `Array<JsValue>`
+// (since `JsValue: IntoJsGeneric` with `JsCanon = JsValue`), so the two
+// cannot coexist as `FromIterator` impls without coherence violations.
+//
+// TODO(next major): deprecate this `FromIterator`/`Extend` pair in favour
+// of a single `IntoJsGeneric`-based impl, and rename `from_iter_typed` to
+// take its place. That migration is source-breaking for callers relying on
+// `.collect::<Array>()` implicit erasure of typed items, so it is deferred.
+
+impl<A> core::iter::FromIterator<A> for Array
 where
-    A: AsRef<T>,
+    A: AsRef<JsValue>,
 {
-    fn from_iter<I>(iter: I) -> Array<T>
+    fn from_iter<I>(iter: I) -> Array
     where
         I: IntoIterator<Item = A>,
     {
-        let iter = iter.into_iter();
-        let mut out = Array::new_typed();
+        let mut out = Array::new();
         out.extend(iter);
         out
     }
 }
 
-#[cfg(js_sys_unstable_apis)]
-impl<A, T: JsGeneric> core::iter::FromIterator<A> for Array<T>
+impl<A> core::iter::Extend<A> for Array
 where
-    A: AsRef<T>,
-{
-    fn from_iter<I>(iter: I) -> Array<T>
-    where
-        I: IntoIterator<Item = A>,
-    {
-        let iter = iter.into_iter();
-        let (lower, upper) = iter.size_hint();
-        let capacity = upper.unwrap_or(lower);
-        let out = Array::new_with_length_typed(capacity as u32);
-        let mut i = 0;
-        for value in iter {
-            out.set(i, value.as_ref());
-            i += 1;
-        }
-        out
-    }
-}
-
-impl<A, T: JsGeneric> core::iter::Extend<A> for Array<T>
-where
-    A: AsRef<T>,
+    A: AsRef<JsValue>,
 {
     fn extend<I>(&mut self, iter: I)
     where
@@ -1988,6 +1988,53 @@ where
     {
         for value in iter {
             self.push(value.as_ref());
+        }
+    }
+}
+
+impl<T: JsGeneric> Array<T> {
+    /// Collect an iterator into a typed `Array<T>`, projecting each item
+    /// through its canonical [`JsGeneric`] via [`IntoJsGeneric`].
+    ///
+    /// This is the typed counterpart to the stable
+    /// `impl FromIterator<A> for Array where A: AsRef<JsValue>`, which always
+    /// produces an erased `Array<JsValue>`. Use `from_iter_typed` when you
+    /// want the element type inferred from the iterator item:
+    ///
+    /// ```ignore
+    /// use js_sys::{Array, Number};
+    ///
+    /// let arr = Array::from_iter_typed((0..10).map(Number::from));
+    /// // arr: Array<Number>
+    /// ```
+    ///
+    /// Reference iteration (`Item = &U`) is supported transparently via the
+    /// `&U: IntoJsGeneric` blanket in `wasm-bindgen` core.
+    //
+    // TODO(next major): replace the stable `FromIterator` impl above with
+    // this behaviour and remove `from_iter_typed`.
+    pub fn from_iter_typed<A, I>(iter: I) -> Array<T>
+    where
+        A: IntoJsGeneric<JsCanon = T>,
+        I: IntoIterator<Item = A>,
+    {
+        let mut out = Array::<T>::new_typed();
+        out.extend_typed(iter);
+        out
+    }
+
+    /// Extend a typed `Array<T>` with an iterator of items convertible to
+    /// `T` via [`IntoJsGeneric`]. Companion to [`Array::from_iter_typed`].
+    //
+    // TODO(next major): replace the stable `Extend` impl above with this
+    // behaviour and remove `extend_typed`.
+    pub fn extend_typed<A, I>(&mut self, iter: I)
+    where
+        A: IntoJsGeneric<JsCanon = T>,
+        I: IntoIterator<Item = A>,
+    {
+        for value in iter {
+            self.push(&value.to_js());
         }
     }
 }
@@ -3346,6 +3393,30 @@ extern "C" {
     #[wasm_bindgen(method, js_name = getFloat32)]
     pub fn get_float32_endian(this: &DataView, byte_offset: usize, little_endian: bool) -> f32;
 
+    /// The `getFloat16()` method gets a signed 16-bit float at the specified
+    /// byte offset from the start of the DataView as an `f32`.
+    ///
+    /// The unsuffixed `get_float16` name is reserved for a future native
+    /// `f16` binding once Rust stabilizes the type.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getFloat16)
+    #[wasm_bindgen(method, js_name = getFloat16)]
+    pub fn get_float16_as_f32(this: &DataView, byte_offset: usize) -> f32;
+
+    /// The `getFloat16()` method gets a signed 16-bit float at the specified
+    /// byte offset from the start of the DataView as an `f32`.
+    ///
+    /// The unsuffixed `get_float16_endian` name is reserved for a future
+    /// native `f16` binding once Rust stabilizes the type.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/getFloat16)
+    #[wasm_bindgen(method, js_name = getFloat16)]
+    pub fn get_float16_endian_as_f32(
+        this: &DataView,
+        byte_offset: usize,
+        little_endian: bool,
+    ) -> f32;
+
     /// The `getFloat64()` method gets a signed 64-bit float (double) at the specified
     /// byte offset from the start of the DataView.
     ///
@@ -3444,6 +3515,31 @@ extern "C" {
     #[wasm_bindgen(method, js_name = setFloat32)]
     pub fn set_float32_endian(this: &DataView, byte_offset: usize, value: f32, little_endian: bool);
 
+    /// The `setFloat16()` method stores a signed 16-bit float value from an
+    /// `f32` at the specified byte offset from the start of the DataView.
+    ///
+    /// The unsuffixed `set_float16` name is reserved for a future native
+    /// `f16` binding once Rust stabilizes the type.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setFloat16)
+    #[wasm_bindgen(method, js_name = setFloat16)]
+    pub fn set_float16_from_f32(this: &DataView, byte_offset: usize, value: f32);
+
+    /// The `setFloat16()` method stores a signed 16-bit float value from an
+    /// `f32` at the specified byte offset from the start of the DataView.
+    ///
+    /// The unsuffixed `set_float16_endian` name is reserved for a future
+    /// native `f16` binding once Rust stabilizes the type.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView/setFloat16)
+    #[wasm_bindgen(method, js_name = setFloat16)]
+    pub fn set_float16_endian_from_f32(
+        this: &DataView,
+        byte_offset: usize,
+        value: f32,
+        little_endian: bool,
+    );
+
     /// The `setFloat64()` method stores a signed 64-bit float (double) value at the
     /// specified byte offset from the start of the DataView.
     ///
@@ -3508,6 +3604,24 @@ extern "C" {
     #[cfg(not(js_sys_unstable_apis))]
     #[wasm_bindgen(method, js_name = toString)]
     pub fn to_string(this: &Error) -> JsString;
+
+    /// The `Error.stackTraceLimit` property controls the number of stack
+    /// frames collected by a stack trace.
+    ///
+    /// This is a non-standard V8/Node.js API.
+    ///
+    /// [V8 documentation](https://v8.dev/docs/stack-trace-api#stack-trace-collection-for-custom-exceptions)
+    #[wasm_bindgen(static_method_of = Error, getter, js_name = stackTraceLimit)]
+    pub fn stack_trace_limit() -> JsValue;
+
+    /// Set `Error.stackTraceLimit` to control the number of stack frames
+    /// collected by a stack trace.
+    ///
+    /// This is a non-standard V8/Node.js API.
+    ///
+    /// [V8 documentation](https://v8.dev/docs/stack-trace-api#stack-trace-collection-for-custom-exceptions)
+    #[wasm_bindgen(static_method_of = Error, setter, js_name = stackTraceLimit)]
+    pub fn set_stack_trace_limit(value: &JsValue);
 }
 
 partialord_ord!(JsString);
@@ -5077,6 +5191,7 @@ impl Iterator {
     fn looks_like_iterator(it: &JsValue) -> bool {
         #[wasm_bindgen]
         extern "C" {
+            #[derive(Clone, Debug)]
             type MaybeIterator;
 
             #[wasm_bindgen(method, getter)]
@@ -10461,6 +10576,7 @@ pub mod Intl {
     #[wasm_bindgen]
     extern "C" {
         #[wasm_bindgen(extends = CollatorOptions)]
+        #[derive(Clone, Debug)]
         pub type ResolvedCollatorOptions;
 
         #[wasm_bindgen(method, getter = locale)]
@@ -12720,6 +12836,19 @@ impl<T> PromiseState<T> {
     }
 }
 
+/// Converts a `PromiseState<T>` into a `Result<T, JsValue>`, matching the
+/// spec invariant that exactly one of the fulfilled value or the rejection
+/// reason is populated per slot.
+impl<T: JsGeneric + FromWasmAbi> From<PromiseState<T>> for Result<T, JsValue> {
+    fn from(state: PromiseState<T>) -> Result<T, JsValue> {
+        if state.is_fulfilled() {
+            Ok(state.get_value().unwrap())
+        } else {
+            Err(state.get_reason().unwrap())
+        }
+    }
+}
+
 // Promise
 #[wasm_bindgen]
 extern "C" {
@@ -12779,9 +12908,9 @@ extern "C" {
     ///
     /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
     #[wasm_bindgen(constructor)]
-    pub fn new_typed<T: JsGeneric>(
+    pub fn new_typed<T: Promising + JsGeneric>(
         cb: &mut dyn FnMut(Function<fn(T) -> Undefined>, Function<fn(JsValue) -> Undefined>),
-    ) -> Promise<T>;
+    ) -> Promise<<T as Promising>::Resolution>;
 
     /// The `Promise.all(iterable)` method returns a single `Promise` that
     /// resolves when all of the promises in the iterable argument have resolved
@@ -12881,7 +13010,6 @@ extern "C" {
     /// `AggregateError` if all promises in the iterable rejected.
     ///
     /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/any)
-    #[cfg(not(js_sys_unstable_apis))]
     #[wasm_bindgen(static_method_of = Promise, js_name = any)]
     pub fn any_iterable<I: Iterable>(obj: &I) -> Promise<<I::Item as Promising>::Resolution>
     where
@@ -13054,6 +13182,148 @@ impl<T: JsGeneric> Promising for Promise<T> {
     type Resolution = T;
 }
 
+/// Internal: maps a tuple of `Promise<T_i>` to the result shapes of
+/// [`Promise::all_tuple`] and [`Promise::all_settled_tuple`].
+///
+/// Implemented for every tuple arity 1..=8 of `Promise<T: JsGeneric>`. The
+/// associated `Joined` / `Settled` types pin down the [`ArrayTuple`] shape
+/// of the result so the one [`JsCast::unchecked_into`] needed to reinterpret
+/// the [`Array<JsValue>`] returned by `Promise.all` / `Promise.allSettled`
+/// is encapsulated inside each impl — the caller sees a fully-typed
+/// `Promise<ArrayTuple<...>>`.
+///
+/// The soundness of the `unchecked_into`s here rests on `Promise.all` and
+/// `Promise.allSettled` preserving input order and arity, which they do by
+/// spec.
+///
+/// You normally call [`Promise::all_tuple`] / [`Promise::all_settled_tuple`]
+/// rather than using this trait directly.
+#[doc(hidden)]
+pub trait PromiseTuple {
+    /// The typed `ArrayTuple` shape the joined promise resolves to.
+    ///
+    /// For a tuple `(Promise<T1>, Promise<T2>, ...)` this is
+    /// `ArrayTuple<(T1, T2, ...)>`.
+    type Joined: JsGeneric;
+
+    /// The typed `ArrayTuple` shape the all-settled promise resolves to.
+    ///
+    /// For a tuple `(Promise<T1>, Promise<T2>, ...)` this is
+    /// `ArrayTuple<(PromiseState<T1>, PromiseState<T2>, ...)>`.
+    type Settled: JsGeneric;
+
+    /// Join via `Promise.all`, returning a typed `Promise`.
+    fn all(self) -> Promise<Self::Joined>;
+
+    /// Settle via `Promise.allSettled`, returning a typed `Promise`.
+    fn all_settled(self) -> Promise<Self::Settled>;
+}
+
+macro_rules! impl_promise_tuple {
+    ([$($T:ident)+] [$($idx:tt)+]) => {
+        // Rust tuple of `Promise<T_i>`. Builds the heterogeneous
+        // `ArrayTuple` of promises via the existing `From<(...)>` impl
+        // (each element upcasts through `JsGeneric`), then delegates to
+        // the `ArrayTuple` impl below.
+        impl<$($T: JsGeneric),+> PromiseTuple for ($(Promise<$T>,)+) {
+            type Joined = ArrayTuple<($($T,)+)>;
+            type Settled = ArrayTuple<($(PromiseState<$T>,)+)>;
+
+            fn all(self) -> Promise<Self::Joined> {
+                let tuple: ArrayTuple<($(Promise<$T>,)+)> = ($(self.$idx,)+).into();
+                tuple.all()
+            }
+
+            fn all_settled(self) -> Promise<Self::Settled> {
+                let tuple: ArrayTuple<($(Promise<$T>,)+)> = ($(self.$idx,)+).into();
+                tuple.all_settled()
+            }
+        }
+
+        // `ArrayTuple<(Promise<T_1>, ..., Promise<T_n>)>` — callers who
+        // already have an `ArrayTuple` (e.g. from a binding that returns
+        // one, or built via `.into()` earlier in a pipeline) can pass it
+        // directly without unpacking into a Rust tuple.
+        //
+        // Hands the `ArrayTuple` straight to `Promise.all_iterable` /
+        // `Promise.allSettled_iterable` and reinterprets the result
+        // `Array<JsValue>` as the intended typed `ArrayTuple`. Safe because
+        // `Promise.all` / `Promise.allSettled` preserve input order and
+        // arity by spec.
+        impl<$($T: JsGeneric),+> PromiseTuple for ArrayTuple<($(Promise<$T>,)+)> {
+            type Joined = ArrayTuple<($($T,)+)>;
+            type Settled = ArrayTuple<($(PromiseState<$T>,)+)>;
+
+            fn all(self) -> Promise<Self::Joined> {
+                use wasm_bindgen::JsCast;
+                Promise::all_iterable(&self).unchecked_into()
+            }
+
+            fn all_settled(self) -> Promise<Self::Settled> {
+                use wasm_bindgen::JsCast;
+                Promise::all_settled_iterable(&self).unchecked_into()
+            }
+        }
+    };
+}
+
+impl_promise_tuple!([T1][0]);
+impl_promise_tuple!([T1 T2] [0 1]);
+impl_promise_tuple!([T1 T2 T3] [0 1 2]);
+impl_promise_tuple!([T1 T2 T3 T4] [0 1 2 3]);
+impl_promise_tuple!([T1 T2 T3 T4 T5] [0 1 2 3 4]);
+impl_promise_tuple!([T1 T2 T3 T4 T5 T6] [0 1 2 3 4 5]);
+impl_promise_tuple!([T1 T2 T3 T4 T5 T6 T7] [0 1 2 3 4 5 6]);
+impl_promise_tuple!([T1 T2 T3 T4 T5 T6 T7 T8] [0 1 2 3 4 5 6 7]);
+
+impl Promise {
+    /// Heterogeneous counterpart to [`Promise::all_iterable`]: accepts a Rust
+    /// tuple of `Promise<T_i>` and returns a single [`Promise`] resolving to a
+    /// typed [`ArrayTuple<(T_1, T_2, ..., T_n)>`].
+    ///
+    /// Destructure the awaited result via [`ArrayTuple::into_tuple`] to get
+    /// the individual values back as a native Rust tuple. Implemented for
+    /// arity 1..=8.
+    ///
+    /// Rejects with the first rejection, matching `Promise.all` semantics.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use js_sys::Promise;
+    ///
+    /// let (response, buffer) = Promise::all_tuple((fetch_promise, buffer_promise))
+    ///     .await?
+    ///     .into_tuple();
+    /// ```
+    #[inline]
+    pub fn all_tuple<T: PromiseTuple>(promises: T) -> Promise<T::Joined> {
+        promises.all()
+    }
+
+    /// Heterogeneous counterpart to [`Promise::all_settled_iterable`]: accepts
+    /// a Rust tuple of `Promise<T_i>` and returns a single [`Promise`]
+    /// resolving to a typed
+    /// `ArrayTuple<(PromiseState<T_1>, ..., PromiseState<T_n>)>`.
+    ///
+    /// Unlike [`Promise::all_tuple`], this never rejects early: every input
+    /// settles (fulfills or rejects) and is reflected by its [`PromiseState`]
+    /// slot in the result tuple. Implemented for arity 1..=8.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use js_sys::Promise;
+    ///
+    /// let results = Promise::all_settled_tuple((fetch_promise, buffer_promise)).await?;
+    /// let (response_state, buffer_state) = results.into_tuple();
+    /// ```
+    #[inline]
+    pub fn all_settled_tuple<T: PromiseTuple>(promises: T) -> Promise<T::Settled> {
+        promises.all_settled()
+    }
+}
+
 /// Returns a handle to the global scope object.
 ///
 /// This allows access to the global properties and global names by accessing
@@ -13086,6 +13356,7 @@ pub fn global() -> Object {
         // the end which triggers CSP errors.
         #[wasm_bindgen]
         extern "C" {
+            #[derive(Clone, Debug)]
             type Global;
 
             #[wasm_bindgen(thread_local_v2, js_name = globalThis)]
@@ -13116,6 +13387,205 @@ pub fn global() -> Object {
 
         // Global object not found
         JsValue::undefined().unchecked_into()
+    }
+}
+
+// Float16Array
+//
+// Rust does not yet have a stable builtin `f16`, so the raw JS bindings live
+// here and any Rust-side helper APIs use explicit `u16` / `f32` naming. The
+// unsuffixed float APIs are reserved for a future native `f16` binding.
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(extends = Object, typescript_type = "Float16Array")]
+    #[derive(Clone, Debug)]
+    pub type Float16Array;
+
+    /// The `Float16Array()` constructor creates a new array.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)
+    #[wasm_bindgen(constructor)]
+    pub fn new(constructor_arg: &JsValue) -> Float16Array;
+
+    /// The `Float16Array()` constructor creates an array with an internal
+    /// buffer large enough for `length` elements.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)
+    #[wasm_bindgen(constructor)]
+    pub fn new_with_length(length: u32) -> Float16Array;
+
+    /// The `Float16Array()` constructor creates an array with the given
+    /// buffer but is a view starting at `byte_offset`.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)
+    #[wasm_bindgen(constructor)]
+    pub fn new_with_byte_offset(buffer: &JsValue, byte_offset: u32) -> Float16Array;
+
+    /// The `Float16Array()` constructor creates an array with the given
+    /// buffer but is a view starting at `byte_offset` for `length` elements.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)
+    #[wasm_bindgen(constructor)]
+    pub fn new_with_byte_offset_and_length(
+        buffer: &JsValue,
+        byte_offset: u32,
+        length: u32,
+    ) -> Float16Array;
+
+    /// The `fill()` method fills all elements from a start index to an end
+    /// index with a static `f32` value.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/fill)
+    #[wasm_bindgen(method, js_name = fill)]
+    pub fn fill_with_f32(this: &Float16Array, value: f32, start: u32, end: u32) -> Float16Array;
+
+    /// The buffer accessor property represents the `ArrayBuffer` referenced
+    /// by a `TypedArray` at construction time.
+    #[wasm_bindgen(getter, method)]
+    pub fn buffer(this: &Float16Array) -> ArrayBuffer;
+
+    /// The `subarray()` method returns a new `TypedArray` on the same
+    /// `ArrayBuffer` store and with the same element types as this array.
+    #[wasm_bindgen(method)]
+    pub fn subarray(this: &Float16Array, begin: u32, end: u32) -> Float16Array;
+
+    /// The `slice()` method returns a shallow copy of a portion of a typed
+    /// array into a new typed array object.
+    #[wasm_bindgen(method)]
+    pub fn slice(this: &Float16Array, begin: u32, end: u32) -> Float16Array;
+
+    /// The `forEach()` method executes a provided function once per array
+    /// element, passing values as `f32`.
+    #[wasm_bindgen(method, js_name = forEach)]
+    pub fn for_each_as_f32(this: &Float16Array, callback: &mut dyn FnMut(f32, u32, Float16Array));
+
+    /// The `forEach()` method executes a provided function once per array
+    /// element, passing values as `f32`.
+    #[wasm_bindgen(method, js_name = forEach, catch)]
+    pub fn try_for_each_as_f32(
+        this: &Float16Array,
+        callback: &mut dyn FnMut(f32, u32, Float16Array) -> Result<(), JsError>,
+    ) -> Result<(), JsValue>;
+
+    /// The length accessor property represents the length (in elements) of a
+    /// typed array.
+    #[wasm_bindgen(method, getter)]
+    pub fn length(this: &Float16Array) -> u32;
+
+    /// The byteLength accessor property represents the length (in bytes) of a
+    /// typed array.
+    #[wasm_bindgen(method, getter, js_name = byteLength)]
+    pub fn byte_length(this: &Float16Array) -> u32;
+
+    /// The byteOffset accessor property represents the offset (in bytes) of a
+    /// typed array from the start of its `ArrayBuffer`.
+    #[wasm_bindgen(method, getter, js_name = byteOffset)]
+    pub fn byte_offset(this: &Float16Array) -> u32;
+
+    /// The `set()` method stores multiple values in the typed array, reading
+    /// input values from a specified array.
+    #[wasm_bindgen(method)]
+    pub fn set(this: &Float16Array, src: &JsValue, offset: u32);
+
+    /// Gets the value at `idx` as an `f32`, counting from the end if negative.
+    #[wasm_bindgen(method, js_name = at)]
+    pub fn at_as_f32(this: &Float16Array, idx: i32) -> Option<f32>;
+
+    /// The `copyWithin()` method shallow copies part of a typed array to another
+    /// location in the same typed array and returns it, without modifying its size.
+    ///
+    /// [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/copyWithin)
+    #[wasm_bindgen(method, js_name = copyWithin)]
+    pub fn copy_within(this: &Float16Array, target: i32, start: i32, end: i32) -> Float16Array;
+
+    /// Gets the value at `idx` as an `f32`, equivalent to JavaScript
+    /// `arr[idx]`.
+    #[wasm_bindgen(method, indexing_getter)]
+    pub fn get_index_as_f32(this: &Float16Array, idx: u32) -> f32;
+
+    /// Sets the value at `idx` from an `f32`, equivalent to JavaScript
+    /// `arr[idx] = value`.
+    #[wasm_bindgen(method, indexing_setter)]
+    pub fn set_index_from_f32(this: &Float16Array, idx: u32, value: f32);
+}
+
+impl Default for Float16Array {
+    fn default() -> Self {
+        Self::new(&JsValue::UNDEFINED.unchecked_into())
+    }
+}
+
+impl TypedArray for Float16Array {}
+
+impl Float16Array {
+    fn as_uint16_view(&self) -> Uint16Array {
+        let buffer = self.buffer();
+        Uint16Array::new_with_byte_offset_and_length(
+            buffer.as_ref(),
+            self.byte_offset(),
+            self.length(),
+        )
+    }
+
+    /// Creates an array from raw IEEE 754 binary16 bit patterns.
+    ///
+    /// This pairs naturally with the optional `half` crate:
+    ///
+    /// ```rust
+    /// use half::f16;
+    /// use js_sys::Float16Array;
+    ///
+    /// let values = [f16::from_f32(1.0), f16::from_f32(-2.0)];
+    /// let bits = values.map(f16::to_bits);
+    /// let array = Float16Array::new_from_u16_slice(&bits);
+    /// ```
+    pub fn new_from_u16_slice(slice: &[u16]) -> Float16Array {
+        let array = Float16Array::new_with_length(slice.len() as u32);
+        array.copy_from_u16_slice(slice);
+        array
+    }
+
+    /// Copy the raw IEEE 754 binary16 bit patterns from this JS typed array
+    /// into the destination Rust slice.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if this typed array's length is different than
+    /// the length of the provided `dst` array.
+    ///
+    /// Values copied into `dst` can be converted back into `half::f16` with
+    /// `half::f16::from_bits`.
+    pub fn copy_to_u16_slice(&self, dst: &mut [u16]) {
+        self.as_uint16_view().copy_to(dst);
+    }
+
+    /// Copy raw IEEE 754 binary16 bit patterns from the source Rust slice into
+    /// this JS typed array.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if this typed array's length is different than
+    /// the length of the provided `src` array.
+    ///
+    /// When using the optional `half` crate, populate `src` with
+    /// `half::f16::to_bits()`.
+    pub fn copy_from_u16_slice(&self, src: &[u16]) {
+        self.as_uint16_view().copy_from(src);
+    }
+
+    /// Efficiently copies the contents of this JS typed array into a new Vec of
+    /// raw IEEE 754 binary16 bit patterns.
+    ///
+    /// This makes it easy to round-trip through the optional `half` crate:
+    ///
+    /// ```rust
+    /// use half::f16;
+    ///
+    /// let bits = array.to_u16_vec();
+    /// let values: Vec<f16> = bits.into_iter().map(f16::from_bits).collect();
+    /// ```
+    pub fn to_u16_vec(&self) -> Vec<u16> {
+        self.as_uint16_view().to_vec()
     }
 }
 
@@ -13472,3 +13942,9 @@ arrays! {
     /// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigUint64Array
     BigUint64Array: u64,
 }
+
+/// Bridging between JavaScript `Promise`s and Rust `Future`s.
+///
+/// Enables `promise.await` directly on any [`Promise`].
+/// This module is also re-exported by `wasm-bindgen-futures` for backwards compatibility.
+pub mod futures;

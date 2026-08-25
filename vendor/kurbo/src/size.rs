@@ -7,7 +7,7 @@ use core::fmt;
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use crate::common::FloatExt;
-use crate::{Rect, RoundedRect, RoundedRectRadii, Vec2};
+use crate::{Axis, Rect, RoundedRect, RoundedRectRadii, Vec2};
 
 #[cfg(not(feature = "std"))]
 use crate::common::FloatFuncs;
@@ -45,7 +45,7 @@ impl Size {
     /// let size = Size::new(-10.5, 42.0);
     /// assert_eq!(size.max_side(), 42.0);
     /// ```
-    pub fn max_side(self) -> f64 {
+    pub const fn max_side(self) -> f64 {
         self.width.max(self.height)
     }
 
@@ -58,30 +58,21 @@ impl Size {
     /// let size = Size::new(-10.5, 42.0);
     /// assert_eq!(size.min_side(), -10.5);
     /// ```
-    pub fn min_side(self) -> f64 {
+    pub const fn min_side(self) -> f64 {
         self.width.min(self.height)
     }
 
     /// The area covered by this size.
     #[inline]
-    pub fn area(self) -> f64 {
+    pub const fn area(self) -> f64 {
         self.width * self.height
     }
 
     /// Whether this size has zero area.
     #[doc(alias = "is_empty")]
     #[inline]
-    pub fn is_zero_area(self) -> bool {
+    pub const fn is_zero_area(self) -> bool {
         self.area() == 0.0
-    }
-
-    /// Whether this size has zero area.
-    ///
-    /// Note: a size with negative area is not considered empty.
-    #[inline]
-    #[deprecated(since = "0.11.1", note = "use is_zero_area instead")]
-    pub fn is_empty(self) -> bool {
-        self.is_zero_area()
     }
 
     /// Returns the component-wise minimum of `self` and `other`.
@@ -96,7 +87,7 @@ impl Size {
     ///
     /// assert_eq!(this.min(other), Size::new(0., 10.));
     /// ```
-    pub fn min(self, other: Size) -> Self {
+    pub const fn min(self, other: Size) -> Self {
         Size {
             width: self.width.min(other.width),
             height: self.height.min(other.height),
@@ -115,7 +106,7 @@ impl Size {
     ///
     /// assert_eq!(this.max(other), Size::new(10., 100.));
     /// ```
-    pub fn max(self, other: Size) -> Self {
+    pub const fn max(self, other: Size) -> Self {
         Size {
             width: self.width.max(other.width),
             height: self.height.max(other.height),
@@ -134,7 +125,7 @@ impl Size {
     /// let max = Size::new(50., 50.);
     /// assert_eq!(this.clamp(min, max), Size::new(10., 50.))
     /// ```
-    pub fn clamp(self, min: Size, max: Size) -> Self {
+    pub const fn clamp(self, min: Size, max: Size) -> Self {
         self.max(min).min(max)
     }
 
@@ -254,11 +245,36 @@ impl Size {
         Size::new(self.width.trunc(), self.height.trunc())
     }
 
-    /// Returns the aspect ratio of a rectangle with the given size.
+    /// Returns the aspect ratio of a rectangle with this size.
     ///
-    /// If the width is `0`, the output will be `sign(self.height) * infinity`. If The width and
-    /// height are `0`, then the output will be `NaN`.
-    pub fn aspect_ratio(self) -> f64 {
+    /// The aspect ratio is the ratio of the width to the height.
+    ///
+    /// If the height is `0`, the output will be `sign(self.width) * infinity`. If the width and
+    /// height are both `0`, then the output will be `NaN`.
+    #[inline]
+    pub const fn aspect_ratio_width(self) -> f64 {
+        // ratio is determined by width / height
+        // https://en.wikipedia.org/wiki/Aspect_ratio_(image)
+        // https://en.wikipedia.org/wiki/Ratio
+        self.width / self.height
+    }
+
+    /// Returns **the inverse** of the aspect ratio of a rectangle with this size.
+    ///
+    /// Aspect ratios are usually defined as the ratio of the width to the height, but
+    /// this method incorrectly returns the ratio of height to width.
+    /// You should generally prefer [`aspect_ratio_width`](Self::aspect_ratio_width).
+    ///
+    /// If the width is `0`, the output will be `sign(self.height) * infinity`. If the width and
+    /// height are both `0`, then the output will be `NaN`.
+    #[deprecated(
+        note = "You should use `aspect_ratio_width` instead, as this method returns a potentially unexpected value.",
+        since = "0.12.0"
+    )]
+    #[inline]
+    // TODO: When we remove this, we should also work out what to do with aspect_ratio_width
+    // The tentatitive plan is to rename `aspect_ratio_width` back to this name
+    pub const fn aspect_ratio(self) -> f64 {
         self.height / self.width
     }
 
@@ -279,7 +295,7 @@ impl Size {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(self) -> bool {
+    pub const fn is_finite(self) -> bool {
         self.width.is_finite() && self.height.is_finite()
     }
 
@@ -287,8 +303,35 @@ impl Size {
     ///
     /// [NaN]: f64::is_nan
     #[inline]
-    pub fn is_nan(self) -> bool {
+    pub const fn is_nan(self) -> bool {
         self.width.is_nan() || self.height.is_nan()
+    }
+
+    /// Get the member matching the given axis.
+    #[inline]
+    pub const fn get_coord(self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.width,
+            Axis::Vertical => self.height,
+        }
+    }
+
+    /// Get a mutable reference to the member matching the given axis.
+    #[inline]
+    pub const fn get_coord_mut(&mut self, axis: Axis) -> &mut f64 {
+        match axis {
+            Axis::Horizontal => &mut self.width,
+            Axis::Vertical => &mut self.height,
+        }
+    }
+
+    /// Set the member matching the given axis to the given value.
+    #[inline]
+    pub const fn set_coord(&mut self, axis: Axis, value: f64) {
+        match axis {
+            Axis::Horizontal => self.width = value,
+            Axis::Vertical => self.height = value,
+        }
     }
 }
 
@@ -428,8 +471,22 @@ mod tests {
     }
 
     #[test]
+    #[expect(deprecated, reason = "Testing deprecated function.")]
     fn aspect_ratio() {
         let s = Size::new(1.0, 1.0);
         assert!((s.aspect_ratio() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn aspect_ratio_width() {
+        let s = Size::new(1.0, 1.0);
+        assert!((s.aspect_ratio_width() - 1.0).abs() < 1e-6);
+
+        // 3:2 film (mm)
+        let s = Size::new(36.0, 24.0);
+        assert!((s.aspect_ratio_width() - 1.5).abs() < 1e-6);
+        // 4k screen
+        let s = Size::new(3840.0, 2160.0);
+        assert!((s.aspect_ratio_width() - (16. / 9.)).abs() < 1e-6);
     }
 }

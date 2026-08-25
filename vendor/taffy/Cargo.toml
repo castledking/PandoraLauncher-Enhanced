@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.65"
+rust-version = "1.71"
 name = "taffy"
-version = "0.9.0"
+version = "0.12.2"
 authors = [
     "Alice Cecile <alice.i.cecile@gmail.com>",
     "Johnathan Kelley <jkelleyrtp@gmail.com>",
@@ -67,15 +67,22 @@ default = [
     "flexbox",
     "grid",
     "block_layout",
+    "float_layout",
     "calc",
     "content_size",
     "detailed_layout_info",
 ]
 detailed_layout_info = []
 flexbox = []
+float_layout = []
 grid = [
     "alloc",
     "dep:grid",
+]
+parse = ["dep:cssparser"]
+parse_faster = [
+    "parse",
+    "cssparser/fast_match_byte",
 ]
 profile = ["std"]
 serde = ["dep:serde"]
@@ -128,12 +135,17 @@ path = "examples/nested.rs"
 version = "0.7"
 default-features = false
 
+[dependencies.cssparser]
+version = "0.37.0"
+optional = true
+default-features = false
+
 [dependencies.document-features]
 version = "0.2.7"
 optional = true
 
 [dependencies.grid]
-version = "0.18.0"
+version = "1.0.0"
 optional = true
 default-features = false
 
@@ -147,6 +159,9 @@ default-features = false
 version = "1.0.6"
 optional = true
 default-features = false
+
+[dev-dependencies.roxmltree]
+version = "0.21.1"
 
 [dev-dependencies.serde_json]
 version = "1.0.93"

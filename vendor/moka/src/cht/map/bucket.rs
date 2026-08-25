@@ -1,5 +1,5 @@
 use std::{
-    hash::{BuildHasher, Hash},
+    hash::{BuildHasher, Hash, Hasher},
     mem::{self, MaybeUninit},
     ptr,
     sync::{
@@ -660,7 +660,10 @@ where
     K: ?Sized + Hash,
     H: BuildHasher,
 {
-    build_hasher.hash_one(key)
+    let mut hasher = build_hasher.build_hasher();
+    key.hash(&mut hasher);
+
+    hasher.finish()
 }
 
 pub(crate) enum InsertionResult<'g, K, V> {

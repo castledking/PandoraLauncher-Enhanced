@@ -4,6 +4,7 @@ pub(crate) mod ext;
     windows,
     target_os = "espidf",
     target_os = "horizon",
+    target_os = "redox",
     target_os = "vita"
 )))]
 pub(crate) mod msghdr;

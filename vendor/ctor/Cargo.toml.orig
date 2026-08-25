@@ -1,35 +1,42 @@
 [package]
 name = "ctor"
-version = "0.4.3"
-authors = ["Matt Mastracci <matthew@mastracci.com>"]
+version = "1.0.6"
+authors.workspace = true
 edition = "2021"
-description = "__attribute__((constructor)) for Rust"
-license = "Apache-2.0 OR MIT"
-repository = "https://github.com/mmastrac/rust-ctor"
-readme = "../README.md"
+description = "Global, no_std-compatible constructors for all platforms that run before main (like C/C++ __attribute__((constructor)))"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+categories = ["development-tools::build-utils", "no-std", "no-std::no-alloc", "embedded", "development-tools::procedural-macro-helpers"]
+rust-version = "1.60"
+
+exclude = ["tests"]
 
 [features]
-default = ["dtor", "proc_macro", "__no_warn_on_missing_unsafe"]
+default = ["std", "proc_macro", "priority"]
 
-# Enable the dtor re-export
-dtor = ["dep:dtor"]
+std = []
+
+# Enable support for the priority parameter
+priority = ["dep:link-section"]
 
 # Enable the proc_macro
-proc_macro = ["dep:ctor-proc-macro", "dtor?/proc_macro"]
+proc_macro = ["dep:linktime-proc-macro"]
 
-# For nightly users, used(linker) may be a better choice
-used_linker = ["dtor?/used_linker"]
-
-# As we are warning on missing unsafe, allow users to temporarily opt out
-__no_warn_on_missing_unsafe = ["dtor?/__no_warn_on_missing_unsafe"]
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(linktime_no_fail_on_missing_unsafe)',
+    'cfg(linktime_used_linker)',
+    'cfg(linktime_asan)'
+] }
 
 [dependencies]
-ctor-proc-macro = { version = "0.0.6", optional = true }
-dtor = { version = "0.0.6", default-features = false, optional = true }
+linktime-proc-macro = { workspace = true, optional = true, features = ["ctor"] }
+link-section = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
-libc-print = "0.1.20"
-
-[[example]]
-name = "example"
-path = "src/example.rs"
+libc-print = "0.3"
+macrotest = "1"
+trybuild = "1"
+walkdir = "2"
+tempfile = "3"

@@ -330,14 +330,6 @@ impl<'a> Metadata<'a> {
     pub fn is_span(&self) -> bool {
         self.kind.is_span()
     }
-
-    /// Generate a fake field that will never match a real field.
-    ///
-    /// Used via valueset to fill in for unknown fields.
-    #[doc(hidden)]
-    pub const fn private_fake_field(&self) -> field::Field {
-        self.fields.fake_field()
-    }
 }
 
 impl fmt::Debug for Metadata<'_> {

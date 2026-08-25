@@ -498,7 +498,6 @@ pub(crate) fn step_parameterized<T: ZeroTrieWithOptions + ?Sized>(
             } else {
                 get_branch(trie, i, x, w)
             };
-            #[allow(clippy::indexing_slicing)] // i is from a binary search
             Some(search[i])
         }
         Err(_) => {
@@ -593,7 +592,6 @@ pub(crate) fn probe_parameterized<T: ZeroTrieWithOptions + ?Sized>(
         get_branch(trie, index, x, w)
     };
     Some(AsciiProbeResult {
-        #[allow(clippy::indexing_slicing)] // index < x, the length of search
         byte: search[index],
         total_siblings,
     })
@@ -620,8 +618,6 @@ pub(crate) fn take_value(trie: &mut &[u8]) -> Option<usize> {
 use alloc::vec::Vec;
 
 /// Iterator type for walking the byte sequences contained in a ZeroTrie.
-///
-/// ✨ *Enabled with the `alloc` Cargo feature.*
 #[cfg(feature = "alloc")]
 #[derive(Debug)]
 pub struct ZeroTrieIterator<'a> {
@@ -719,12 +715,12 @@ pub(crate) fn get_iter_phf<S: AsRef<[u8]> + ?Sized>(store: &S) -> ZeroTrieIterat
 /// # Panics
 /// Panics if the trie contains non-ASCII items.
 #[cfg(feature = "alloc")]
-#[expect(clippy::type_complexity)]
+#[allow(clippy::type_complexity)]
 pub(crate) fn get_iter_ascii_or_panic<S: AsRef<[u8]> + ?Sized>(
     store: &S,
 ) -> core::iter::Map<ZeroTrieIterator<'_>, fn((Vec<u8>, usize)) -> (String, usize)> {
     ZeroTrieIterator::new(store, false).map(|(k, v)| {
-        #[expect(clippy::unwrap_used)] // in signature of function
+        #[allow(clippy::unwrap_used)] // in signature of function
         let ascii_str = String::from_utf8(k).unwrap();
         (ascii_str, v)
     })

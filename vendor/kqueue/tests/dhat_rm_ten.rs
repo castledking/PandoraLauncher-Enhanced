@@ -35,9 +35,9 @@ fn test_rm_ten() {
     drop(w);
 
     let stats = dhat::HeapStats::get();
-    dhat::assert_eq!(stats.total_blocks, 29);
-    dhat::assert_eq!(stats.total_bytes, 5710);
+    dhat::assert_eq!(stats.total_bytes, 2896);
+    dhat::assert_eq!(stats.total_blocks, 24);
 
-    dhat::assert_eq!(stats.curr_blocks, 0);
     dhat::assert_eq!(stats.curr_bytes, 0);
+    dhat::assert_eq!(stats.curr_blocks, 0);
 }

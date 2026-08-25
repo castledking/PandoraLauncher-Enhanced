@@ -106,9 +106,6 @@ pub unsafe fn io_uring_setup(entries: u32, params: &mut io_uring_params) -> io::
 /// responsible for ensuring that memory and resources are only accessed in
 /// valid ways.
 ///
-/// If `opcode` is `IoringRegisterOp::RegisterRingFds`, `arg` must point to
-/// mutable memory, despite being `*const`.
-///
 /// # References
 ///  - [Linux]
 ///
@@ -131,9 +128,6 @@ pub unsafe fn io_uring_register<Fd: AsFd>(
 /// io_uring operates on raw pointers and raw file descriptors. Users are
 /// responsible for ensuring that memory and resources are only accessed in
 /// valid ways.
-///
-/// If `opcode` is `IoringRegisterOp::RegisterRingFds`, `arg` must point to
-/// mutable memory, despite being `*const`.
 ///
 /// # References
 ///  - [Linux]

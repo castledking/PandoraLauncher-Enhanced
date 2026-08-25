@@ -5,7 +5,10 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = GPUShaderModuleCompilationHint)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "GPUShaderModuleCompilationHint"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `GpuShaderModuleCompilationHint` dictionary."]
     #[doc = ""]
@@ -33,9 +36,10 @@ extern "C" {
     #[wasm_bindgen(method, setter = "entryPoint")]
     pub fn set_entry_point(this: &GpuShaderModuleCompilationHint, val: &str);
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "GpuPipelineLayout")]
     #[doc = "Get the `layout` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuShaderModuleCompilationHint`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuPipelineLayout`, `GpuShaderModuleCompilationHint`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -45,7 +49,7 @@ extern "C" {
     #[cfg(feature = "GpuPipelineLayout")]
     #[doc = "Change the `layout` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuShaderModuleCompilationHint`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuPipelineLayout`, `GpuShaderModuleCompilationHint`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -55,7 +59,7 @@ extern "C" {
     #[cfg(feature = "GpuAutoLayoutMode")]
     #[doc = "Change the `layout` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuShaderModuleCompilationHint`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuAutoLayoutMode`, `GpuShaderModuleCompilationHint`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -86,6 +90,7 @@ impl GpuShaderModuleCompilationHint {
         self
     }
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "GpuPipelineLayout")]
     #[deprecated = "Use `set_layout()` instead."]
     pub fn layout(&mut self, val: &GpuPipelineLayout) -> &mut Self {
         self.set_layout(val);

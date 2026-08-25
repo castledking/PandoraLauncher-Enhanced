@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [3.20.0] - 2026-05-10
+
+No changes.
+
+## [3.19.0] - 2026-05-02
+
+No changes.
+
+## [3.18.0] - 2026-03-13
+
+### Changed
+
+* Bump MSRV to 1.88 due to the `darling` dependency
+
 ## [3.17.0] - 2026-02-24
 
 ### Fixed

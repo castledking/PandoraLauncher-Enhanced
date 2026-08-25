@@ -332,8 +332,8 @@ struct ShortRange {
 impl From<Range<usize>> for ShortRange {
     #[inline]
     fn from(range: Range<usize>) -> Self {
-        debug_assert!(range.start <= core::u32::MAX as usize);
-        debug_assert!(range.end <= core::u32::MAX as usize);
+        debug_assert!(range.start <= u32::MAX as usize);
+        debug_assert!(range.end <= u32::MAX as usize);
         ShortRange::new(range.start as u32, range.end as u32)
     }
 }
@@ -365,7 +365,7 @@ impl NodeId {
     /// Construct a new `NodeId` from a `u32`.
     #[inline]
     pub fn new(id: u32) -> Self {
-        debug_assert!(id < core::u32::MAX);
+        debug_assert!(id < u32::MAX);
 
         // We are using `NonZeroU32` to reduce overhead of `Option<NodeId>`.
         NodeId(NonZeroU32::new(id + 1).unwrap())
@@ -395,7 +395,7 @@ impl From<usize> for NodeId {
     #[inline]
     fn from(id: usize) -> Self {
         // We already checked that `id` is limited by u32::MAX.
-        debug_assert!(id <= core::u32::MAX as usize);
+        debug_assert!(id <= u32::MAX as usize);
         NodeId::new(id as u32)
     }
 }
@@ -450,8 +450,8 @@ pub enum StringStorage<'input> {
 }
 
 impl StringStorage<'_> {
-    /// Creates a new owned string from `&str` or `String`.
-    pub fn new_owned<T: Into<OwnedSharedString>>(s: T) -> Self {
+    /// Creates a new owned string copied from a `&str`.
+    pub fn new_owned(s: &str) -> Self {
         StringStorage::Owned(s.into())
     }
 
@@ -725,7 +725,7 @@ impl<'input> Namespaces<'input> {
         }) {
             Ok(sorted_idx) => self.sorted_order[sorted_idx],
             Err(sorted_idx) => {
-                if self.values.len() > core::u16::MAX as usize {
+                if self.values.len() > u16::MAX as usize {
                     return Err(Error::NamespacesLimitReached);
                 }
                 let idx = NamespaceIdx(self.values.len() as u16);
@@ -756,7 +756,8 @@ impl<'input> Namespaces<'input> {
     fn shrink_to_fit(&mut self) {
         self.values.shrink_to_fit();
         self.tree_order.shrink_to_fit();
-        self.sorted_order.shrink_to_fit();
+        // Only needed to deduplicate namespaces during parsing.
+        self.sorted_order = Vec::new();
     }
 
     #[inline]
@@ -1124,10 +1125,7 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
     where
         N: Into<ExpandedName<'n, 'm>>,
     {
-        let name = name.into();
-        self.attributes()
-            .find(|a| a.data.name.as_expanded_name(self.doc) == name)
-            .map(|a| a.value())
+        self.attribute_node(name).map(|a| a.value())
     }
 
     /// Returns element's attribute object.
@@ -1140,8 +1138,11 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
         N: Into<ExpandedName<'n, 'm>>,
     {
         let name = name.into();
-        self.attributes()
-            .find(|a| a.data.name.as_expanded_name(self.doc) == name)
+
+        match name.namespace() {
+            Some(_) => self.attributes().find(|a| a.data.name.as_expanded_name(self.doc) == name),
+            None => self.attributes().find(|a| a.data.name.local_name == name.name),
+        }
     }
 
     /// Checks that element has a specified attribute.
@@ -1163,9 +1164,7 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
     where
         N: Into<ExpandedName<'n, 'm>>,
     {
-        let name = name.into();
-        self.attributes()
-            .any(|a| a.data.name.as_expanded_name(self.doc) == name)
+        self.attribute_node(name).is_some()
     }
 
     /// Returns element's attributes.
@@ -1373,7 +1372,7 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
 
     /// Returns the last element child of this node.
     pub fn last_element_child(&self) -> Option<Self> {
-        self.children().filter(|n| n.is_element()).last()
+        self.children().filter(|n| n.is_element()).next_back()
     }
 
     /// Returns true if this node has siblings.

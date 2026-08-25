@@ -99,6 +99,7 @@ macro_rules! attrgen {
             (no_deref, false, NoDeref(Span)),
             (no_upcast, false, NoUpcast(Span)),
             (no_promising, false, NoPromising(Span)),
+            (no_into_js_generic, false, NoIntoJsGeneric(Span)),
             (vendor_prefix, false, VendorPrefix(Span, Ident)),
             (variadic, false, Variadic(Span)),
             (typescript_custom_section, false, TypescriptCustomSection(Span)),
@@ -119,6 +120,7 @@ macro_rules! attrgen {
             (unchecked_return_type, true, ReturnType(Span, String, Span)),
             (return_description, true, ReturnDesc(Span, String, Span)),
             (unchecked_param_type, true, ParamType(Span, String, Span)),
+            (unchecked_optional_param_type, true, OptionalParamType(Span, String, Span)),
             (param_description, true, ParamDesc(Span, String, Span)),
 
             // For testing purposes only.
@@ -344,7 +346,17 @@ impl Parse for BindgenAttr {
 
             (@parser $variant:ident(Span, Ident)) => ({
                 input.parse::<Token![=]>()?;
-                let ident = input.parse::<AnyIdent>()?.0;
+                // Accept either a bare ident or a string literal containing one.
+                // The string-literal form lets `rustfmt` format the surrounding
+                // attribute, since rustfmt only handles `name = <literal>` arms.
+                let ident = if input.peek(syn::LitStr) {
+                    let litstr = input.parse::<syn::LitStr>()?;
+                    syn::parse_str::<Ident>(&litstr.value()).map_err(|e| {
+                        syn::Error::new(litstr.span(), format!("expected an identifier: {e}"))
+                    })?
+                } else {
+                    input.parse::<AnyIdent>()?.0
+                };
                 return Ok(BindgenAttr::$variant(attr_span, ident))
             });
 
@@ -364,7 +376,18 @@ impl Parse for BindgenAttr {
 
             (@parser $variant:ident(Span, syn::Path)) => ({
                 input.parse::<Token![=]>()?;
-                return Ok(BindgenAttr::$variant(attr_span, input.parse()?));
+                // Accept either a bare path or a string literal containing one.
+                // The string-literal form lets `rustfmt` format the surrounding
+                // attribute, since rustfmt only handles `name = <literal>` arms.
+                let path = if input.peek(syn::LitStr) {
+                    let litstr = input.parse::<syn::LitStr>()?;
+                    syn::parse_str::<syn::Path>(&litstr.value()).map_err(|e| {
+                        syn::Error::new(litstr.span(), format!("expected a path: {e}"))
+                    })?
+                } else {
+                    input.parse()?
+                };
+                return Ok(BindgenAttr::$variant(attr_span, path));
             });
 
             (@parser $variant:ident(Span, syn::Expr)) => ({
@@ -494,6 +517,8 @@ impl ConvertToAst<&ast::Program> for &mut syn::ItemStruct {
 
         let is_inspectable = attrs.inspectable().is_some();
         let getter_with_clone = attrs.getter_with_clone();
+        let js_namespace = attrs.js_namespace().map(|(ns, _)| ns.0);
+        let qualified_name = wasm_bindgen_shared::qualified_name(js_namespace.as_deref(), &js_name);
         for (i, field) in self.fields.iter_mut().enumerate() {
             match field.vis {
                 syn::Visibility::Public(..) => {}
@@ -516,8 +541,8 @@ impl ConvertToAst<&ast::Program> for &mut syn::ItemStruct {
             };
 
             let comments = extract_doc_comments(&field.attrs);
-            let getter = wasm_bindgen_shared::struct_field_get(&js_name, &js_field_name);
-            let setter = wasm_bindgen_shared::struct_field_set(&js_name, &js_field_name);
+            let getter = wasm_bindgen_shared::struct_field_get(&qualified_name, &js_field_name);
+            let setter = wasm_bindgen_shared::struct_field_set(&qualified_name, &js_field_name);
 
             fields.push(ast::StructField {
                 rust_name: member,
@@ -538,11 +563,11 @@ impl ConvertToAst<&ast::Program> for &mut syn::ItemStruct {
         let generate_typescript = attrs.skip_typescript().is_none();
         let private = attrs.private().is_some();
         let comments: Vec<String> = extract_doc_comments(&self.attrs);
-        let js_namespace = attrs.js_namespace().map(|(ns, _)| ns.0);
         attrs.check_used();
         Ok(ast::Struct {
             rust_name: self.ident.clone(),
             js_name,
+            qualified_name,
             fields,
             comments,
             is_inspectable,
@@ -794,6 +819,7 @@ impl<'a> ConvertToAst<(&ast::Program, BindgenAttrs, &'a Option<ast::ImportModule
             doc_comment,
             wasm_bindgen: program.wasm_bindgen.clone(),
             wasm_bindgen_futures: program.wasm_bindgen_futures.clone(),
+            js_sys: program.js_sys.clone(),
             generics: self.sig.generics,
         });
         opts.check_used();
@@ -825,6 +851,7 @@ impl ConvertToAst<(&ast::Program, BindgenAttrs)> for syn::ForeignItemType {
         let no_deref = attrs.no_deref().is_some();
         let no_upcast = attrs.no_upcast().is_some();
         let no_promising = attrs.no_promising().is_some();
+        let no_into_js_generic = attrs.no_into_js_generic().is_some();
         for (used, attr) in attrs.attrs.iter() {
             match attr {
                 BindgenAttr::Extends(_, e) => {
@@ -867,6 +894,7 @@ impl ConvertToAst<(&ast::Program, BindgenAttrs)> for syn::ForeignItemType {
             no_deref,
             no_upcast,
             no_promising,
+            no_into_js_generic,
             wasm_bindgen: program.wasm_bindgen.clone(),
             generics: generics.unwrap_or(self.generics),
         }))
@@ -1226,6 +1254,7 @@ fn function_from_decl(
                     pat_type,
                     js_name: attrs.js_name,
                     js_type: attrs.js_type,
+                    optional: attrs.optional,
                     desc: attrs.desc,
                 })
                 .collect(),
@@ -1239,15 +1268,83 @@ fn function_from_decl(
 struct FnArgAttrs {
     js_name: Option<String>,
     js_type: Option<String>,
+    optional: bool,
     desc: Option<String>,
 }
 
 /// Extracts function arguments attributes
 fn extract_args_attrs(sig: &mut syn::Signature) -> Result<Vec<FnArgAttrs>, Diagnostic> {
     let mut args_attrs = vec![];
+    let mut seen_optional: Option<Span> = None;
     for input in sig.inputs.iter_mut() {
         if let syn::FnArg::Typed(pat_type) = input {
             let attrs = BindgenAttrs::find(&mut pat_type.attrs)?;
+
+            // Check for mutually exclusive param type attributes
+            let param_type = attrs.unchecked_param_type();
+            let optional_param_type = attrs.unchecked_optional_param_type();
+
+            if param_type.is_some() && optional_param_type.is_some() {
+                // Find the positions and spans of both attributes in the attrs list
+                let mut param_pos_and_span: Option<(usize, Span)> = None;
+                let mut optional_pos_and_span: Option<(usize, Span)> = None;
+                for (pos, (_, attr)) in attrs.attrs.iter().enumerate() {
+                    match attr {
+                        BindgenAttr::ParamType(span, _, _) => {
+                            param_pos_and_span = Some((pos, *span));
+                        }
+                        BindgenAttr::OptionalParamType(span, _, _) => {
+                            optional_pos_and_span = Some((pos, *span));
+                        }
+                        _ => {}
+                    }
+                }
+                // Report error at the position of the attribute that appears later
+                let error_span = match (param_pos_and_span, optional_pos_and_span) {
+                    (Some((p_pos, p_span)), Some((o_pos, o_span))) => {
+                        if p_pos > o_pos {
+                            p_span
+                        } else {
+                            o_span
+                        }
+                    }
+                    (Some((_, p_span)), None) => p_span,
+                    (None, Some((_, o_span))) => o_span,
+                    (None, None) => unreachable!(
+                        "both param_type and optional_param_type are Some, but attrs not found"
+                    ),
+                };
+                return Err(Diagnostic::span_error(
+                    error_span,
+                    "cannot use both `unchecked_param_type` and `unchecked_optional_param_type` on the same parameter",
+                ));
+            }
+
+            // Determine the type and whether it's optional
+            let js_type = param_type
+                .or(optional_param_type)
+                .map_or::<Result<_, Diagnostic>, _>(Ok(None), |(ty, span)| {
+                    check_invalid_type(ty, span)?;
+                    Ok(Some(ty.to_string()))
+                })?;
+
+            let is_optional = optional_param_type.is_some();
+
+            // Check that a non-optional param doesn't follow an optional one
+            if let Some(optional_span) = seen_optional {
+                if !is_optional {
+                    return Err(Diagnostic::span_error(
+                        optional_span,
+                        "a required parameter cannot follow an optional parameter",
+                    ));
+                }
+            }
+            if is_optional {
+                if let Some((_, span)) = optional_param_type {
+                    seen_optional = Some(span);
+                }
+            }
+
             let arg_attrs = FnArgAttrs {
                 js_name: attrs
                     .js_name()
@@ -1257,12 +1354,8 @@ fn extract_args_attrs(sig: &mut syn::Signature) -> Result<Vec<FnArgAttrs>, Diagn
                         }
                         Ok(Some(js_name_override.to_string()))
                     })?,
-                js_type: attrs
-                    .unchecked_param_type()
-                    .map_or::<Result<_, Diagnostic>, _>(Ok(None), |(ty, span)| {
-                        check_invalid_type(ty, span)?;
-                        Ok(Some(ty.to_string()))
-                    })?,
+                js_type,
+                optional: is_optional,
                 desc: attrs
                     .param_description()
                     .map_or::<Result<_, Diagnostic>, _>(Ok(None), |(description, span)| {
@@ -1339,7 +1432,15 @@ impl<'a> MacroParse<(Option<BindgenAttrs>, &'a mut TokenStream)> for syn::Item {
                     kind: operation_kind(&opts),
                 });
                 let rust_name = f.sig.ident.clone();
-                let start = opts.start().is_some();
+                let start = if opts.start().is_some() {
+                    if opts.private().is_some() {
+                        ast::StartKind::Private
+                    } else {
+                        ast::StartKind::Public
+                    }
+                } else {
+                    ast::StartKind::None
+                };
 
                 if opts.this().is_some() && f.sig.inputs.is_empty() {
                     bail_span!(
@@ -1361,6 +1462,7 @@ impl<'a> MacroParse<(Option<BindgenAttrs>, &'a mut TokenStream)> for syn::Item {
                     start,
                     wasm_bindgen: program.wasm_bindgen.clone(),
                     wasm_bindgen_futures: program.wasm_bindgen_futures.clone(),
+                    js_sys: program.js_sys.clone(),
                 });
             }
             syn::Item::Impl(mut i) => {
@@ -1493,13 +1595,14 @@ fn prepare_for_impl_recursion(
 
     let wasm_bindgen = &program.wasm_bindgen;
     let wasm_bindgen_futures = &program.wasm_bindgen_futures;
+    let js_sys = &program.js_sys;
     method.attrs.insert(
         0,
         syn::Attribute {
             pound_token: Default::default(),
             style: syn::AttrStyle::Outer,
             bracket_token: Default::default(),
-            meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker(#class = #js_class, wasm_bindgen = #wasm_bindgen, wasm_bindgen_futures = #wasm_bindgen_futures) },
+            meta: syn::parse_quote! { #wasm_bindgen::prelude::__wasm_bindgen_class_marker(#class = #js_class, wasm_bindgen = #wasm_bindgen, wasm_bindgen_futures = #wasm_bindgen_futures, js_sys = #js_sys) },
         },
     );
 
@@ -1515,10 +1618,12 @@ impl MacroParse<&ClassMarker> for &mut syn::ImplItemFn {
             js_class,
             wasm_bindgen,
             wasm_bindgen_futures,
+            js_sys,
         }: &ClassMarker,
     ) -> Result<(), Diagnostic> {
         program.wasm_bindgen = wasm_bindgen.clone();
         program.wasm_bindgen_futures = wasm_bindgen_futures.clone();
+        program.js_sys = js_sys.clone();
 
         match self.vis {
             syn::Visibility::Public(_) => {}
@@ -1581,9 +1686,10 @@ impl MacroParse<&ClassMarker> for &mut syn::ImplItemFn {
             method_self,
             rust_class: Some(class.clone()),
             rust_name: self.sig.ident.clone(),
-            start: false,
+            start: ast::StartKind::None,
             wasm_bindgen: program.wasm_bindgen.clone(),
             wasm_bindgen_futures: program.wasm_bindgen_futures.clone(),
+            js_sys: program.js_sys.clone(),
         });
         opts.check_used();
         Ok(())
@@ -2363,12 +2469,18 @@ fn main(program: &ast::Program, mut f: ItemFn, tokens: &mut TokenStream) -> Resu
 
     let wasm_bindgen = &program.wasm_bindgen;
     let wasm_bindgen_futures = &program.wasm_bindgen_futures;
+    let js_sys = &program.js_sys;
+    let futures = if ast::use_js_sys_futures() {
+        quote::quote! { #js_sys::futures }
+    } else {
+        quote::quote! { #wasm_bindgen_futures }
+    };
 
     if f.sig.asyncness.take().is_some() {
         *f.block = syn::parse2(quote::quote! {
                 {
                     async fn __wasm_bindgen_generated_main() #r#return #body
-                    #wasm_bindgen_futures::spawn_local(
+                    #futures::spawn_local(
                         async move {
                             use #wasm_bindgen::__rt::Main;
                             let __ret = __wasm_bindgen_generated_main();

@@ -9,7 +9,7 @@
 # those terms.
 
 set -eo pipefail
-files=$(find . -iname '*.rs' -type f -not -path './target/*' -not -iname '*.expected.rs' -not -path './vendor/*' -not -path './tools/vendor/*')
+files=$(find . -iname '*.rs' -type f -not -path './target/*')
 # check that find succeeded
 if [[ -z $files ]]
 then

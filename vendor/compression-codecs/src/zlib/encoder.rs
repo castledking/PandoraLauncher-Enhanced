@@ -1,5 +1,5 @@
-use crate::{flate::params::FlateEncoderParams, EncodeV2, FlateEncoder};
-use compression_core::util::{PartialBuffer, WriteBuffer};
+use crate::{flate::params::FlateEncoderParams, Encode, FlateEncoder};
+use compression_core::util::PartialBuffer;
 use std::io::Result;
 
 #[derive(Debug)]
@@ -19,20 +19,26 @@ impl ZlibEncoder {
     }
 }
 
-impl EncodeV2 for ZlibEncoder {
+impl Encode for ZlibEncoder {
     fn encode(
         &mut self,
-        input: &mut PartialBuffer<&[u8]>,
-        output: &mut WriteBuffer<'_>,
+        input: &mut PartialBuffer<impl AsRef<[u8]>>,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
     ) -> Result<()> {
         self.inner.encode(input, output)
     }
 
-    fn flush(&mut self, output: &mut WriteBuffer<'_>) -> Result<bool> {
+    fn flush(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> Result<bool> {
         self.inner.flush(output)
     }
 
-    fn finish(&mut self, output: &mut WriteBuffer<'_>) -> Result<bool> {
+    fn finish(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> Result<bool> {
         self.inner.finish(output)
     }
 }

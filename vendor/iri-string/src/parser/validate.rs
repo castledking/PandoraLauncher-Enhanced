@@ -8,10 +8,11 @@ use crate::parser::str::{
     find_split, find_split2_hole, find_split_hole, satisfy_chars_with_pct_encoded,
 };
 use crate::spec::Spec;
-use crate::validate::{Error, ErrorKind};
+use crate::validate::Error;
 
-pub(crate) use self::authority::{validate_authority, validate_host, validate_userinfo};
-pub(crate) use self::path::{validate_path, validate_path_segment};
+use self::authority::validate_authority;
+pub(crate) use self::authority::{validate_host, validate_userinfo};
+pub(crate) use self::path::validate_path;
 use self::path::{
     validate_path_abempty, validate_path_absolute_authority_absent,
     validate_path_relative_authority_absent,
@@ -19,16 +20,16 @@ use self::path::{
 
 /// Returns `Ok(_)` if the string matches `scheme`.
 pub(crate) fn validate_scheme(i: &str) -> Result<(), Error> {
+    debug_assert!(!i.is_empty());
     let bytes = i.as_bytes();
-    if !i.is_empty()
-        && bytes[0].is_ascii_alphabetic()
+    if bytes[0].is_ascii_alphabetic()
         && bytes[1..]
             .iter()
             .all(|&b| b.is_ascii() && char::is_ascii_scheme_continue(b))
     {
         Ok(())
     } else {
-        Err(Error::with_kind(ErrorKind::InvalidScheme))
+        Err(Error::new())
     }
 }
 
@@ -39,7 +40,7 @@ pub(crate) fn validate_query<S: Spec>(i: &str) -> Result<(), Error> {
     if is_valid {
         Ok(())
     } else {
-        Err(Error::with_kind(ErrorKind::InvalidQuery))
+        Err(Error::new())
     }
 }
 
@@ -115,9 +116,10 @@ fn validate_uri_reference_common<S: Spec>(
             if ref_rule.is_relative_allowed() {
                 return validate_relative_ref::<S>(i);
             } else {
-                return Err(Error::with_kind(ErrorKind::UnexpectedRelative));
+                return Err(Error::new());
             }
         }
+        Some(("", _)) => return Err(Error::new()),
         Some((maybe_scheme, rest)) => {
             if validate_scheme(maybe_scheme).is_err() {
                 // The string before the first colon is not a scheme.
@@ -125,7 +127,7 @@ fn validate_uri_reference_common<S: Spec>(
                 if ref_rule.is_relative_allowed() {
                     return validate_relative_ref::<S>(i);
                 } else {
-                    return Err(Error::with_kind(ErrorKind::InvalidScheme));
+                    return Err(Error::new());
                 }
             }
             (rest, maybe_scheme)
@@ -203,7 +205,7 @@ fn validate_after_path<S: Spec>(first: u8, rest: &str, accept_fragment: bool) ->
     };
     validate_query::<S>(maybe_query)?;
     if !accept_fragment && !maybe_fragment.is_empty() {
-        return Err(Error::with_kind(ErrorKind::UnexpectedFragment));
+        return Err(Error::new());
     }
     validate_fragment::<S>(maybe_fragment)
 }
@@ -218,6 +220,6 @@ pub(crate) fn validate_fragment<S: Spec>(i: &str) -> Result<(), Error> {
     if is_valid {
         Ok(())
     } else {
-        Err(Error::with_kind(ErrorKind::InvalidFragment))
+        Err(Error::new())
     }
 }

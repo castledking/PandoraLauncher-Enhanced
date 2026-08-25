@@ -13,7 +13,7 @@ detailed description of the atomic and synchronize instructions in this architec
 https://github.com/taiki-e/atomic-maybe-uninit/blob/HEAD/src/arch/README.md#s390x
 
 LLVM's minimal supported architecture level is arch8 (z10):
-https://github.com/llvm/llvm-project/blob/llvmorg-22.1.0-rc1/llvm/lib/Target/SystemZ/SystemZProcessors.td#L16-L17
+https://github.com/llvm/llvm-project/blob/llvmorg-20.1.0/llvm/lib/Target/SystemZ/SystemZProcessors.td#L16-L17
 This does not appear to have changed since the current s390x backend was added in LLVM 3.3:
 https://github.com/llvm/llvm-project/commit/5f613dfd1f7edb0ae95d521b7107b582d9df5103#diff-cbaef692b3958312e80fd5507a7e2aff071f1acb086f10e8a96bc06a7bb289db
 
@@ -21,12 +21,16 @@ Note: On Miri and ThreadSanitizer which do not support inline assembly, we don't
 this module and use intrinsics.rs instead.
 
 Refs:
-- z/Architecture Principles of Operation, Fifteenth Edition (SA22-7832-14)
-  https://www.ibm.com/docs/en/module_1678991624569/pdf/SA22-7832-14.pdf
+- z/Architecture Principles of Operation, Fourteenth Edition (SA22-7832-13)
+  https://publibfp.dhe.ibm.com/epubs/pdf/a227832d.pdf
 - atomic-maybe-uninit
   https://github.com/taiki-e/atomic-maybe-uninit
 
-See tests/asm-test/asm/portable-atomic for generated assembly.
+Generated asm:
+- s390x https://godbolt.org/z/oPxYYEvPG
+- s390x (z196) https://godbolt.org/z/M69KrKT7Y
+- s390x (z15,-vector) https://godbolt.org/z/Wec8b3ada
+- s390x (z15) https://godbolt.org/z/KxWcrbfYh
 */
 
 include!("macros.rs");

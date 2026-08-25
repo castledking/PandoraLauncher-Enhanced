@@ -33,14 +33,7 @@ use linux_raw_sys::general::{F_DUPFD_CLOEXEC, F_GETFD, F_SETFD};
 
 #[inline]
 pub(crate) unsafe fn read(fd: BorrowedFd<'_>, buf: (*mut u8, usize)) -> io::Result<usize> {
-    let r = ret_usize(syscall!(__NR_read, fd, buf.0, pass_usize(buf.1)));
-
-    #[cfg(sanitize_memory)]
-    if let Ok(len) = r {
-        crate::msan::unpoison(buf.0, len);
-    }
-
-    r
+    ret_usize(syscall!(__NR_read, fd, buf.0, pass_usize(buf.1)))
 }
 
 #[inline]
@@ -59,16 +52,17 @@ pub(crate) unsafe fn pread(
             target_arch = "powerpc"
         ),
     ))]
-    let r = ret_usize(syscall!(
-        __NR_pread64,
-        fd,
-        buf.0,
-        pass_usize(buf.1),
-        zero(),
-        hi(pos),
-        lo(pos)
-    ));
-
+    {
+        ret_usize(syscall!(
+            __NR_pread64,
+            fd,
+            buf.0,
+            pass_usize(buf.1),
+            zero(),
+            hi(pos),
+            lo(pos)
+        ))
+    }
     #[cfg(all(
         target_pointer_width = "32",
         not(any(
@@ -78,30 +72,24 @@ pub(crate) unsafe fn pread(
             target_arch = "powerpc"
         )),
     ))]
-    let r = ret_usize(syscall!(
-        __NR_pread64,
-        fd,
-        buf.0,
-        pass_usize(buf.1),
-        hi(pos),
-        lo(pos)
-    ));
-
+    {
+        ret_usize(syscall!(
+            __NR_pread64,
+            fd,
+            buf.0,
+            pass_usize(buf.1),
+            hi(pos),
+            lo(pos)
+        ))
+    }
     #[cfg(target_pointer_width = "64")]
-    let r = ret_usize(syscall!(
+    ret_usize(syscall!(
         __NR_pread64,
         fd,
         buf.0,
         pass_usize(buf.1),
         loff_t_from_u64(pos)
-    ));
-
-    #[cfg(sanitize_memory)]
-    if let Ok(len) = r {
-        crate::msan::unpoison(buf.0, len);
-    }
-
-    r
+    ))
 }
 
 #[inline]

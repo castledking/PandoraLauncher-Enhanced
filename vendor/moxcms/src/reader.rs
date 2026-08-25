@@ -53,12 +53,12 @@ pub(crate) const fn s15_fixed16_number_to_double(a: i32) -> f64 {
 
 #[inline]
 pub(crate) const fn uint16_number_to_float(a: u32) -> f32 {
-    a as f32 / 65536.
+    a as f32 / 65535.
 }
 
 #[inline]
 pub(crate) const fn uint16_number_to_float_fast(a: u32) -> f32 {
-    a as f32 * (1. / 65536.)
+    a as f32 * (1. / 65535.)
 }
 
 // #[inline]
@@ -79,8 +79,33 @@ fn utf16be_to_utf16(slice: &[u8]) -> Result<Vec<u16>, CmsError> {
     Ok(vec)
 }
 
+/// Parse the Unicode section of a desc tag at `unicode_offset` (the byte
+/// offset right after the ASCII data). Returns `(language_code, string)`,
+/// or `Ok(None)` if truncated or the Unicode length is zero.
+fn read_desc_unicode(tag: &[u8], unicode_offset: usize) -> Result<Option<(u32, String)>, CmsError> {
+    if tag.len() < unicode_offset.safe_add(8)? {
+        return Ok(None);
+    }
+    let header = &tag[unicode_offset..unicode_offset.safe_add(8)?];
+    let language_code = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+    let unicode_length = u32::from_be_bytes([header[4], header[5], header[6], header[7]]) as usize;
+    if unicode_length == 0 {
+        return Ok(Some((language_code, String::new())));
+    }
+    let byte_length = unicode_length.safe_mul(2)?;
+    let str_start = unicode_offset.safe_add(8)?;
+    if tag.len() < str_start.safe_add(byte_length)? {
+        return Ok(None);
+    }
+    let uc_data = &tag[str_start..str_start.safe_add(byte_length)?];
+    let wc = utf16be_to_utf16(uc_data)?;
+    let s = String::from_utf16_lossy(&wc)
+        .trim_end_matches('\0')
+        .to_string();
+    Ok(Some((language_code, s)))
+}
+
 impl ColorProfile {
-    #[inline]
     pub(crate) fn read_lut_type(
         slice: &[u8],
         entry: usize,
@@ -99,7 +124,6 @@ impl ColorProfile {
         LutType::try_from(tag_type)
     }
 
-    #[inline]
     pub(crate) fn read_viewing_conditions(
         slice: &[u8],
         entry: usize,
@@ -171,8 +195,10 @@ impl ColorProfile {
         // Ignore unknown
         if tag_type == TagTypeDefinition::Text {
             let sliced_from_to_end = &tag[8..tag.len()];
-            let str = String::from_utf8_lossy(sliced_from_to_end);
-            return Ok(Some(ProfileText::PlainString(str.to_string())));
+            let str = String::from_utf8_lossy(sliced_from_to_end)
+                .trim_end_matches('\0')
+                .to_string();
+            return Ok(Some(ProfileText::PlainString(str)));
         } else if tag_type == TagTypeDefinition::MultiLocalizedUnicode {
             if tag.len() < 28 {
                 return Err(CmsError::InvalidProfile);
@@ -243,45 +269,21 @@ impl ColorProfile {
                 return Err(CmsError::InvalidProfile);
             }
             let ascii_length = u32::from_be_bytes([tag[8], tag[9], tag[10], tag[11]]) as usize;
-            if tag.len() < 12.safe_add(ascii_length)? {
+            let ascii_end = 12usize.safe_add(ascii_length)?;
+            if tag.len() < ascii_end {
                 return Err(CmsError::InvalidProfile);
             }
-            let sliced = &tag[12..12 + ascii_length];
-            let ascii_string = String::from_utf8_lossy(sliced).to_string();
+            let sliced = &tag[12..ascii_end];
+            let ascii_string = String::from_utf8_lossy(sliced)
+                .trim_end_matches('\0')
+                .to_string();
 
-            let mut last_position = 12 + ascii_length;
-            if tag.len() < last_position + 8 {
-                return Err(CmsError::InvalidProfile);
-            }
-            let uc = &tag[last_position..last_position + 8];
-            let unicode_code = u32::from_be_bytes([uc[0], uc[1], uc[2], uc[3]]);
-            let unicode_length = u32::from_be_bytes([uc[4], uc[5], uc[6], uc[7]]) as usize * 2;
-            if tag.len() < unicode_length.safe_add(8)?.safe_add(last_position)? {
-                return Ok(None);
-            }
-
-            last_position += 8;
-            let uc = &tag[last_position..last_position + unicode_length];
-            let wc = utf16be_to_utf16(uc)?;
-            let unicode_string = String::from_utf16_lossy(&wc).to_string();
-
-            // last_position += unicode_length;
-            //
-            // if tag.len() < last_position + 2 {
-            //     return Err(CmsError::InvalidIcc);
-            // }
-
-            // let uc = &tag[last_position..last_position + 2];
-            // let script_code = uc[0];
-            // let mac_length = uc[1] as usize;
-            // last_position += 2;
-            // if tag.len() < last_position + mac_length {
-            //     return Err(CmsError::InvalidIcc);
-            // }
-            //
-            // let uc = &tag[last_position..last_position + unicode_length];
-            // let wc = utf16be_to_utf16(uc);
-            // let mac_string = String::from_utf16_lossy(&wc).to_string();
+            // Tolerate truncated desc tags — the Unicode and ScriptCode
+            // sections may be missing (common in non-conforming v4 profiles,
+            // but also seen in some v2 profiles in the wild).
+            let unicode_offset = ascii_end;
+            let (unicode_code, unicode_string) =
+                self::read_desc_unicode(tag, unicode_offset)?.unwrap_or((0, String::new()));
 
             return Ok(Some(ProfileText::Description(DescriptionString {
                 ascii_string,
@@ -294,7 +296,6 @@ impl ColorProfile {
         Ok(None)
     }
 
-    #[inline]
     fn read_lut_table_f32(table: &[u8], lut_type: LutType) -> Result<LutStore, CmsError> {
         if lut_type == LutType::Lut16 {
             let mut clut = try_vec![0u16; table.len() / 2];
@@ -313,7 +314,6 @@ impl ColorProfile {
         }
     }
 
-    #[inline]
     fn read_nested_tone_curves(
         slice: &[u8],
         offset: usize,
@@ -341,7 +341,6 @@ impl ColorProfile {
         Ok(Some(curves))
     }
 
-    #[inline]
     pub(crate) fn read_lut_abm_type(
         slice: &[u8],
         entry: usize,
@@ -557,7 +556,6 @@ impl ColorProfile {
         Ok(Some(wh))
     }
 
-    #[inline]
     pub(crate) fn read_lut_a_to_b_type(
         slice: &[u8],
         entry: usize,
@@ -804,7 +802,6 @@ impl ColorProfile {
         }
     }
 
-    #[inline]
     pub(crate) fn read_chad_tag(
         slice: &[u8],
         entry: usize,
@@ -864,7 +861,6 @@ impl ColorProfile {
         Ok(None)
     }
 
-    #[inline]
     pub(crate) fn read_date_time_tag(
         slice: &[u8],
         entry: usize,
@@ -968,7 +964,6 @@ impl ColorProfile {
         Ok(Xyzd { x, y, z })
     }
 
-    #[inline]
     pub(crate) fn read_cicp_tag(
         slice: &[u8],
         entry: usize,

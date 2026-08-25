@@ -5,23 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 5.14.0 - 2026-02-22
-
-### Added
-- ✨ Add helper for IBus connection creation. #964
-- 🚸 Add Display trait to D-Bus name request reply types.
-
-### Changed
-- 🔧 Extend process module run() to all Unix platforms.
-
-### Fixed
-- 🐛 Do not use SendFlags::NOSIGNAL on Redox.
-
-### Other
-- 📦️ Add async-recursion for Unix targets.
-- 🚨 silence unused import on windows.
-- 🚨 silence unused warning on windows test.
-
 ## 5.13.2 - 2026-01-19
 
 ### Fixed

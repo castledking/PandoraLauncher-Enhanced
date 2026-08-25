@@ -3,40 +3,16 @@ use std::{collections::VecDeque, sync::Arc};
 use bridge::instance::InstanceID;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, InteractiveElementExt, WindowExt, h_flex,
-    notification::{Notification, NotificationType},
-    scroll::ScrollableElement,
-    tooltip::Tooltip,
-    v_flex,
+    ActiveTheme as _, Icon, InteractiveElementExt, WindowExt, h_flex, notification::{Notification, NotificationType}, scroll::ScrollableElement, tooltip::Tooltip, v_flex
 };
 use rustc_hash::FxHashMap;
 use schema::pandora_update::UpdatePrompt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    component::{
-        menu::{MenuGroup, MenuGroupItem},
-        page_path::PagePath,
-        resize_panel::{ResizePanel, ResizePanelState},
-        shrinking_text::ShrinkingText,
-        title_bar::TitleBar,
-    },
-    entity::{
-        DataEntities,
-        account::AccountExt,
-        instance::{
-            InstanceAddedEvent, InstanceEntries, InstanceModifiedEvent, InstanceMovedToTopEvent, InstanceRemovedEvent,
-        },
-    },
-    icon::PandoraIcon,
-    interface_config::InterfaceConfig,
-    modals,
-    pages::{
-        curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage,
-        instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage,
-        page::Page, skins_page::SkinsPage, syncing_page::SyncingPage,
-    },
-    png_render_cache,
+    component::{menu::{MenuGroup, MenuGroupItem}, page_path::PagePath, resize_panel::{ResizePanel, ResizePanelState}, shrinking_text::ShrinkingText, title_bar::{TitleBar, TitleBarState}}, entity::{
+        DataEntities, account::AccountExt, instance::{InstanceAddedEvent, InstanceEntries, InstanceModifiedEvent, InstanceMovedToTopEvent, InstanceRemovedEvent}
+    }, icon::PandoraIcon, interface_config::InterfaceConfig, modals, pages::{curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage, page::Page, skins_page::SkinsPage, syncing_page::SyncingPage}, png_render_cache,
 };
 
 pub struct LauncherUI {
@@ -98,11 +74,12 @@ impl PageType {
                     t::curseforge::name().into()
                 }
             },
-            PageType::Import => "Import".into(),
+            PageType::Import => t::import::label().into(),
             PageType::Syncing => t::instance::sync::label().into(),
             PageType::ModrinthProject { project_title, .. } => project_title.clone(),
             PageType::InstancePage { name } => {
-                InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
+                InstanceEntries::find_title_by_name(&data.instances, name, cx)
+                    .unwrap_or_else(|| name.clone())
             },
         }
     }
@@ -124,11 +101,7 @@ impl LauncherPage {
     fn render(self, ui: &LauncherUI, window: &mut Window, cx: &mut App) -> impl IntoElement {
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
-                (
-                    page.scrollable(cx),
-                    page.controls(window, cx).into_any_element(),
-                    page.render(window, cx).into_any_element(),
-                )
+                (page.scrollable(cx), page.controls(window, cx).into_any_element(), page.render(window, cx).into_any_element())
             })
         }
 
@@ -153,14 +126,17 @@ impl LauncherPage {
         };
 
         if scrollable {
-            v_flex().size_full().child(title_bar).child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(v_flex().size_full().overflow_y_scrollbar().child(page)),
-            )
+            v_flex()
+                .size_full()
+                .child(title_bar)
+                .child(div().flex_1().overflow_hidden().child(
+                    v_flex().size_full().overflow_y_scrollbar().child(page),
+                ))
         } else {
-            v_flex().size_full().child(title_bar).child(page)
+            v_flex()
+                .size_full()
+                .child(title_bar)
+                .child(page)
         }
     }
 }
@@ -194,14 +170,7 @@ impl LauncherUI {
                     && page.read(cx).instance.read(cx).id == event.instance.id
                 {
                     let page_path = InterfaceConfig::get_mut(cx).page_path.clone();
-                    this.switch_page(
-                        PageType::InstancePage {
-                            name: event.instance.name.clone(),
-                        },
-                        &*page_path,
-                        window,
-                        cx,
-                    );
+                    this.switch_page(PageType::InstancePage { name: event.instance.name.clone() }, &*page_path, window, cx);
                 }
                 cx.notify();
             });
@@ -233,8 +202,8 @@ impl LauncherUI {
             default_sidebar_width = 150.0;
         }
 
-        let sidebar_state =
-            ResizePanelState::new(px(default_sidebar_width), px(150.0), px(225.0)).on_resize(|width, _, cx| {
+        let sidebar_state = ResizePanelState::new(px(default_sidebar_width), px(150.0), px(225.0))
+            .on_resize(|width, _, cx| {
                 InterfaceConfig::get_mut(cx).sidebar_width = width.as_f32();
             });
 
@@ -278,61 +247,55 @@ impl LauncherUI {
         }
     }
 
-    fn create_page(
-        data: &DataEntities,
-        page: PageType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Result<LauncherPage, PageType> {
+    fn create_page(data: &DataEntities, page: PageType, window: &mut Window, cx: &mut Context<Self>) -> Result<LauncherPage, PageType> {
         match page {
-            PageType::Instances => Ok(LauncherPage::Instances(cx.new(|cx| InstancesPage::new(data, window, cx)))),
-            PageType::Skins => Ok(LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx)))),
+            PageType::Instances => {
+                Ok(LauncherPage::Instances(cx.new(|cx| InstancesPage::new(data, window, cx))))
+            },
+            PageType::Skins => {
+                Ok(LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx))))
+            },
             PageType::Modrinth { installing_for } => {
-                let installing_for = installing_for
-                    .as_ref()
-                    .map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
+                let installing_for = installing_for.as_ref().map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
 
                 if let Some(None) = installing_for {
-                    return Err(PageType::Modrinth { installing_for: None });
+                    return Err(PageType::Modrinth { installing_for: None })
                 }
 
-                let page = cx.new(|cx| ModrinthSearchPage::new(installing_for.flatten(), data, window, cx));
+                let page = cx.new(|cx| {
+                    ModrinthSearchPage::new(installing_for.flatten(), data, window, cx)
+                });
                 Ok(LauncherPage::Modrinth(page))
             },
             PageType::Curseforge { installing_for } => {
-                let installing_for = installing_for
-                    .as_ref()
-                    .map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
+                let installing_for = installing_for.as_ref().map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
 
                 if let Some(None) = installing_for {
-                    return Err(PageType::Curseforge { installing_for: None });
+                    return Err(PageType::Curseforge { installing_for: None })
                 }
 
-                let page = cx.new(|cx| CurseforgeSearchPage::new(installing_for.flatten(), data, window, cx));
+                let page = cx.new(|cx| {
+                    CurseforgeSearchPage::new(installing_for.flatten(), data, window, cx)
+                });
                 Ok(LauncherPage::Curseforge(page))
             },
-            PageType::Import => Ok(LauncherPage::Import(cx.new(|cx| ImportPage::new(data, window, cx)))),
-            PageType::Syncing => Ok(LauncherPage::Syncing(cx.new(|cx| SyncingPage::new(data, window, cx)))),
-            PageType::ModrinthProject {
-                project_id,
-                install_for,
-                project_title,
-            } => {
-                let install_for_id = install_for
-                    .as_ref()
-                    .map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
+            PageType::Import => {
+                Ok(LauncherPage::Import(cx.new(|cx| ImportPage::new(data, window, cx))))
+            },
+            PageType::Syncing => {
+                Ok(LauncherPage::Syncing(cx.new(|cx| SyncingPage::new(data, window, cx))))
+            },
+            PageType::ModrinthProject { project_id, install_for, project_title } => {
+                let install_for_id = install_for.as_ref().map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
 
                 if let Some(None) = install_for_id {
-                    return Err(PageType::ModrinthProject {
-                        project_id,
-                        install_for: None,
-                        project_title,
-                    });
+                    return Err(PageType::ModrinthProject { project_id, install_for: None, project_title })
                 }
 
                 let project_id = project_id.clone();
-                let page =
-                    cx.new(|cx| ModrinthProjectPage::new(project_id, install_for_id.flatten(), data, window, cx));
+                let page = cx.new(|cx| {
+                    ModrinthProjectPage::new(project_id, install_for_id.flatten(), data, window, cx,)
+                });
                 Ok(LauncherPage::ModrinthProject(page))
             },
             PageType::InstancePage { ref name } => {
@@ -340,7 +303,9 @@ impl LauncherUI {
                     return Err(PageType::Instances);
                 };
 
-                Ok(LauncherPage::InstancePage(cx.new(|cx| InstancePage::new(id, data, window, cx))))
+                Ok(LauncherPage::InstancePage(cx.new(|cx| {
+                    InstancePage::new(id, data, window, cx)
+                })))
             },
         }
     }
@@ -357,19 +322,12 @@ impl LauncherUI {
         if self.page_history_backwards.len() >= 32 {
             self.page_history_backwards.pop_back();
         }
-        self.page_history_backwards
-            .push_front((config.main_page.clone(), config.page_path.clone()));
+        self.page_history_backwards.push_front((config.main_page.clone(), config.page_path.clone()));
 
         self.switch_page_without_history(page, page_path, window, cx);
     }
 
-    fn switch_page_without_history(
-        &mut self,
-        page: PageType,
-        page_path: Arc<[PageType]>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn switch_page_without_history(&mut self, page: PageType, page_path: Arc<[PageType]>, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_page = None;
 
         let config = InterfaceConfig::get_mut(cx);
@@ -421,8 +379,7 @@ impl LauncherUI {
         };
 
         let config = InterfaceConfig::get(cx);
-        self.page_history_backwards
-            .push_front((config.main_page.clone(), config.page_path.clone()));
+        self.page_history_backwards.push_front((config.main_page.clone(), config.page_path.clone()));
 
         self.switch_page_without_history(page, page_path, window, cx);
     }
@@ -451,56 +408,40 @@ impl Render for LauncherUI {
         };
 
         let library_group = MenuGroup::new("Minecraft")
-            .child(
-                MenuGroupItem::new(t::instance::title())
-                    .active(page_type == PageType::Instances)
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Instances, &[], window, cx);
-                    })),
-            )
-            .when(!hide_skins, |this| {
-                this.child(
-                    MenuGroupItem::new(t::skins::title())
-                        .active(page_type == PageType::Skins)
-                        .on_click(cx.listener(|launcher, _, window, cx| {
-                            launcher.switch_page(PageType::Skins, &[], window, cx);
-                        })),
-                )
-            });
+            .child(MenuGroupItem::new(t::instance::title())
+                .active(page_type == PageType::Instances)
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Instances, &[], window, cx);
+                })))
+            .when(!hide_skins, |this| this.child(MenuGroupItem::new(t::skins::title())
+                .active(page_type == PageType::Skins)
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Skins, &[], window, cx);
+                }))));
 
         let content_group = MenuGroup::new(t::instance::content::title())
-            .child(
-                MenuGroupItem::new(t::modrinth::name())
-                    .active(matches!(
-                        page_type,
-                        PageType::Modrinth { installing_for: None }
-                            | PageType::ModrinthProject { install_for: None, .. }
-                    ))
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Modrinth { installing_for: None }, &[], window, cx);
-                    })),
-            )
-            .child(
-                MenuGroupItem::new(t::curseforge::name())
-                    .active(matches!(page_type, PageType::Curseforge { installing_for: None }))
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Curseforge { installing_for: None }, &[], window, cx);
-                    })),
-            );
+            .child(MenuGroupItem::new(t::modrinth::name())
+                .active(matches!(page_type, PageType::Modrinth { installing_for: None } | PageType::ModrinthProject { install_for: None, .. }))
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Modrinth { installing_for: None }, &[], window, cx);
+                })))
+            .child(MenuGroupItem::new(t::curseforge::name())
+                .active(matches!(page_type, PageType::Curseforge { installing_for: None }))
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Curseforge { installing_for: None }, &[], window, cx);
+                })));
 
-        let files_group = MenuGroup::new("Files")
-            .child(MenuGroupItem::new("Import").active(page_type == PageType::Import).on_click(cx.listener(
-                |launcher, _, window, cx| {
+        let files_group = MenuGroup::new(t::instance::sync::files())
+            .child(MenuGroupItem::new(t::import::label())
+                .active(page_type == PageType::Import)
+                .on_click(cx.listener(|launcher, _, window, cx| {
                     launcher.switch_page(PageType::Import, &[], window, cx);
-                },
-            )))
-            .child(
-                MenuGroupItem::new(t::instance::sync::label())
-                    .active(page_type == PageType::Syncing)
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Syncing, &[], window, cx);
-                    })),
-            );
+                })))
+            .child(MenuGroupItem::new(t::instance::sync::label())
+                .active(page_type == PageType::Syncing)
+                .on_click(cx.listener(|launcher, _, window, cx| {
+                    launcher.switch_page(PageType::Syncing, &[], window, cx);
+                })));
 
         let mut groups: heapless::Vec<MenuGroup, 4> = heapless::Vec::new();
 
@@ -514,16 +455,11 @@ impl Render for LauncherUI {
             for (_, name) in &self.recent_instances {
                 let name = name.clone();
                 let active = page_type == PageType::InstancePage { name: name.clone() };
-                let item = MenuGroupItem::new(name.clone()).active(active).on_click(cx.listener(
-                    move |launcher, _, window, cx| {
-                        launcher.switch_page(
-                            PageType::InstancePage { name: name.clone() },
-                            &[PageType::Instances],
-                            window,
-                            cx,
-                        );
-                    },
-                ));
+                let item = MenuGroupItem::new(name.clone())
+                    .active(active)
+                    .on_click(cx.listener(move |launcher, _, window, cx| {
+                        launcher.switch_page(PageType::InstancePage { name: name.clone() }, &[PageType::Instances], window, cx);
+                    }));
                 recent_instances_group = recent_instances_group.child(item);
             }
 
@@ -561,7 +497,10 @@ impl Render for LauncherUI {
             .text_size(rems(0.9375))
             .line_height(rems(1.0))
             .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
+            .hover(|this| {
+                this.bg(cx.theme().sidebar_accent)
+                    .text_color(cx.theme().sidebar_accent_foreground)
+            })
             .child(account_head.size_8().min_w_8().min_h_8())
             .child(ShrinkingText::new(account_name))
             .on_click({
@@ -581,7 +520,10 @@ impl Render for LauncherUI {
             .id("settings-button")
             .p_2()
             .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
+            .hover(|this| {
+                this.bg(cx.theme().sidebar_accent)
+                    .text_color(cx.theme().sidebar_accent_foreground)
+            })
             .child(PandoraIcon::Settings)
             .on_click({
                 let data = self.data.clone();
@@ -594,17 +536,70 @@ impl Render for LauncherUI {
             .id("bug-report-button")
             .p_2()
             .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
+            .hover(|this| {
+                this.bg(cx.theme().sidebar_accent)
+                    .text_color(cx.theme().sidebar_accent_foreground)
+            })
             .child(PandoraIcon::Bug)
-            .tooltip(move |window, cx| Tooltip::new("Report a bug").build(window, cx))
+            .tooltip(move |window, cx| {
+                Tooltip::new(t::system::report_bug()).build(window, cx)
+            })
             .on_click({
                 move |_, window, cx| {
                     open_bug_report_url(window, cx);
                 }
             });
+        let discord_invite = option_env!("DISCORD_INVITE").unwrap_or("https://pandora.moulberry.com/discord");
+        let discord_button = div()
+            .id("discord-button")
+            .p_2()
+            .rounded(cx.theme().radius)
+            .hover(|this| {
+                this.bg(cx.theme().sidebar_accent)
+                    .text_color(cx.theme().sidebar_accent_foreground)
+            })
+            .child(PandoraIcon::Discord)
+            .tooltip(move |window, cx| {
+                Tooltip::new(t::system::join_discord()).build(window, cx)
+            })
+            .on_click({
+                move |_, _, cx| {
+                    cx.open_url(discord_invite);
+                }
+            });
 
+        let header_drag_state = window.use_keyed_state("sidebar-header-drag-state", cx, |_, _| TitleBarState::default());
         let header = h_flex()
-            .when_else(cfg!(target_os = "macos"), |this| this.pt(px(9.0)), |this| this.pt(px(14.0)))
+            .id("sidebar-header")
+            .window_control_area(WindowControlArea::Drag)
+            .on_mouse_down_out(window.listener_for(&header_drag_state, |state, _, _, _| {
+                state.should_move = false;
+            }))
+            .when(cfg!(target_os = "linux"), |this| {
+                this.on_double_click(|_, window, _| window.zoom_window())
+            })
+            .when(cfg!(target_os = "macos"), |this| {
+                this.on_double_click(|_, window, _| window.titlebar_double_click())
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                window.listener_for(&header_drag_state, |state, _, _, _| {
+                    state.should_move = true;
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                window.listener_for(&header_drag_state, |state, _, _, _| {
+                    state.should_move = false;
+                }),
+            )
+            .on_mouse_move(window.listener_for(&header_drag_state, |state, _, window, _| {
+                if state.should_move {
+                    state.should_move = false;
+                    window.start_window_move();
+                }
+            }))
+            .when_else(cfg!(target_os = "macos"), |this| this.pt(px(41.0)), |this| this.pt(px(14.0)))
             .px_5()
             .pb_2()
             .gap_2()
@@ -613,33 +608,25 @@ impl Render for LauncherUI {
             .text_size(rems(0.9375))
             .child(Icon::new(PandoraIcon::Pandora).size_8().min_w_8().min_h_8())
             .child(t::common::app_name());
-        let footer_buttons = h_flex().child(settings_button).child(bug_report_button);
-        let footer = v_flex()
-            .pb_2()
-            .px_2()
-            .items_center()
-            .min_w_full()
-            .max_w_full()
-            .w_full()
-            .child(footer_buttons)
-            .child(account_button);
+        let footer_buttons = h_flex()
+            .child(settings_button)
+            .child(bug_report_button)
+            .when(!discord_invite.is_empty(), |this| this.child(discord_button));
+        let footer = v_flex().pb_2().px_2().items_center().min_w_full().max_w_full().w_full().child(footer_buttons).child(account_button);
         let sidebar = v_flex()
             .size_full()
             .min_size_full()
             .max_size_full()
             .bg(cx.theme().sidebar)
             .text_color(cx.theme().sidebar_foreground)
-            .when(cfg!(target_os = "macos"), |this| {
-                this.child(
-                    h_flex()
-                        .id("sidebar-double-clicker")
-                        .w_full()
-                        .h(px(32.0))
-                        .on_double_click(|_, window, _| window.titlebar_double_click()),
-                )
-            })
             .child(header)
-            .child(v_flex().flex_1().min_h_0().px_3().gap_y_3().children(groups).overflow_y_scrollbar())
+            .child(v_flex()
+                .flex_1()
+                .min_h_0()
+                .px_3()
+                .gap_y_3()
+                .children(groups)
+                .overflow_y_scrollbar())
             .child(footer);
 
         ResizePanel::new(&self.sidebar_state, sidebar, self.page.clone().render(&self, window, cx))
@@ -647,8 +634,7 @@ impl Render for LauncherUI {
 }
 
 fn open_bug_report_url(window: &mut Window, cx: &mut App) {
-    let mut body = String::from(
-        r#"## Description of bug
+    let mut body = String::from(r#"## Description of bug
 (Write here)
 
 ## Steps to reproduce
@@ -658,8 +644,7 @@ fn open_bug_report_url(window: &mut Window, cx: &mut App) {
 - [ ] I've searched the other issues and didn't see an issue describing the same bug
 
 ## Environment
-"#,
-    );
+"#);
 
     use std::fmt::Write;
     _ = writeln!(&mut body, "Version: {:?}", option_env!("PANDORA_RELEASE_VERSION"));
@@ -692,11 +677,7 @@ fn open_bug_report_url(window: &mut Window, cx: &mut App) {
     }
 
     let Some(github) = option_env!("GITHUB_REPOSITORY_URL") else {
-        let mut notification: Notification = (
-            NotificationType::Error,
-            SharedString::from("Unable to report bug, GITHUB_REPOSITORY_URL was not set at compile time"),
-        )
-            .into();
+        let mut notification: Notification = (NotificationType::Error, SharedString::from("Unable to report bug, GITHUB_REPOSITORY_URL was not set at compile time")).into();
         notification = notification.autohide(false);
         window.push_notification(notification, cx);
         return;

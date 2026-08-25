@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.61"
+rust-version = "1.66"
 name = "phf_generator"
-version = "0.11.3"
+version = "0.13.1"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 build = false
 autolib = false
@@ -35,25 +35,19 @@ path = "src/lib.rs"
 [[bin]]
 name = "gen_hash_test"
 path = "src/bin/gen_hash_test.rs"
-required-features = ["criterion"]
 
 [[bench]]
 name = "benches"
 path = "benches/benches.rs"
 harness = false
 
-[dependencies.criterion]
-version = "0.3.6"
-optional = true
-
-[dependencies.phf_shared]
-version = "^0.11.2"
+[dependencies.fastrand]
+version = "2.1.0"
 default-features = false
 
-[dependencies.rand]
-version = "0.8"
-features = ["small_rng"]
+[dependencies.phf_shared]
+version = "^0.13.1"
 default-features = false
 
 [dev-dependencies.criterion]
-version = "0.3.6"
+version = "0.6.0"

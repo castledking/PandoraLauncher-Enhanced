@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "gpui-component"
-version = "0.5.1"
+version = "0.5.2"
 build = "build.rs"
 publish = true
 autolib = false
@@ -34,45 +34,195 @@ keywords = [
 license = "Apache-2.0"
 repository = "https://github.com/longbridge/gpui-component"
 
+[package.metadata.cargo-machete]
+ignored = ["gpui-component-assets"]
+
 [features]
 decimal = ["dep:rust_decimal"]
 inspector = [
     "gpui_macros/inspector",
     "gpui/inspector",
 ]
-tree-sitter-languages = [
+tree-sitter = [
+    "dep:tree-sitter",
+    "dep:tree-sitter-json",
+]
+tree-sitter-astro = [
+    "tree-sitter",
     "dep:tree-sitter-astro-next",
+]
+tree-sitter-bash = [
+    "tree-sitter",
     "dep:tree-sitter-bash",
+]
+tree-sitter-c = [
+    "tree-sitter",
     "dep:tree-sitter-c",
-    "dep:tree-sitter-c-sharp",
+]
+tree-sitter-cmake = [
+    "tree-sitter",
     "dep:tree-sitter-cmake",
+]
+tree-sitter-cpp = [
+    "tree-sitter",
     "dep:tree-sitter-cpp",
+]
+tree-sitter-csharp = [
+    "tree-sitter",
+    "dep:tree-sitter-c-sharp",
+]
+tree-sitter-css = [
+    "tree-sitter",
     "dep:tree-sitter-css",
+]
+tree-sitter-diff = [
+    "tree-sitter",
     "dep:tree-sitter-diff",
-    "dep:tree-sitter-elixir",
+]
+tree-sitter-ejs = [
+    "tree-sitter",
     "dep:tree-sitter-embedded-template",
+]
+tree-sitter-elixir = [
+    "tree-sitter",
+    "dep:tree-sitter-elixir",
+]
+tree-sitter-erb = [
+    "tree-sitter",
+    "dep:tree-sitter-embedded-template",
+]
+tree-sitter-go = [
+    "tree-sitter",
     "dep:tree-sitter-go",
+]
+tree-sitter-graphql = [
+    "tree-sitter",
     "dep:tree-sitter-graphql",
+]
+tree-sitter-html = [
+    "tree-sitter",
     "dep:tree-sitter-html",
+]
+tree-sitter-java = [
+    "tree-sitter",
     "dep:tree-sitter-java",
+]
+tree-sitter-javascript = [
+    "tree-sitter",
     "dep:tree-sitter-javascript",
+]
+tree-sitter-jsdoc = [
+    "tree-sitter",
     "dep:tree-sitter-jsdoc",
+]
+tree-sitter-kotlin = [
+    "tree-sitter",
     "dep:tree-sitter-kotlin-sg",
+]
+tree-sitter-languages = [
+    "tree-sitter-astro",
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cmake",
+    "tree-sitter-cpp",
+    "tree-sitter-csharp",
+    "tree-sitter-css",
+    "tree-sitter-diff",
+    "tree-sitter-ejs",
+    "tree-sitter-elixir",
+    "tree-sitter-erb",
+    "tree-sitter-go",
+    "tree-sitter-graphql",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-jsdoc",
+    "tree-sitter-kotlin",
+    "tree-sitter-lua",
+    "tree-sitter-make",
+    "tree-sitter-markdown",
+    "tree-sitter-php",
+    "tree-sitter-proto",
+    "tree-sitter-python",
+    "tree-sitter-ruby",
+    "tree-sitter-rust",
+    "tree-sitter-scala",
+    "tree-sitter-sql",
+    "tree-sitter-svelte",
+    "tree-sitter-swift",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+    "tree-sitter-zig",
+]
+tree-sitter-lua = [
+    "tree-sitter",
     "dep:tree-sitter-lua",
+]
+tree-sitter-make = [
+    "tree-sitter",
     "dep:tree-sitter-make",
+]
+tree-sitter-markdown = [
+    "tree-sitter",
     "dep:tree-sitter-md",
+]
+tree-sitter-markdown-inline = ["tree-sitter-markdown"]
+tree-sitter-php = [
+    "tree-sitter",
     "dep:tree-sitter-php",
+]
+tree-sitter-proto = [
+    "tree-sitter",
     "dep:tree-sitter-proto",
+]
+tree-sitter-python = [
+    "tree-sitter",
     "dep:tree-sitter-python",
+]
+tree-sitter-ruby = [
+    "tree-sitter",
     "dep:tree-sitter-ruby",
+]
+tree-sitter-rust = [
+    "tree-sitter",
     "dep:tree-sitter-rust",
+]
+tree-sitter-scala = [
+    "tree-sitter",
     "dep:tree-sitter-scala",
+]
+tree-sitter-sql = [
+    "tree-sitter",
     "dep:tree-sitter-sequel",
-    "dep:tree-sitter-swift",
-    "dep:tree-sitter-toml-ng",
-    "dep:tree-sitter-typescript",
+]
+tree-sitter-svelte = [
+    "tree-sitter",
     "dep:tree-sitter-svelte-next",
+]
+tree-sitter-swift = [
+    "tree-sitter",
+    "dep:tree-sitter-swift",
+]
+tree-sitter-toml = [
+    "tree-sitter",
+    "dep:tree-sitter-toml-ng",
+]
+tree-sitter-tsx = [
+    "tree-sitter",
+    "dep:tree-sitter-typescript",
+]
+tree-sitter-typescript = [
+    "tree-sitter",
+    "dep:tree-sitter-typescript",
+]
+tree-sitter-yaml = [
+    "tree-sitter",
     "dep:tree-sitter-yaml",
+]
+tree-sitter-zig = [
+    "tree-sitter",
     "dep:tree-sitter-zig",
 ]
 
@@ -102,6 +252,10 @@ version = "1"
 
 [dependencies.gpui]
 git = "https://github.com/zed-industries/zed"
+
+[dependencies.gpui-component-assets]
+version = "0.5.1"
+path = "../assets"
 
 [dependencies.gpui-component-macros]
 version = "0.5.1"
@@ -136,7 +290,7 @@ features = [
 ]
 
 [dependencies.rust-i18n]
-version = "4"
+version = "4.2.0"
 
 [dependencies.rust_decimal]
 version = "1.37.0"
@@ -172,12 +326,12 @@ indoc = "2"
 git = "https://github.com/zed-industries/zed"
 features = ["test-support"]
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-tree-sitter = "0.25.4"
-tree-sitter-json = "0.24.8"
-
 [target.'cfg(not(target_family = "wasm"))'.dependencies.smol]
 version = "2"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies.tree-sitter]
+version = "0.26"
+optional = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies.tree-sitter-astro-next]
 version = "0.1.1"
@@ -241,6 +395,10 @@ optional = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies.tree-sitter-jsdoc]
 version = "0.23.2"
+optional = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies.tree-sitter-json]
+version = "0.24.8"
 optional = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies.tree-sitter-kotlin-sg]
@@ -313,6 +471,53 @@ optional = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-text = "=21.0.0"
+objc2 = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-app-kit]
+version = "0.3"
+features = [
+    "NSMenu",
+    "NSMenuItem",
+    "NSView",
+    "NSWindow",
+    "NSResponder",
+    "NSEvent",
+    "NSImage",
+]
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-foundation]
+version = "0.3"
+features = [
+    "NSData",
+    "NSString",
+    "NSGeometry",
+]
+
+[target.'cfg(target_os = "macos")'.dependencies.raw-window-handle]
+version = "0.6.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+resvg = "0.45.1"
+
+[target.'cfg(target_os = "windows")'.dependencies.raw-window-handle]
+version = "0.6.2"
+
+[target.'cfg(target_os = "windows")'.dependencies.windows]
+version = "0.58.0"
+features = [
+    "Wdk",
+    "Wdk_System",
+    "Wdk_System_SystemServices",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_GdiPlus",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+]
 
 [lints.clippy]
 almost_complete_range = "allow"

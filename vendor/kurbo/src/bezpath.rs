@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 
 use arrayvec::ArrayVec;
 
-use crate::common::{solve_cubic, solve_quadratic};
 use crate::MAX_EXTREMA;
+use crate::common::{solve_cubic, solve_quadratic};
 use crate::{
     Affine, CubicBez, Line, Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea,
     ParamCurveExtrema, ParamCurveNearest, Point, QuadBez, Rect, Shape, TranslateScale, Vec2,
@@ -117,9 +117,13 @@ pub enum PathEl {
     MoveTo(Point),
     /// Draw a line from the current location to the point.
     LineTo(Point),
-    /// Draw a quadratic bezier using the current location and the two points.
+    /// Draw a quadratic Bézier using the current location and the two points.
+    ///
+    /// The first point is the Bézier's control point, the second is its end point.
     QuadTo(Point, Point),
-    /// Draw a cubic bezier using the current location and the three points.
+    /// Draw a cubic Bézier using the current location and the three points.
+    ///
+    /// The first two points are the Bézier's control points, the last point is its end point.
     CurveTo(Point, Point, Point),
     /// Close off the path.
     ClosePath,
@@ -132,9 +136,9 @@ pub enum PathEl {
 pub enum PathSeg {
     /// A line segment.
     Line(Line),
-    /// A quadratic bezier segment.
+    /// A quadratic Bézier segment.
     Quad(QuadBez),
-    /// A cubic bezier segment.
+    /// A cubic Bézier segment.
     Cubic(CubicBez),
 }
 
@@ -272,7 +276,17 @@ impl BezPath {
         self.push(PathEl::ClosePath);
     }
 
+    /// Consumes the `BezPath` and returns a vector of [`PathEl`]s.
+    #[inline(always)]
+    pub fn into_elements(self) -> Vec<PathEl> {
+        self.0
+    }
+
     /// Get the path elements.
+    ///
+    /// For owned elements, see [`into_elements`].
+    ///
+    /// [`into_elements`]: Self::into_elements
     #[inline(always)]
     pub fn elements(&self) -> &[PathEl] {
         &self.0
@@ -297,14 +311,6 @@ impl BezPath {
     /// Shorten the path, keeping the first `len` elements.
     pub fn truncate(&mut self, len: usize) {
         self.0.truncate(len);
-    }
-
-    /// Flatten the path, invoking the callback repeatedly.
-    ///
-    /// See [`flatten`] for more discussion.
-    #[deprecated(since = "0.11.1", note = "use the free function flatten instead")]
-    pub fn flatten(&self, tolerance: f64, callback: impl FnMut(PathEl)) {
-        flatten(self, tolerance, callback);
     }
 
     /// Get the segment at the given element index.
@@ -415,6 +421,24 @@ impl BezPath {
         }
     }
 
+    /// Returns an iterator over the subpaths of this path. See [Elements and Segments](#elements-and-segments) for more information.
+    pub fn subpaths(&self) -> impl Iterator<Item = &[PathEl]> {
+        let elements = self.elements();
+        let mut i = 0;
+
+        core::iter::from_fn(move || {
+            if i >= elements.len() {
+                return None;
+            }
+            let start = i;
+            i += 1;
+            while i < elements.len() && !matches!(elements[i], PathEl::MoveTo(_)) {
+                i += 1;
+            }
+            Some(&elements[start..i])
+        })
+    }
+
     /// Returns a new path with the winding direction of all subpaths reversed.
     pub fn reverse_subpaths(&self) -> BezPath {
         let elements = self.elements();
@@ -510,6 +534,18 @@ impl IntoIterator for BezPath {
 }
 
 impl Extend<PathEl> for BezPath {
+    /// Add the items from the iterator to this path.
+    ///
+    /// <div class="warning">
+    ///
+    /// Note that if you're attempting to make a continuous path, you will generally
+    /// want to ensure that the iterator does not contain any [`MoveTo`](PathEl::MoveTo)
+    /// or [`ClosePath`](PathEl::ClosePath) elements.
+    /// Note especially that many (open) [shapes](Shape) will start with a `MoveTo` if
+    /// you use their [`path_elements`](Shape::path_elements) function.
+    /// Some shapes have alternatives for this use case, such as [`Arc::append_iter`](crate::Arc::append_iter).
+    ///
+    /// </div>
     fn extend<I: IntoIterator<Item = PathEl>>(&mut self, iter: I) {
         self.0.extend(iter);
     }
@@ -757,6 +793,73 @@ impl Mul<&BezPath> for TranslateScale {
     }
 }
 
+/// Close all open subpaths in a path, expressed as iterator transform.
+pub(crate) fn close_subpaths<I>(elements: I) -> CloseSubpaths<I::IntoIter>
+where
+    I: IntoIterator<Item = PathEl>,
+{
+    CloseSubpaths {
+        elements: elements.into_iter(),
+        state: CloseSubpathState::Start,
+    }
+}
+
+/// An iterator that closes all open subpaths.
+///
+/// This struct is created by the [`close_subpaths`] function.
+#[derive(Clone)]
+pub(crate) struct CloseSubpaths<I: Iterator<Item = PathEl>> {
+    elements: I,
+    state: CloseSubpathState,
+}
+
+#[derive(Clone)]
+enum CloseSubpathState {
+    Start,
+    InSubpath,
+    ClosedLast,
+    PendingMoveTo(Point),
+}
+
+impl<I: Iterator<Item = PathEl>> Iterator for CloseSubpaths<I> {
+    type Item = PathEl;
+
+    fn next(&mut self) -> Option<PathEl> {
+        match self.state {
+            CloseSubpathState::Start => {
+                let el = self.elements.next();
+                if !matches!(el, Some(PathEl::ClosePath) | None) {
+                    self.state = CloseSubpathState::InSubpath;
+                }
+                el
+            }
+            CloseSubpathState::InSubpath => {
+                let el = self.elements.next();
+                match el {
+                    None => {
+                        self.state = CloseSubpathState::ClosedLast;
+                        Some(PathEl::ClosePath)
+                    }
+                    Some(PathEl::MoveTo(point)) => {
+                        self.state = CloseSubpathState::PendingMoveTo(point);
+                        Some(PathEl::ClosePath)
+                    }
+                    Some(PathEl::ClosePath) => {
+                        self.state = CloseSubpathState::Start;
+                        el
+                    }
+                    _ => el,
+                }
+            }
+            CloseSubpathState::ClosedLast => None,
+            CloseSubpathState::PendingMoveTo(point) => {
+                self.state = CloseSubpathState::Start;
+                Some(PathEl::MoveTo(point))
+            }
+        }
+    }
+}
+
 /// Transform an iterator over path elements into one over path
 /// segments.
 ///
@@ -785,6 +888,7 @@ pub struct Segments<I: Iterator<Item = PathEl>> {
 impl<I: Iterator<Item = PathEl>> Iterator for Segments<I> {
     type Item = PathSeg;
 
+    #[inline]
     fn next(&mut self) -> Option<PathSeg> {
         for el in &mut self.elements {
             // We first need to check whether this is the first
@@ -962,7 +1066,7 @@ impl PathSeg {
         }
     }
 
-    /// Convert this segment to a cubic bezier.
+    /// Convert this segment to a cubic Bézier.
     pub fn to_cubic(&self) -> CubicBez {
         match *self {
             PathSeg::Line(Line { p0, p1 }) => CubicBez::new(p0, p0, p1, p1),
@@ -971,7 +1075,16 @@ impl PathSeg {
         }
     }
 
-    // Assumes split at extrema.
+    /// A single-segment "winding" number.
+    ///
+    /// Assume that `self` is monotonic in `y`, and take a ray pointing
+    /// left from `p`. If `self` crosses that ray, returns 1 (if we're
+    /// decreasing in y) or -1 (if we're increasing in y). Otherwise, returns 0.
+    ///
+    /// Handling of endpoints is a little subtle, just to make sure that
+    /// we correctly handle consecutive segments: we consider `self` to
+    /// contain the endpoint with smaller y, and not contain the endpoint
+    /// with larger y.
     fn winding_inner(&self, p: Point) -> i32 {
         let start = self.start();
         let end = self.end();
@@ -1014,20 +1127,9 @@ impl PathSeg {
                 if p.x >= start.x.max(end.x).max(p1.x) {
                     return sign;
                 }
-                let a = end.y - 2.0 * p1.y + start.y;
-                let b = 2.0 * (p1.y - start.y);
-                let c = start.y - p.y;
-                for t in solve_quadratic(c, b, a) {
-                    if (0.0..=1.0).contains(&t) {
-                        let x = quad.eval(t).x;
-                        if p.x >= x {
-                            return sign;
-                        } else {
-                            return 0;
-                        }
-                    }
-                }
-                0
+                let t = quad.solve_monotonic_for_y(p.y);
+                let x = quad.eval(t).x;
+                if p.x >= x { sign } else { 0 }
             }
             PathSeg::Cubic(cubic) => {
                 let p1 = cubic.p1;
@@ -1038,21 +1140,9 @@ impl PathSeg {
                 if p.x >= start.x.max(end.x).max(p1.x).max(p2.x) {
                     return sign;
                 }
-                let a = end.y - 3.0 * p2.y + 3.0 * p1.y - start.y;
-                let b = 3.0 * (p2.y - 2.0 * p1.y + start.y);
-                let c = 3.0 * (p1.y - start.y);
-                let d = start.y - p.y;
-                for t in solve_cubic(d, c, b, a) {
-                    if (0.0..=1.0).contains(&t) {
-                        let x = cubic.eval(t).x;
-                        if p.x >= x {
-                            return sign;
-                        } else {
-                            return 0;
-                        }
-                    }
-                }
-                0
+                let t = cubic.solve_monotonic_for_y(p.y);
+                let x = cubic.eval(t).x;
+                if p.x >= x { sign } else { 0 }
             }
         }
     }
@@ -1166,7 +1256,7 @@ impl PathSeg {
         result
     }
 
-    /// Is this Bezier path finite?
+    /// Is this Bézier path finite?
     #[inline]
     pub fn is_finite(&self) -> bool {
         match self {
@@ -1176,7 +1266,7 @@ impl PathSeg {
         }
     }
 
-    /// Is this Bezier path NaN?
+    /// Is this Bézier path NaN?
     #[inline]
     pub fn is_nan(&self) -> bool {
         match self {
@@ -1253,22 +1343,14 @@ impl PathSeg {
                     d01
                 } else {
                     let d02 = c.p2 - c.p0;
-                    if d02.hypot2() > EPS {
-                        d02
-                    } else {
-                        c.p3 - c.p0
-                    }
+                    if d02.hypot2() > EPS { d02 } else { c.p3 - c.p0 }
                 };
                 let d23 = c.p3 - c.p2;
                 let d1 = if d23.hypot2() > EPS {
                     d23
                 } else {
                     let d13 = c.p3 - c.p1;
-                    if d13.hypot2() > EPS {
-                        d13
-                    } else {
-                        c.p3 - c.p0
-                    }
+                    if d13.hypot2() > EPS { d13 } else { c.p3 - c.p0 }
                 };
                 (d0, d1)
             }
@@ -1295,7 +1377,7 @@ impl LineIntersection {
     }
 }
 
-// Return polynomial coefficients given cubic bezier coordinates.
+// Return polynomial coefficients given cubic Bézier coordinates.
 fn quadratic_bez_coefs(x0: f64, x1: f64, x2: f64) -> (f64, f64, f64) {
     let p0 = x0;
     let p1 = 2.0 * x1 - 2.0 * x0;
@@ -1303,7 +1385,7 @@ fn quadratic_bez_coefs(x0: f64, x1: f64, x2: f64) -> (f64, f64, f64) {
     (p0, p1, p2)
 }
 
-// Return polynomial coefficients given cubic bezier coordinates.
+// Return polynomial coefficients given cubic Bézier coordinates.
 fn cubic_bez_coefs(x0: f64, x1: f64, x2: f64, x3: f64) -> (f64, f64, f64, f64) {
     let p0 = x0;
     let p1 = 3.0 * x1 - 3.0 * x0;
@@ -1667,6 +1749,22 @@ mod tests {
         let path = BezPath::from_svg("M200,300 C50,50 350,50 200,300").unwrap();
         assert_eq!(Rect::new(50.0, 50.0, 350.0, 300.0), path.control_box());
         assert!(path.control_box().area() > path.bounding_box().area());
+    }
+
+    #[test]
+    fn test_subpaths() {
+        let path = BezPath::from_svg("M10,10 L0,10 L0,0 L10,0 Z M100,100 M30,0 Q35,10,40,0 L30,0")
+            .unwrap();
+        assert_eq!(
+            vec![
+                BezPath::from_svg("M10,10 L0,10 L0,0 L10,0 Z").unwrap(),
+                BezPath::from_svg("M100,100").unwrap(),
+                BezPath::from_svg("M30,0 Q35,10,40,0 L30,0").unwrap(),
+            ],
+            path.subpaths()
+                .map(|sp| BezPath::from_vec(sp.to_vec()))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -2072,18 +2170,22 @@ mod tests {
         let r = Rect::from_points((x0, y0), (x1, y1));
 
         let path0 = r.into_path(0.0);
-        assert!(path0
-            .elements()
-            .iter()
-            .skip(1)
-            .all(|el| !matches!(el, PathEl::MoveTo(_))));
+        assert!(
+            path0
+                .elements()
+                .iter()
+                .skip(1)
+                .all(|el| !matches!(el, PathEl::MoveTo(_)))
+        );
 
         let path1 = BezPath::from_path_segments(path0.segments());
-        assert!(path1
-            .elements()
-            .iter()
-            .skip(1)
-            .all(|el| !matches!(el, PathEl::MoveTo(_))));
+        assert!(
+            path1
+                .elements()
+                .iter()
+                .skip(1)
+                .all(|el| !matches!(el, PathEl::MoveTo(_)))
+        );
     }
 
     #[test]
@@ -2108,5 +2210,102 @@ mod tests {
         assert_eq!(path.current_position(), Some(Point::new(0., 10.)));
         path.close_path();
         assert_eq!(path.current_position(), None);
+    }
+
+    // Regression test for #531
+    //
+    // When testing the winding number of a point whose y coordinate is very
+    // close (or equal to) the y coordinate of a segment's start or end, we need
+    // to be consistent about how we treat it. In particular, in #531 we noticed
+    // that the point was within the y range of a monotonic segment, but because
+    // of rounding errors the cubic solver disagreed.
+    #[test]
+    fn winding_endpoints() {
+        let bez = BezPath::from_vec(vec![
+            PathEl::MoveTo((200.0, 410.0).into()),
+            PathEl::CurveTo(
+                (139.0, 410.0).into(),
+                (90.0, 360.8772277832031).into(),
+                (90.0, 300.0).into(),
+            ),
+            PathEl::CurveTo(
+                (90.0, 239.0).into(),
+                (139.0, 190.0).into(),
+                (200.0, 190.0).into(),
+            ),
+            PathEl::CurveTo(
+                (150.0, 210.0).into(),
+                (110.0, 250.0).into(),
+                (110.0, 300.0).into(),
+            ),
+            PathEl::CurveTo(
+                (110.0, 349.0).into(),
+                (150.0, 390.0).into(),
+                (200.0, 390.0).into(),
+            ),
+            PathEl::ClosePath,
+        ]);
+
+        assert!(bez.contains((100.0, 300.1).into()));
+        assert!(bez.contains((100.0, 299.9).into()));
+        assert!(bez.contains((100.0, 300.0).into()));
+    }
+
+    #[test]
+    fn check_close_subpaths() {
+        let mut bez = BezPath::new();
+        bez.move_to((10.0, 10.0));
+        bez.line_to((100.0, 20.0));
+        bez.line_to((60.0, 100.0));
+        let elements = close_subpaths(&bez).collect::<Vec<_>>();
+        bez.close_path();
+        assert_eq!(&elements, bez.elements());
+
+        // Test implicit closepath in middle of path
+        let mut bez2 = BezPath::new();
+        bez2.move_to((10.0, 10.0));
+        bez2.line_to((100.0, 20.0));
+        bez2.line_to((60.0, 100.0));
+        bez2.move_to((110.0, 10.0));
+        bez2.line_to((200.0, 20.0));
+        bez2.line_to((160.0, 100.0));
+        let elements2 = close_subpaths(&bez2).collect::<Vec<_>>();
+        let mut bez3 = BezPath::new();
+        bez3.move_to((10.0, 10.0));
+        bez3.line_to((100.0, 20.0));
+        bez3.line_to((60.0, 100.0));
+        bez3.close_path();
+        bez3.move_to((110.0, 10.0));
+        bez3.line_to((200.0, 20.0));
+        bez3.line_to((160.0, 100.0));
+        bez3.close_path();
+        assert_eq!(&elements2, bez3.elements());
+    }
+
+    #[test]
+    fn close_subpaths_does_not_duplicate_existing_closepath() {
+        let path = BezPath::from_vec(vec![
+            PathEl::MoveTo((0.0, 0.0).into()),
+            PathEl::LineTo((10.0, 0.0).into()),
+            PathEl::LineTo((10.0, 10.0).into()),
+            PathEl::ClosePath,
+            PathEl::MoveTo((20.0, 0.0).into()),
+            PathEl::LineTo((30.0, 0.0).into()),
+        ]);
+
+        let closed = close_subpaths(path.iter()).collect::<Vec<_>>();
+
+        assert_eq!(
+            closed,
+            vec![
+                PathEl::MoveTo((0.0, 0.0).into()),
+                PathEl::LineTo((10.0, 0.0).into()),
+                PathEl::LineTo((10.0, 10.0).into()),
+                PathEl::ClosePath,
+                PathEl::MoveTo((20.0, 0.0).into()),
+                PathEl::LineTo((30.0, 0.0).into()),
+                PathEl::ClosePath,
+            ]
+        );
     }
 }

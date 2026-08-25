@@ -70,8 +70,10 @@
 //! * `CFLAGS` - a series of space separated flags passed to compilers. Note that
 //!   individual flags cannot currently contain spaces, so doing
 //!   something like: `-L=foo\ bar` is not possible.
-//! * `CC` - the actual C compiler used. Note that this supports passing a known
-//!   wrapper via `sccache cc`. This compiler must understand the `-c` flag. For
+//! * `CC` - the actual C compiler used. Note that this is used as an exact
+//!   executable name, so (for example) no extra flags can be passed inside
+//!   this variable, and the builder must ensure that there aren't any
+//!   trailing spaces. This compiler must understand the `-c` flag. For
 //!   certain `TARGET`s, it also is assumed to know about other flags (most
 //!   common is `-fPIC`).
 //!   ccache, distcc, sccache, icecc, cachepot and buildcache are supported,
@@ -1670,10 +1672,6 @@ impl Build {
                 if cfg!(target_os = "linux") {
                     libdir.push("targets");
                     libdir.push(format!("{}-linux", target.arch));
-                    if !libdir.exists() && target.arch == "aarch64" {
-                        libdir.pop();
-                        libdir.push("sbsa-linux");
-                    }
                     libdir.push("lib");
                     libtst = true;
                 } else if cfg!(target_env = "msvc") {
@@ -1999,21 +1997,9 @@ impl Build {
         // CFLAGS/CXXFLAGS, since those variables presumably already contain
         // the desired set of warnings flags.
         let envflags = self.envflags(if self.cpp { "CXXFLAGS" } else { "CFLAGS" })?;
-        match self.warnings {
-            Some(true) => {
-                let wflags = cmd.family.warnings_flags().into();
-                cmd.push_cc_arg(wflags);
-            }
-            Some(false) => {
-                let wflags = cmd.family.warnings_suppression_flags().into();
-                cmd.push_cc_arg(wflags);
-            }
-            None => {
-                if envflags.is_none() {
-                    let wflags = cmd.family.warnings_flags().into();
-                    cmd.push_cc_arg(wflags);
-                }
-            }
+        if self.warnings.unwrap_or(envflags.is_none()) {
+            let wflags = cmd.family.warnings_flags().into();
+            cmd.push_cc_arg(wflags);
         }
         if self.extra_warnings.unwrap_or(envflags.is_none()) {
             if let Some(wflags) = cmd.family.extra_warnings_flags() {
@@ -2127,7 +2113,6 @@ impl Build {
                     target.os != "windows"
                         && target.os != "none"
                         && target.os != "uefi"
-                        && target.os != "vita"
                         && target.arch != "wasm32"
                         && target.arch != "wasm64",
                 ) {
@@ -2307,15 +2292,10 @@ impl Build {
                 cmd.push_cc_arg("-Brepro".into());
 
                 if clang_cl {
-                    cmd.push_cc_arg(
-                        format!(
-                            "--target={}",
-                            target.llvm_target(&self.get_raw_target()?, None)
-                        )
-                        .into(),
-                    );
-
-                    if target.arch == "x86" {
+                    if target.arch == "x86_64" {
+                        cmd.push_cc_arg("-m64".into());
+                    } else if target.arch == "x86" {
+                        cmd.push_cc_arg("-m32".into());
                         // See
                         // <https://learn.microsoft.com/en-us/cpp/build/reference/arch-x86?view=msvc-170>.
                         //
@@ -2326,6 +2306,14 @@ impl Build {
                         // <https://github.com/microsoft/STL/issues/3922>, and -
                         // <https://github.com/microsoft/STL/pull/4741>.
                         cmd.push_cc_arg("-arch:SSE2".into());
+                    } else {
+                        cmd.push_cc_arg(
+                            format!(
+                                "--target={}",
+                                target.llvm_target(&self.get_raw_target()?, None)
+                            )
+                            .into(),
+                        );
                     }
                 } else if target.full_arch == "i586" {
                     cmd.push_cc_arg("-arch:IA32".into());
@@ -3153,8 +3141,12 @@ impl Build {
         // If this is an exact path on the filesystem we don't want to do any
         // interpretation at all, just pass it on through. This'll hopefully get
         // us to support spaces-in-paths.
-        if let Some(exe) = check_exe(Path::new(tool).into()) {
-            return Some((exe, self.rustc_wrapper_fallback(), Vec::new()));
+        if Path::new(tool).exists() {
+            return Some((
+                PathBuf::from(tool),
+                self.rustc_wrapper_fallback(),
+                Vec::new(),
+            ));
         }
 
         // Ok now we want to handle a couple of scenarios. We'll assume from
@@ -3590,18 +3582,8 @@ impl Build {
                         "riscv64-unknown-elf",
                         "riscv-none-embed",
                     ]),
-                    "riscv32im-unknown-none-elf" => self.find_working_gnu_prefix(&[
-                        "riscv32-unknown-elf",
-                        "riscv64-unknown-elf",
-                        "riscv-none-embed",
-                    ]),
                     "riscv32imac-esp-espidf" => Some("riscv32-esp-elf"),
                     "riscv32imac-unknown-none-elf" => self.find_working_gnu_prefix(&[
-                        "riscv32-unknown-elf",
-                        "riscv64-unknown-elf",
-                        "riscv-none-embed",
-                    ]),
-                    "riscv32imafc-unknown-none-elf" => self.find_working_gnu_prefix(&[
                         "riscv32-unknown-elf",
                         "riscv64-unknown-elf",
                         "riscv-none-embed",
@@ -3628,7 +3610,6 @@ impl Build {
                         "riscv-none-embed",
                     ]),
                     "riscv64gc-unknown-linux-gnu" => Some("riscv64-linux-gnu"),
-                    "riscv64a23-unknown-linux-gnu" => Some("riscv64-linux-gnu"),
                     "riscv32gc-unknown-linux-gnu" => Some("riscv32-linux-gnu"),
                     "riscv64gc-unknown-linux-musl" => Some("riscv64-linux-musl"),
                     "riscv32gc-unknown-linux-musl" => Some("riscv32-linux-musl"),
@@ -4195,6 +4176,13 @@ impl Build {
     }
 
     fn which(&self, tool: &Path, path_entries: Option<&OsStr>) -> Option<PathBuf> {
+        fn check_exe(mut exe: PathBuf) -> Option<PathBuf> {
+            let exe_ext = std::env::consts::EXE_EXTENSION;
+            let check =
+                exe.exists() || (!exe_ext.is_empty() && exe.set_extension(exe_ext) && exe.exists());
+            check.then_some(exe)
+        }
+
         // Loop through PATH entries searching for the |tool|.
         let find_exe_in_path = |path_entries: &OsStr| -> Option<PathBuf> {
             env::split_paths(path_entries).find_map(|path_entry| check_exe(path_entry.join(tool)))
@@ -4463,16 +4451,10 @@ fn check_disabled() -> Result<(), Error> {
     if is_disabled() {
         return Err(Error::new(
             ErrorKind::Disabled,
-            "the `cc` crate's functionality has been disabled by the `CC_FORCE_DISABLE` environment variable.",
+            "the `cc` crate's functionality has been disabled by the `CC_FORCE_DISABLE` environment variable."
         ));
     }
     Ok(())
-}
-
-fn check_exe(mut exe: PathBuf) -> Option<PathBuf> {
-    let exe_ext = std::env::consts::EXE_EXTENSION;
-    let check = exe.exists() || (!exe_ext.is_empty() && exe.set_extension(exe_ext) && exe.exists());
-    check.then_some(exe)
 }
 
 #[cfg(test)]

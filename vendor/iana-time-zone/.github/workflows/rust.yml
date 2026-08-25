@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runs-on: [ubuntu-22.04, windows-2022, macos-latest]
+        runs-on: [ubuntu-22.04, windows-2022, macos-13]
         toolchain:
           - "1.62"
           - stable
@@ -37,7 +37,7 @@ jobs:
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -99,7 +99,7 @@ jobs:
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update --target wasm32-unknown-unknown
           rustup default ${{ matrix.toolchain }}
       - name: Install Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v5
         with:
           node-version: "lts/*"
       - name: Install "wasm-pack"
@@ -108,60 +108,11 @@ jobs:
           tool: wasm-pack
       - run: wasm-pack test --node
 
-  test-wasi:
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain:
-          - stable
-          - nightly
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
-        with:
-          persist-credentials: false
-      - name: Install Rust
-        run: |
-          rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update --target wasm32-wasip1
-          rustup default ${{ matrix.toolchain }}
-      - env:
-          CARGO_BUILD_TARGET: wasm32-wasip1
-        run: cargo build --release --examples
-      - name: Install wasmtime
-        uses: bytecodealliance/actions/wasmtime/setup@6aecabac1eb1dcf7ed94ba9471974415ee2ebef2 # v1
-      - name: Run example using wasmtime
-        run: wasmtime ./target/wasm32-wasip1/release/examples/get_timezone.wasm
-
-  test-emscripten:
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain:
-          - stable
-          - nightly
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
-        with:
-          persist-credentials: false
-      - name: Install Rust
-        run: |
-          rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update --target wasm32-unknown-emscripten
-          rustup default ${{ matrix.toolchain }}
-      - uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
-      - env:
-          CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUNNER: node
-          CARGO_BUILD_TARGET: wasm32-unknown-emscripten
-        run: cargo test
-
   build-cross:
     strategy:
       fail-fast: false
       matrix:
         target:
-          - s390x-unknown-linux-gnu
           - x86_64-unknown-freebsd
           - x86_64-unknown-illumos
           # # NetBSD disabled waiting for release with fix from
@@ -175,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -197,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -250,10 +201,10 @@ jobs:
           # 1.65 or newer, while the currently active rustc version is 1.62.0
           - toolchain: "1.62"
             versions: ""
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -265,7 +216,7 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: 1
       - name: Install "cross"
-        run: curl --location --silent --show-error --fail https://github.com/cargo-bins/cargo-quickinstall/releases/download/cross-0.2.5/cross-0.2.5-x86_64-apple-darwin.tar.gz | tar -xzvvf - -C $HOME/.cargo/bin
+        run: curl --location --silent --show-error --fail https://github.com/cargo-bins/cargo-quickinstall/releases/download/cross-0.2.5-x86_64-apple-darwin/cross-0.2.5-x86_64-apple-darwin.tar.gz | tar -xzvvf - -C $HOME/.cargo/bin
       - run: cross build --target ${{ matrix.target }} --examples
 
   check:
@@ -290,7 +241,7 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -308,7 +259,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -321,7 +272,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -334,7 +285,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -343,7 +294,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -359,12 +310,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
       - name: Setup Node.js runtime
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v5
         with:
           node-version: "lts/*"
       - name: Install npm
@@ -377,7 +328,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runs-on: [ubuntu-22.04, windows-2022, macos-latest]
+        runs-on: [ubuntu-22.04, windows-2022, macos-13]
         toolchain:
           - stable
         versions:
@@ -388,7 +339,7 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -417,7 +368,7 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Rust
@@ -438,7 +389,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -458,7 +409,7 @@ jobs:
     name: Generate windows-core bindings with windows-bindgen
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Clean
@@ -471,7 +422,7 @@ jobs:
   typos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: crate-ci/typos@master
@@ -483,12 +434,12 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Run DevSkim scanner
         uses: microsoft/DevSkim-Action@v1
       - name: Upload DevSkim scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: devskim-results.sarif

@@ -12,7 +12,7 @@ categories = [
 ]
 description = "A library to generate and parse UUIDs."
 documentation = "https://docs.rs/uuid"
-edition = "2021"
+edition = "2018"
 include = [
     "src",
     "README.md",
@@ -29,8 +29,8 @@ homepage = "https://github.com/uuid-rs/uuid"
 name = "uuid"
 readme = "README.md"
 repository = "https://github.com/uuid-rs/uuid"
-version = "1.21.0" # remember to update html_root_url in lib.rs
-rust-version = "1.85.0"
+version = "1.18.1" # remember to update html_root_url in lib.rs
+rust-version = "1.63.0"
 
 [package.metadata.docs.rs]
 rustc-args = ["--cfg", "uuid_unstable"]
@@ -56,8 +56,7 @@ status = "actively-developed"
 [features]
 default = ["std"]
 std = ["wasm-bindgen?/std", "js-sys?/std"]
-# Deprecated; now a no-op
-macro-diagnostics = []
+macro-diagnostics = ["dep:uuid-macro-internal"]
 
 # NOTE: When adding new features, check the `ci.yml` workflow
 # and include them where necessary (you can follow along with existing features)
@@ -74,7 +73,6 @@ js = ["dep:wasm-bindgen", "dep:js-sys"]
 rng = ["dep:getrandom"]
 rng-getrandom = ["rng", "dep:getrandom", "uuid-rng-internal-lib", "uuid-rng-internal-lib/getrandom"]
 rng-rand = ["rng", "dep:rand", "uuid-rng-internal-lib", "uuid-rng-internal-lib/rand"]
-serde = ["dep:serde_core"]
 
 fast-rng = ["rng", "dep:rand"]
 
@@ -86,15 +84,15 @@ borsh = ["dep:borsh", "dep:borsh-derive"]
 
 # Public: Used in trait impls on `Uuid`
 [dependencies.bytemuck]
-version = "1.21.0"
+version = "1.18.1"
 optional = true
 features = ["derive"]
 
 # Public: Used in trait impls on `Uuid`
-[dependencies.serde_core]
+[dependencies.serde]
 default-features = false
 optional = true
-version = "1.0.221"
+version = "1.0.56"
 
 # Public: Used in trait impls on `Uuid`
 [dependencies.slog]
@@ -134,13 +132,13 @@ default-features = false
 # Private
 # (Formally public)
 [target.'cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))'.dependencies.getrandom]
-version = "0.4"
+version = "0.3"
 optional = true
 
 [target.'cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))'.dependencies.uuid-rng-internal-lib]
 # Work-around lack of support for both `dep:x` and `x/` in MSRV
 package = "uuid-rng-internal"
-version = "1.21.0"
+version = "1.18.1"
 path = "rng"
 optional = true
 
@@ -161,6 +159,12 @@ default-features = false
 optional = true
 version = "1"
 
+# Public: Re-exported
+[dependencies.uuid-macro-internal]
+version = "1.18.1"
+path = "macros"
+optional = true
+
 # Private
 [dependencies.atomic]
 default-features = false
@@ -180,11 +184,11 @@ default-features = false
 version = "0.3"
 optional = true
 
-[dev-dependencies.serde]
-version = "1.0.221"
+[dev-dependencies.bincode]
+version = "1.0"
 
 [dev-dependencies.serde_derive]
-version = "1.0.221"
+version = "1.0.79"
 
 [dev-dependencies.serde_json]
 version = "1.0"
@@ -206,6 +210,7 @@ version = "1"
 
 [workspace]
 members = [
+    "macros",
     "rng",
     "examples",
     "tests/smoke-test",

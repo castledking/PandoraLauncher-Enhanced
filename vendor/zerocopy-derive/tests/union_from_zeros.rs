@@ -16,7 +16,6 @@ include!("include.rs");
 // - all fields are `imp::FromZeros`
 
 #[derive(Clone, Copy, imp::Immutable, imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union Zst {
     a: (),
 }
@@ -24,7 +23,6 @@ union Zst {
 util_assert_impl_all!(Zst: imp::FromZeros);
 
 #[derive(imp::Immutable, imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union One {
     a: bool,
 }
@@ -32,7 +30,6 @@ union One {
 util_assert_impl_all!(One: imp::FromZeros);
 
 #[derive(imp::Immutable, imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union Two {
     a: bool,
     b: Zst,
@@ -41,7 +38,6 @@ union Two {
 util_assert_impl_all!(Two: imp::FromZeros);
 
 #[derive(imp::Immutable, imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 union TypeParams<'a, T: imp::Copy, I: imp::Iterator>
 where
     I::Item: imp::Copy,
@@ -59,7 +55,6 @@ util_assert_impl_all!(TypeParams<'static, (), imp::IntoIter<()>>: imp::FromZeros
 // Deriving `imp::FromZeros` should work if the union has bounded parameters.
 
 #[derive(imp::Immutable, imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(C)]
 union WithParams<'a: 'b, 'b: 'a, T: 'a + 'b + imp::FromZeros, const N: usize>
 where
@@ -72,12 +67,3 @@ where
 }
 
 util_assert_impl_all!(WithParams<'static, 'static, u8, 42>: imp::FromZeros);
-
-#[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
-#[repr(C)]
-union UnsafeCellUnion {
-    a: imp::ManuallyDrop<imp::UnsafeCell<u8>>,
-}
-
-util_assert_impl_all!(UnsafeCellUnion: imp::FromZeros);

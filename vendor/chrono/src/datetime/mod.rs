@@ -21,8 +21,8 @@ use crate::format::Locale;
 #[cfg(feature = "alloc")]
 use crate::format::{DelayedFormat, SecondsFormat, write_rfc2822, write_rfc3339};
 use crate::format::{
-    Fixed, Item, ParseError, ParseResult, Parsed, StrftimeItems, parse, parse_and_remainder,
-    parse_rfc3339,
+    Fixed, Item, ParseError, ParseResult, Parsed, StrftimeItems, TOO_LONG, parse,
+    parse_and_remainder, parse_rfc3339,
 };
 use crate::naive::{Days, IsoWeek, NaiveDate, NaiveDateTime, NaiveTime};
 #[cfg(feature = "clock")]
@@ -414,7 +414,7 @@ impl<Tz: TimeZone> DateTime<Tz> {
     }
 
     /// Fix the offset from UTC to its current value, dropping the associated timezone information.
-    /// This is useful for converting a generic `DateTime<Tz: Timezone>` to `DateTime<FixedOffset>`.
+    /// This it useful for converting a generic `DateTime<Tz: Timezone>` to `DateTime<FixedOffset>`.
     #[inline]
     #[must_use]
     pub fn fixed_offset(&self) -> DateTime<FixedOffset> {
@@ -620,11 +620,10 @@ impl<Tz: TimeZone> DateTime<Tz> {
     /// can not have more than 4 digits.
     #[cfg(feature = "alloc")]
     #[must_use]
-    #[track_caller]
     pub fn to_rfc2822(&self) -> String {
         let mut result = String::with_capacity(32);
         write_rfc2822(&mut result, self.overflowing_naive_local(), self.offset.fix())
-            .expect("date cannot be represented by RFC 2822");
+            .expect("writing rfc2822 datetime to string should never fail");
         result
     }
 
@@ -1069,7 +1068,12 @@ impl DateTime<FixedOffset> {
     /// also simultaneously valid RFC 3339 values, but not all RFC 3339 values are valid ISO 8601
     /// values (or the other way around).
     pub fn parse_from_rfc3339(s: &str) -> ParseResult<DateTime<FixedOffset>> {
-        parse_rfc3339(s)
+        let mut parsed = Parsed::new();
+        let (s, _) = parse_rfc3339(&mut parsed, s)?;
+        if !s.is_empty() {
+            return Err(TOO_LONG);
+        }
+        parsed.to_datetime()
     }
 
     /// Parses a string from a user-specified format into a `DateTime<FixedOffset>` value.
@@ -1519,7 +1523,7 @@ impl<Tz: TimeZone> hash::Hash for DateTime<Tz> {
 /// Add `TimeDelta` to `DateTime`.
 ///
 /// As a part of Chrono's [leap second handling], the addition assumes that **there is no leap
-/// second ever**, except when the `NaiveDateTime` itself represents a leap second in which case
+/// second ever**, except when the `NaiveDateTime` itself represents a leap  second in which case
 /// the assumption becomes that **there is exactly a single leap second ever**.
 ///
 /// # Panics
@@ -1530,7 +1534,6 @@ impl<Tz: TimeZone> Add<TimeDelta> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
     #[inline]
-    #[track_caller]
     fn add(self, rhs: TimeDelta) -> DateTime<Tz> {
         self.checked_add_signed(rhs).expect("`DateTime + TimeDelta` overflowed")
     }
@@ -1539,7 +1542,7 @@ impl<Tz: TimeZone> Add<TimeDelta> for DateTime<Tz> {
 /// Add `std::time::Duration` to `DateTime`.
 ///
 /// As a part of Chrono's [leap second handling], the addition assumes that **there is no leap
-/// second ever**, except when the `NaiveDateTime` itself represents a leap second in which case
+/// second ever**, except when the `NaiveDateTime` itself represents a leap  second in which case
 /// the assumption becomes that **there is exactly a single leap second ever**.
 ///
 /// # Panics
@@ -1550,7 +1553,6 @@ impl<Tz: TimeZone> Add<Duration> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
     #[inline]
-    #[track_caller]
     fn add(self, rhs: Duration) -> DateTime<Tz> {
         let rhs = TimeDelta::from_std(rhs)
             .expect("overflow converting from core::time::Duration to TimeDelta");
@@ -1561,7 +1563,7 @@ impl<Tz: TimeZone> Add<Duration> for DateTime<Tz> {
 /// Add-assign `chrono::Duration` to `DateTime`.
 ///
 /// As a part of Chrono's [leap second handling], the addition assumes that **there is no leap
-/// second ever**, except when the `NaiveDateTime` itself represents a leap second in which case
+/// second ever**, except when the `NaiveDateTime` itself represents a leap  second in which case
 /// the assumption becomes that **there is exactly a single leap second ever**.
 ///
 /// # Panics
@@ -1570,7 +1572,6 @@ impl<Tz: TimeZone> Add<Duration> for DateTime<Tz> {
 /// Consider using [`DateTime<Tz>::checked_add_signed`] to get an `Option` instead.
 impl<Tz: TimeZone> AddAssign<TimeDelta> for DateTime<Tz> {
     #[inline]
-    #[track_caller]
     fn add_assign(&mut self, rhs: TimeDelta) {
         let datetime =
             self.datetime.checked_add_signed(rhs).expect("`DateTime + TimeDelta` overflowed");
@@ -1582,7 +1583,7 @@ impl<Tz: TimeZone> AddAssign<TimeDelta> for DateTime<Tz> {
 /// Add-assign `std::time::Duration` to `DateTime`.
 ///
 /// As a part of Chrono's [leap second handling], the addition assumes that **there is no leap
-/// second ever**, except when the `NaiveDateTime` itself represents a leap second in which case
+/// second ever**, except when the `NaiveDateTime` itself represents a leap  second in which case
 /// the assumption becomes that **there is exactly a single leap second ever**.
 ///
 /// # Panics
@@ -1591,7 +1592,6 @@ impl<Tz: TimeZone> AddAssign<TimeDelta> for DateTime<Tz> {
 /// Consider using [`DateTime<Tz>::checked_add_signed`] to get an `Option` instead.
 impl<Tz: TimeZone> AddAssign<Duration> for DateTime<Tz> {
     #[inline]
-    #[track_caller]
     fn add_assign(&mut self, rhs: Duration) {
         let rhs = TimeDelta::from_std(rhs)
             .expect("overflow converting from core::time::Duration to TimeDelta");
@@ -1608,7 +1608,6 @@ impl<Tz: TimeZone> Add<FixedOffset> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
     #[inline]
-    #[track_caller]
     fn add(mut self, rhs: FixedOffset) -> DateTime<Tz> {
         self.datetime =
             self.naive_utc().checked_add_offset(rhs).expect("`DateTime + FixedOffset` overflowed");
@@ -1632,7 +1631,6 @@ impl<Tz: TimeZone> Add<FixedOffset> for DateTime<Tz> {
 impl<Tz: TimeZone> Add<Months> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
-    #[track_caller]
     fn add(self, rhs: Months) -> Self::Output {
         self.checked_add_months(rhs).expect("`DateTime + Months` out of range")
     }
@@ -1654,7 +1652,6 @@ impl<Tz: TimeZone> Sub<TimeDelta> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
     #[inline]
-    #[track_caller]
     fn sub(self, rhs: TimeDelta) -> DateTime<Tz> {
         self.checked_sub_signed(rhs).expect("`DateTime - TimeDelta` overflowed")
     }
@@ -1674,7 +1671,6 @@ impl<Tz: TimeZone> Sub<Duration> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
     #[inline]
-    #[track_caller]
     fn sub(self, rhs: Duration) -> DateTime<Tz> {
         let rhs = TimeDelta::from_std(rhs)
             .expect("overflow converting from core::time::Duration to TimeDelta");
@@ -1687,7 +1683,7 @@ impl<Tz: TimeZone> Sub<Duration> for DateTime<Tz> {
 /// This is the same as the addition with a negated `TimeDelta`.
 ///
 /// As a part of Chrono's [leap second handling], the addition assumes that **there is no leap
-/// second ever**, except when the `DateTime` itself represents a leap second in which case
+/// second ever**, except when the `DateTime` itself represents a leap  second in which case
 /// the assumption becomes that **there is exactly a single leap second ever**.
 ///
 /// # Panics
@@ -1696,7 +1692,6 @@ impl<Tz: TimeZone> Sub<Duration> for DateTime<Tz> {
 /// Consider using [`DateTime<Tz>::checked_sub_signed`] to get an `Option` instead.
 impl<Tz: TimeZone> SubAssign<TimeDelta> for DateTime<Tz> {
     #[inline]
-    #[track_caller]
     fn sub_assign(&mut self, rhs: TimeDelta) {
         let datetime =
             self.datetime.checked_sub_signed(rhs).expect("`DateTime - TimeDelta` overflowed");
@@ -1708,7 +1703,7 @@ impl<Tz: TimeZone> SubAssign<TimeDelta> for DateTime<Tz> {
 /// Subtract-assign `std::time::Duration` from `DateTime`.
 ///
 /// As a part of Chrono's [leap second handling], the addition assumes that **there is no leap
-/// second ever**, except when the `DateTime` itself represents a leap second in which case
+/// second ever**, except when the `DateTime` itself represents a leap  second in which case
 /// the assumption becomes that **there is exactly a single leap second ever**.
 ///
 /// # Panics
@@ -1717,7 +1712,6 @@ impl<Tz: TimeZone> SubAssign<TimeDelta> for DateTime<Tz> {
 /// Consider using [`DateTime<Tz>::checked_sub_signed`] to get an `Option` instead.
 impl<Tz: TimeZone> SubAssign<Duration> for DateTime<Tz> {
     #[inline]
-    #[track_caller]
     fn sub_assign(&mut self, rhs: Duration) {
         let rhs = TimeDelta::from_std(rhs)
             .expect("overflow converting from core::time::Duration to TimeDelta");
@@ -1734,7 +1728,6 @@ impl<Tz: TimeZone> Sub<FixedOffset> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
     #[inline]
-    #[track_caller]
     fn sub(mut self, rhs: FixedOffset) -> DateTime<Tz> {
         self.datetime =
             self.naive_utc().checked_sub_offset(rhs).expect("`DateTime - FixedOffset` overflowed");
@@ -1758,7 +1751,6 @@ impl<Tz: TimeZone> Sub<FixedOffset> for DateTime<Tz> {
 impl<Tz: TimeZone> Sub<Months> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
-    #[track_caller]
     fn sub(self, rhs: Months) -> Self::Output {
         self.checked_sub_months(rhs).expect("`DateTime - Months` out of range")
     }
@@ -1795,7 +1787,6 @@ impl<Tz: TimeZone> Sub<&DateTime<Tz>> for DateTime<Tz> {
 impl<Tz: TimeZone> Add<Days> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
-    #[track_caller]
     fn add(self, days: Days) -> Self::Output {
         self.checked_add_days(days).expect("`DateTime + Days` out of range")
     }
@@ -1814,7 +1805,6 @@ impl<Tz: TimeZone> Add<Days> for DateTime<Tz> {
 impl<Tz: TimeZone> Sub<Days> for DateTime<Tz> {
     type Output = DateTime<Tz>;
 
-    #[track_caller]
     fn sub(self, days: Days) -> Self::Output {
         self.checked_sub_days(days).expect("`DateTime - Days` out of range")
     }
@@ -1824,16 +1814,6 @@ impl<Tz: TimeZone> fmt::Debug for DateTime<Tz> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.overflowing_naive_local().fmt(f)?;
         self.offset.fmt(f)
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl<Tz: TimeZone> defmt::Format for DateTime<Tz>
-where
-    Tz::Offset: defmt::Format,
-{
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{}{}", self.overflowing_naive_local(), self.offset);
     }
 }
 

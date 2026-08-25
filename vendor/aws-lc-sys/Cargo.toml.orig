@@ -1,12 +1,12 @@
 [package]
 name = "aws-lc-sys"
 description = "AWS-LC is a general-purpose cryptographic library maintained by the AWS Cryptography team for AWS and their customers. It іs based on code from the Google BoringSSL project and the OpenSSL project."
-version = "0.37.1"
-links = "aws_lc_0_37_1"
+version = "0.42.0"
+links = "aws_lc_0_42_0"
 authors = ["AWS-LC"]
 edition = "2021"
 repository = "https://github.com/aws/aws-lc-rs"
-license = "ISC AND (Apache-2.0 OR ISC) AND OpenSSL"
+license = "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
 rust-version = "1.71.0"
 include = [
     "LICENSE",
@@ -15,6 +15,7 @@ include = [
     "/aws-lc/**/*.pl",
     "/aws-lc/**/*.h",
     "/aws-lc/**/*.h.in",
+    "/aws-lc/**/*.pc.in",
     "/aws-lc/**/*.i",
     "/aws-lc/**/*.S",
     "/aws-lc/**/*.asm",
@@ -49,6 +50,7 @@ include = [
     "/builder/**/*.bat",
     "/builder/**/*.sh",
     "/builder/**/*.obj",
+    "/builder/**/*.c",
     "/Cargo.toml",
     "/generated-include/**",
     "/include/**",
@@ -65,6 +67,7 @@ disable-prebuilt-nasm = []
 prebuilt-nasm = []
 all-bindings = []
 default = ['all-bindings']
+fips = ['dep:bindgen']
 
 [build-dependencies]
 cmake.workspace = true
@@ -73,5 +76,10 @@ fs_extra.workspace = true
 cc = { workspace = true, features = ["parallel"] }
 bindgen = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.build-dependencies]
+# Used only for auto-detecting a system-installed AWS-LC on Unix; not available
+# (and not used) on Windows/MSVC.
+pkg-config = { workspace = true }
+
 [package.metadata.aws-lc-sys]
-commit-hash = "bee13c3051b4cdc568d4c358660aeeb734157804"
+commit-hash = "6283365b1d43abadfa9b997812cef06b095f7f04"

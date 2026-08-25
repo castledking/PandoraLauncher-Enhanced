@@ -88,14 +88,14 @@ const _: () = {
 
 macro_rules! externs {
     ($(#[$attr:meta])* extern "C" { $(fn $name:ident($($args:tt)*) -> $ret:ty;)* }) => (
-        #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+        #[cfg(target_family = "wasm")]
         $(#[$attr])*
         extern "C" {
             $(fn $name($($args)*) -> $ret;)*
         }
 
         $(
-            #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
+            #[cfg(not(target_family = "wasm"))]
             #[allow(unused_variables)]
             unsafe extern "C" fn $name($($args)*) -> $ret {
                 panic!("function not implemented on non-wasm32 targets")
@@ -136,7 +136,10 @@ mod externref;
 use externref::__wbindgen_externref_heap_live_count;
 
 pub use crate::__rt::marker::ErasableGeneric;
-pub use crate::convert::JsGeneric;
+pub use crate::convert::{IntoJsGeneric, JsGeneric};
+
+#[doc(hidden)]
+pub mod handler;
 
 mod cast;
 pub use crate::cast::JsCast;
@@ -388,7 +391,7 @@ impl JsValue {
     /// Tests whether this JS value is `null` or `undefined`
     #[inline]
     pub fn is_null_or_undefined(&self) -> bool {
-        __wbindgen_object_is_null_or_undefined(self)
+        __wbindgen_is_null_or_undefined(self)
     }
 
     /// Tests whether the type of this JS value is `symbol`
@@ -1136,34 +1139,33 @@ impl<T: TryFromJsValue> TryFromJsValue for Option<T> {
     }
 }
 
-// `usize` and `isize` have to be treated a bit specially, because we know that
-// they're 32-bit but the compiler conservatively assumes they might be bigger.
-// So, we have to manually forward to the `u32`/`i32` versions.
+// `usize` and `isize` use the public pointer-sized JS number ABI, which is
+// `u32`/`i32` on wasm32 and `f64` on wasm64.
 impl PartialEq<usize> for JsValue {
     #[inline]
     fn eq(&self, other: &usize) -> bool {
-        *self == (*other as u32)
+        *self == (*other as crate::__rt::WasmWordRepr)
     }
 }
 
 impl From<usize> for JsValue {
     #[inline]
     fn from(n: usize) -> Self {
-        Self::from(n as u32)
+        Self::from(n as crate::__rt::WasmWordRepr)
     }
 }
 
 impl PartialEq<isize> for JsValue {
     #[inline]
     fn eq(&self, other: &isize) -> bool {
-        *self == (*other as i32)
+        *self == (*other as crate::__rt::WasmSignedWordRepr)
     }
 }
 
 impl From<isize> for JsValue {
     #[inline]
     fn from(n: isize) -> Self {
-        Self::from(n as i32)
+        Self::from(n as crate::__rt::WasmSignedWordRepr)
     }
 }
 
@@ -1217,8 +1219,7 @@ extern "C" {
 
     fn __wbindgen_is_null(js: &JsValue) -> bool;
     fn __wbindgen_is_undefined(js: &JsValue) -> bool;
-    // TODO: rename to `__wbindgen_is_null_or_undefined` on next schema bump
-    fn __wbindgen_object_is_null_or_undefined(js: &JsValue) -> bool;
+    fn __wbindgen_is_null_or_undefined(js: &JsValue) -> bool;
     fn __wbindgen_is_symbol(js: &JsValue) -> bool;
     fn __wbindgen_is_object(js: &JsValue) -> bool;
     fn __wbindgen_is_function(js: &JsValue) -> bool;
@@ -1270,7 +1271,10 @@ extern "C" {
     fn __wbindgen_exports() -> JsValue;
     fn __wbindgen_memory() -> JsValue;
     fn __wbindgen_module() -> JsValue;
+    fn __wbindgen_instance() -> JsValue;
     fn __wbindgen_function_table() -> JsValue;
+
+    fn __wbindgen_reinit();
 }
 
 // Intrinsics that have to use raw imports because they're matched by other
@@ -1537,21 +1541,9 @@ pub fn anyref_heap_live_count() -> u32 {
 pub trait UnwrapThrowExt<T>: Sized {
     /// Unwrap this `Option` or `Result`, but instead of panicking on failure,
     /// throw an exception to JavaScript.
-    #[cfg_attr(
-        any(
-            debug_assertions,
-            not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))
-        ),
-        track_caller
-    )]
+    #[cfg_attr(any(debug_assertions, not(target_family = "wasm")), track_caller)]
     fn unwrap_throw(self) -> T {
-        if cfg!(all(
-            debug_assertions,
-            all(
-                target_arch = "wasm32",
-                any(target_os = "unknown", target_os = "none")
-            )
-        )) {
+        if cfg!(all(debug_assertions, target_family = "wasm")) {
             let loc = core::panic::Location::caller();
             let msg = alloc::format!(
                 "called `{}::unwrap_throw()` ({}:{}:{})",
@@ -1569,13 +1561,7 @@ pub trait UnwrapThrowExt<T>: Sized {
     /// Unwrap this container's `T` value, or throw an error to JS with the
     /// given message if the `T` value is unavailable (e.g. an `Option<T>` is
     /// `None`).
-    #[cfg_attr(
-        any(
-            debug_assertions,
-            not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))
-        ),
-        track_caller
-    )]
+    #[cfg_attr(any(debug_assertions, not(target_family = "wasm")), track_caller)]
     fn expect_throw(self, message: &str) -> T;
 }
 
@@ -1583,10 +1569,7 @@ impl<T> UnwrapThrowExt<T> for Option<T> {
     fn unwrap_throw(self) -> T {
         const MSG: &str = "called `Option::unwrap_throw()` on a `None` value";
 
-        if cfg!(all(
-            target_arch = "wasm32",
-            any(target_os = "unknown", target_os = "none")
-        )) {
+        if cfg!(target_family = "wasm") {
             if let Some(val) = self {
                 val
             } else if cfg!(debug_assertions) {
@@ -1603,10 +1586,7 @@ impl<T> UnwrapThrowExt<T> for Option<T> {
     }
 
     fn expect_throw(self, message: &str) -> T {
-        if cfg!(all(
-            target_arch = "wasm32",
-            any(target_os = "unknown", target_os = "none")
-        )) {
+        if cfg!(target_family = "wasm") {
             if let Some(val) = self {
                 val
             } else if cfg!(debug_assertions) {
@@ -1631,10 +1611,7 @@ where
     fn unwrap_throw(self) -> T {
         const MSG: &str = "called `Result::unwrap_throw()` on an `Err` value";
 
-        if cfg!(all(
-            target_arch = "wasm32",
-            any(target_os = "unknown", target_os = "none")
-        )) {
+        if cfg!(target_family = "wasm") {
             match self {
                 Ok(val) => val,
                 Err(err) => {
@@ -1659,10 +1636,7 @@ where
     }
 
     fn expect_throw(self, message: &str) -> T {
-        if cfg!(all(
-            target_arch = "wasm32",
-            any(target_os = "unknown", target_os = "none")
-        )) {
+        if cfg!(target_family = "wasm") {
             match self {
                 Ok(val) => val,
                 Err(err) => {
@@ -1695,6 +1669,15 @@ pub fn module() -> JsValue {
     __wbindgen_module()
 }
 
+/// Returns a handle to this Wasm instance's `WebAssembly.Instance`.
+/// This is only available when the final Wasm app is built with
+/// `--target no-modules`, `--target web`, `--target deno` or `--target nodejs`.
+/// It is unavailable for `--target bundler`.
+pub fn instance() -> JsValue {
+    __wbindgen_instance()
+}
+
+// TODO: deprecate next major
 /// Returns a handle to this Wasm instance's `WebAssembly.Instance.prototype.exports`
 pub fn exports() -> JsValue {
     __wbindgen_exports()
@@ -1797,6 +1780,7 @@ impl<T> DerefMut for Clamped<T> {
 ///
 /// ```
 #[derive(Clone, Debug)]
+#[repr(transparent)]
 pub struct JsError {
     value: JsValue,
 }
@@ -1852,3 +1836,10 @@ impl<T: VectorIntoWasmAbi> From<Clamped<Vec<T>>> for JsValue {
         JsValue::from(Clamped(vector.0.into_boxed_slice()))
     }
 }
+
+#[cfg(target_os = "emscripten")]
+#[doc(hidden)]
+#[used]
+#[link_section = "__wasm_bindgen_emscripten_marker"]
+/// A custom data section used to detect Emscripten.
+pub static __WASM_BINDGEN_EMSCRIPTEN_MARKER: [u8; 1] = [1];

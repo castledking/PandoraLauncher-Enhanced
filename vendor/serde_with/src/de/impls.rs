@@ -6,6 +6,8 @@ use hashbrown_0_14::{HashMap as HashbrownMap014, HashSet as HashbrownSet014};
 use hashbrown_0_15::{HashMap as HashbrownMap015, HashSet as HashbrownSet015};
 #[cfg(feature = "hashbrown_0_16")]
 use hashbrown_0_16::{HashMap as HashbrownMap016, HashSet as HashbrownSet016};
+#[cfg(feature = "hashbrown_0_17")]
+use hashbrown_0_17::{HashMap as HashbrownMap017, HashSet as HashbrownSet017};
 #[cfg(feature = "indexmap_1")]
 use indexmap_1::{IndexMap, IndexSet};
 #[cfg(feature = "indexmap_2")]
@@ -48,6 +50,11 @@ pub(crate) mod macros {
                 HashbrownMap016<K: Eq + Hash, V, S: BuildHasher + Default>,
                 (|size| HashbrownMap016::with_capacity_and_hasher(size, Default::default()))
             );
+            #[cfg(feature = "hashbrown_0_17")]
+            $m!(
+                HashbrownMap017<K: Eq + Hash, V, S: BuildHasher + Default>,
+                (|size| HashbrownMap017::with_capacity_and_hasher(size, Default::default()))
+            );
             #[cfg(feature = "indexmap_1")]
             $m!(
                 IndexMap<K: Eq + Hash, V, S: BuildHasher + Default>,
@@ -87,6 +94,12 @@ pub(crate) mod macros {
             $m!(
                 HashbrownSet016<T: Eq + Hash, S: BuildHasher + Default>,
                 (|size| HashbrownSet016::with_capacity_and_hasher(size, S::default())),
+                insert
+            );
+            #[cfg(feature = "hashbrown_0_17")]
+            $m!(
+                HashbrownSet017<T: Eq + Hash, S: BuildHasher + Default>,
+                (|size| HashbrownSet017::with_capacity_and_hasher(size, S::default())),
                 insert
             );
             #[cfg(feature = "indexmap_1")]
@@ -1705,35 +1718,52 @@ impl<'de, const N: usize> DeserializeAs<'de, Box<[u8; N]>> for Bytes {
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, TAs, FORMAT> DeserializeAs<'de, Vec<T>> for OneOrMany<TAs, FORMAT>
-where
-    TAs: DeserializeAs<'de, T>,
-    FORMAT: Format,
-{
-    fn deserialize_as<D>(deserializer: D) -> Result<Vec<T>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let is_hr = deserializer.is_human_readable();
-        let content: content::de::Content<'de> = Deserialize::deserialize(deserializer)?;
+macro_rules! one_or_many_impl {
+    (
+        $ty:ident < T $(: $tbound1:ident $(+ $tbound2:ident)*)? $(, $typaram:ident : $bound1:ident $(+ $bound2:ident)* )* >,
+        $with_capacity:expr,
+        $append:ident
+    ) => {
+        impl<'de, T, TAs, FORMAT $(, $typaram)*> DeserializeAs<'de, $ty<T $(, $typaram)*>> for OneOrMany<TAs, FORMAT>
+        where
+            TAs: DeserializeAs<'de, T>,
+            FORMAT: Format,
+            $(T: $tbound1 $(+ $tbound2)*,)?
+            $($typaram: $bound1 $(+ $bound2)*),*
+        {
+            fn deserialize_as<D>(deserializer: D) -> Result<$ty<T $(, $typaram)*>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let is_hr = deserializer.is_human_readable();
+                let content: content::de::Content<'de> = Deserialize::deserialize(deserializer)?;
 
-        let one_err: D::Error = match <DeserializeAsWrap<T, TAs>>::deserialize(
-            content::de::ContentRefDeserializer::new(&content, is_hr),
-        ) {
-            Ok(one) => return Ok(alloc::vec![one.into_inner()]),
-            Err(err) => err,
-        };
-        let many_err: D::Error = match <DeserializeAsWrap<Vec<T>, Vec<TAs>>>::deserialize(
-            content::de::ContentDeserializer::new(content, is_hr),
-        ) {
-            Ok(many) => return Ok(many.into_inner()),
-            Err(err) => err,
-        };
-        Err(DeError::custom(format_args!(
-            "OneOrMany could not deserialize any variant:\n  One: {one_err}\n  Many: {many_err}"
-        )))
-    }
+                let one_err: D::Error = match <DeserializeAsWrap<T, TAs>>::deserialize(
+                    content::de::ContentRefDeserializer::new(&content, is_hr),
+                ) {
+                    Ok(one) => {
+                        #[allow(clippy::redundant_closure_call)]
+                        let mut values = ($with_capacity)(1);
+                        values.$append(one.into_inner());
+                        return Ok(values.into());
+                    }
+                    Err(err) => err,
+                };
+                let many_err: D::Error = match <DeserializeAsWrap<$ty<T $(, $typaram)*>, $ty<TAs $(, $typaram)*>>>::deserialize(
+                    content::de::ContentDeserializer::new(content, is_hr),
+                ) {
+                    Ok(many) => return Ok(many.into_inner()),
+                    Err(err) => err,
+                };
+                Err(DeError::custom(format_args!(
+                    "OneOrMany could not deserialize any variant:\n  One: {one_err}\n  Many: {many_err}"
+                )))
+            }
+        }
+    };
 }
+#[cfg(feature = "alloc")]
+foreach_seq!(one_or_many_impl);
 
 #[cfg(all(feature = "alloc", feature = "smallvec_1"))]
 impl<'de, T, TAs, FORMAT, A> DeserializeAs<'de, smallvec_1::SmallVec<A>> for OneOrMany<TAs, FORMAT>

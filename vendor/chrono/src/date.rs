@@ -497,7 +497,6 @@ impl<Tz: TimeZone> Add<TimeDelta> for Date<Tz> {
     type Output = Date<Tz>;
 
     #[inline]
-    #[track_caller]
     fn add(self, rhs: TimeDelta) -> Date<Tz> {
         self.checked_add_signed(rhs).expect("`Date + TimeDelta` overflowed")
     }
@@ -505,7 +504,6 @@ impl<Tz: TimeZone> Add<TimeDelta> for Date<Tz> {
 
 impl<Tz: TimeZone> AddAssign<TimeDelta> for Date<Tz> {
     #[inline]
-    #[track_caller]
     fn add_assign(&mut self, rhs: TimeDelta) {
         self.date = self.date.checked_add_signed(rhs).expect("`Date + TimeDelta` overflowed");
     }
@@ -515,7 +513,6 @@ impl<Tz: TimeZone> Sub<TimeDelta> for Date<Tz> {
     type Output = Date<Tz>;
 
     #[inline]
-    #[track_caller]
     fn sub(self, rhs: TimeDelta) -> Date<Tz> {
         self.checked_sub_signed(rhs).expect("`Date - TimeDelta` overflowed")
     }
@@ -523,7 +520,6 @@ impl<Tz: TimeZone> Sub<TimeDelta> for Date<Tz> {
 
 impl<Tz: TimeZone> SubAssign<TimeDelta> for Date<Tz> {
     #[inline]
-    #[track_caller]
     fn sub_assign(&mut self, rhs: TimeDelta) {
         self.date = self.date.checked_sub_signed(rhs).expect("`Date - TimeDelta` overflowed");
     }
@@ -552,16 +548,6 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.naive_local().fmt(f)?;
         self.offset.fmt(f)
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl<Tz: TimeZone> defmt::Format for Date<Tz>
-where
-    Tz::Offset: defmt::Format,
-{
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{}{}", self.naive_local(), self.offset);
     }
 }
 

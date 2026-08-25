@@ -104,8 +104,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         } else {
             // For non-interleaved images( (1*1) subsampling)
             // number of MCU's are the widths (+7 to account for paddings) divided bu 8.
-            mcu_width = ((self.info.width + 7) / 8) as usize;
-            mcu_height = ((self.info.height + 7) / 8) as usize;
+            mcu_width = (self.info.width as usize + 7) / 8;
+            mcu_height = (self.info.height as usize + 7) / 8;
         }
         if self.is_interleaved
             && self.input_colorspace.num_components() > 1
@@ -450,7 +450,7 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         // For non-interleaved scans (PROGRESSIVE=true), each scan contains a single component
         // and we iterate over that component's actual data unit count, not the interleaved MCU
         // width multiplied by sampling factor.
-        let scan_du_width = if PROGRESSIVE {
+        let mut scan_du_width = if PROGRESSIVE {
             let k = z_scans[0];
             let comp = &self.components[k];
             // Calculate actual data units for this component: ceil(width / (8 * subsampling_ratio))
@@ -459,6 +459,16 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         } else {
             mcu_width
         };
+        // In malformed scans that list multiple components, clamp to the smallest row capacity
+        // to avoid writing past the row buffer.
+        if PROGRESSIVE && z_scans.len() > 1 {
+            let min_du = z_scans
+                .iter()
+                .map(|&k| self.components[k].width_stride / 8)
+                .min()
+                .unwrap_or(0);
+            scan_du_width = scan_du_width.min(min_du);
+        }
 
         for j in 0..scan_du_width {
             // iterate over components
@@ -482,6 +492,10 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                 let channel = if PROGRESSIVE {
                     let offset =
                         mcu_height * component.width_stride * 8 * component.vertical_sample;
+                    // Small stopgap for https://github.com/etemesi254/zune-image/issues/362
+                    if offset >= progressive[k].len(){
+                        return Err(DecodeErrors::FormatStatic("Would panic on slice iteration"))
+                    }
                     &mut progressive[k][offset..]
                 } else {
                     &mut component.raw_coeff
@@ -754,10 +768,17 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                 Marker::EOI => {
                     // silent pass
                 }
+                // Valid markers that can appear between scans at a restart boundary
+                // (restart interval aligns with end of scan). Leave for caller.
+                Marker::SOS | Marker::DHT | Marker::DQT | Marker::DRI | Marker::COM
+                | Marker::APP(_) => {}
                 _ => {
-                    return Err(DecodeErrors::MCUError(format!(
-                        "Marker {marker:?} found in bitstream, possibly corrupt jpeg"
-                    )));
+                    if self.options.strict_mode() {
+                        return Err(DecodeErrors::MCUError(format!(
+                            "Unexpected marker {marker:?} at restart boundary"
+                        )));
+                    }
+                    warn!("Unexpected marker {:?} at restart boundary", marker);
                 }
             }
         }

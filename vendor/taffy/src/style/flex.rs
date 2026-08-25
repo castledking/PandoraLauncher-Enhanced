@@ -73,10 +73,11 @@ use crate::geometry::AbsoluteAxis;
 /// Defaults to [`FlexWrap::NoWrap`]
 ///
 /// [Specification](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum FlexWrap {
     /// Items will not wrap and stay on a single line
+    #[default]
     NoWrap,
     /// Items will wrap according to this item's [`FlexDirection`]
     Wrap,
@@ -84,11 +85,12 @@ pub enum FlexWrap {
     WrapReverse,
 }
 
-impl Default for FlexWrap {
-    fn default() -> Self {
-        Self::NoWrap
-    }
-}
+#[cfg(feature = "parse")]
+crate::util::parse::impl_parse_for_keyword_enum!(FlexWrap,
+    "nowrap" => NoWrap,
+    "wrap" => Wrap,
+    "wrap-reverse" => WrapReverse,
+);
 
 /// The direction of the flexbox layout main axis.
 ///
@@ -101,12 +103,13 @@ impl Default for FlexWrap {
 /// The default behavior is [`FlexDirection::Row`].
 ///
 /// [Specification](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum FlexDirection {
     /// Defines +x as the main axis
     ///
     /// Items will be added from left to right in a row.
+    #[default]
     Row,
     /// Defines +y as the main axis
     ///
@@ -122,34 +125,36 @@ pub enum FlexDirection {
     ColumnReverse,
 }
 
-impl Default for FlexDirection {
-    fn default() -> Self {
-        Self::Row
-    }
-}
+#[cfg(feature = "parse")]
+crate::util::parse::impl_parse_for_keyword_enum!(FlexDirection,
+    "row" => Row,
+    "column" => Column,
+    "row-reverse" => RowReverse,
+    "column-reverse" => ColumnReverse,
+);
 
 impl FlexDirection {
     #[inline]
     /// Is the direction [`FlexDirection::Row`] or [`FlexDirection::RowReverse`]?
-    pub(crate) fn is_row(self) -> bool {
+    pub(crate) const fn is_row(self) -> bool {
         matches!(self, Self::Row | Self::RowReverse)
     }
 
     #[inline]
     /// Is the direction [`FlexDirection::Column`] or [`FlexDirection::ColumnReverse`]?
-    pub(crate) fn is_column(self) -> bool {
+    pub(crate) const fn is_column(self) -> bool {
         matches!(self, Self::Column | Self::ColumnReverse)
     }
 
     #[inline]
     /// Is the direction [`FlexDirection::RowReverse`] or [`FlexDirection::ColumnReverse`]?
-    pub(crate) fn is_reverse(self) -> bool {
+    pub(crate) const fn is_reverse(self) -> bool {
         matches!(self, Self::RowReverse | Self::ColumnReverse)
     }
 
     #[inline]
     /// The `AbsoluteAxis` that corresponds to the main axis
-    pub(crate) fn main_axis(self) -> AbsoluteAxis {
+    pub(crate) const fn main_axis(self) -> AbsoluteAxis {
         match self {
             Self::Row | Self::RowReverse => AbsoluteAxis::Horizontal,
             Self::Column | Self::ColumnReverse => AbsoluteAxis::Vertical,
@@ -158,7 +163,7 @@ impl FlexDirection {
 
     #[inline]
     /// The `AbsoluteAxis` that corresponds to the cross axis
-    pub(crate) fn cross_axis(self) -> AbsoluteAxis {
+    pub(crate) const fn cross_axis(self) -> AbsoluteAxis {
         match self {
             Self::Row | Self::RowReverse => AbsoluteAxis::Vertical,
             Self::Column | Self::ColumnReverse => AbsoluteAxis::Horizontal,

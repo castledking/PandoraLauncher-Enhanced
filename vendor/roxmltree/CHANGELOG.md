@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.1] - 2025-10-09
+### Fixed
+- Remove implict `'static` lifetime bound on `EntityResolver` dyn trait type alias.
+- Upgrade `EntityResolver` dyn trait type alias from `FnMut` to `Fn` to resolve lifetime issues.
+
+## [0.21.0] - 2025-10-04
+### Added
+- `ParsingOptions::entity_resolver` can be used to resolve external entities referenced via public ID and URI.
+
+### Changed
+- `Node::has_attribute`, `Node::attribute` and `Node::attribute_node` match local names similar to how `Node::has_tag_name` works.
+- Various internal performance improvements, e.g. devirtualization of token dispatch and usage of `memchr` for finding delimiters.
+
+### Fixed
+- Possible panic when entity resolution yields unbalanced tags.
+- Quadratic runtime when merging consecutive text nodes.
+
 ## [0.20.0] - 2024-05-23
 ### Added
 - `Attribute::range`, `Attribute::range_qname`, `Attribute::range_value`.

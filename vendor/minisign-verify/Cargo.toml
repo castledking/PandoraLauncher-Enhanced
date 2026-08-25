@@ -12,7 +12,7 @@
 [package]
 edition = "2018"
 name = "minisign-verify"
-version = "0.2.4"
+version = "0.2.5"
 authors = ["Frank Denis <github@pureftpd.org>"]
 build = false
 autolib = false

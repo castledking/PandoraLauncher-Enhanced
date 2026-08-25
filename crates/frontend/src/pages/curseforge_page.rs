@@ -220,21 +220,25 @@ impl CurseforgeSearchPage {
                 for content_folder in ContentFolder::iter() {
                     let mut specific_installed_content: FxHashMap<u32, Vec<InstalledContent>> = FxHashMap::default();
 
-                    for summary in instance_content[content_folder].read(cx).iter() {
-                        let ContentSource::CurseforgeProject { project_id: project } = summary.content_source else {
-                            continue;
-                        };
+                    if let Some(content) = instance_content[content_folder].read(cx).as_ref() {
+                        for summary in content.iter() {
+                            let ContentSource::CurseforgeProject { project_id: project } =
+                                summary.content_source
+                            else {
+                                continue;
+                            };
 
-                        let installed_content = InstalledContent {
-                            content_id: summary.id,
-                            status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
-                        };
+                            let installed_content = InstalledContent {
+                                content_id: summary.id,
+                                status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
+                            };
 
-                        let installed = all_installed_content_by_project.entry(project).or_default();
-                        installed.push(installed_content);
+                            let installed = all_installed_content_by_project.entry(project).or_default();
+                            installed.push(installed_content);
 
-                        let installed = specific_installed_content.entry(project).or_default();
-                        installed.push(installed_content);
+                            let installed = specific_installed_content.entry(project).or_default();
+                            installed.push(installed_content);
+                        }
                     }
 
                     specific_installed_content_by_project[content_folder] = specific_installed_content;
@@ -246,17 +250,20 @@ impl CurseforgeSearchPage {
                         specific.clear();
 
                         let content = entity.read(cx);
-                        for summary in content.iter() {
-                            let ContentSource::CurseforgeProject { project_id: project } = summary.content_source
-                            else {
-                                continue;
-                            };
+                        if let Some(content) = content.as_ref() {
+                            for summary in content.iter() {
+                                let ContentSource::CurseforgeProject { project_id: project } =
+                                    summary.content_source
+                                else {
+                                    continue;
+                                };
 
-                            let installed = specific.entry(project).or_default();
-                            installed.push(InstalledContent {
-                                content_id: summary.id,
-                                status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
-                            })
+                                let installed = specific.entry(project).or_default();
+                                installed.push(InstalledContent {
+                                    content_id: summary.id,
+                                    status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
+                                })
+                            }
                         }
 
                         page.all_installed_content_by_project.clear();
@@ -531,7 +538,7 @@ impl CurseforgeSearchPage {
                 let Some(hit) = self.hits.get(index) else {
                     if let Some(search_error) = self.search_error.clone() {
                         return div().pl_3().pt_3().child(ErrorAlert::new(
-                            t::instance::content::requesting_from_modrinth_error().into(),
+                            t::instance::content::requesting_from_error("Curseforge").into(),
                             search_error,
                         ));
                     } else {
@@ -718,7 +725,7 @@ impl CurseforgeSearchPage {
                                         PrimaryAction::InstallLatest => {
                                             let Some(install_for) = install_for else {
                                                 window.push_notification(
-                                                    (NotificationType::Error, "Unable to find instance"),
+                                                    (NotificationType::Error, t::instance::unable_to_find()),
                                                     cx,
                                                 );
                                                 return;
@@ -726,7 +733,7 @@ impl CurseforgeSearchPage {
 
                                             let Some(entry) = data.instances.read(cx).entries.get(&install_for) else {
                                                 window.push_notification(
-                                                    (NotificationType::Error, "Unable to find instance"),
+                                                    (NotificationType::Error, t::instance::unable_to_find()),
                                                     cx,
                                                 );
                                                 return;
@@ -859,7 +866,7 @@ impl CurseforgeSearchPage {
                     .child(
                         v_flex()
                             .h(px(104.0))
-                            .flex_grow()
+                            .flex_grow(1.0)
                             .gap_1()
                             .overflow_hidden()
                             .child(

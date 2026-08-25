@@ -8,9 +8,9 @@ use core::ops::{Add, Mul, Range, Sub};
 use arrayvec::ArrayVec;
 
 use crate::{
-    Affine, Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea, ParamCurveCurvature,
-    ParamCurveDeriv, ParamCurveExtrema, ParamCurveNearest, PathEl, Point, Rect, Shape, Vec2,
-    DEFAULT_ACCURACY, MAX_EXTREMA,
+    Affine, DEFAULT_ACCURACY, MAX_EXTREMA, Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea,
+    ParamCurveCurvature, ParamCurveDeriv, ParamCurveExtrema, ParamCurveNearest, PathEl, Point,
+    Rect, Shape, Vec2,
 };
 
 /// A single line.
@@ -38,7 +38,7 @@ impl Line {
     /// points in the opposite direction.
     #[must_use]
     #[inline(always)]
-    pub fn reversed(&self) -> Line {
+    pub const fn reversed(&self) -> Line {
         Self {
             p0: self.p1,
             p1: self.p0,
@@ -77,7 +77,7 @@ impl Line {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(self) -> bool {
+    pub const fn is_finite(self) -> bool {
         self.p0.is_finite() && self.p1.is_finite()
     }
 
@@ -85,7 +85,7 @@ impl Line {
     ///
     /// [NaN]: f64::is_nan
     #[inline]
-    pub fn is_nan(self) -> bool {
+    pub const fn is_nan(self) -> bool {
         self.p0.is_nan() || self.p1.is_nan()
     }
 }
@@ -158,19 +158,29 @@ impl ParamCurveArea for Line {
 }
 
 impl ParamCurveNearest for Line {
+    #[inline]
     fn nearest(&self, p: Point, _accuracy: f64) -> Nearest {
         let d = self.p1 - self.p0;
-        let dotp = d.dot(p - self.p0);
-        let d_squared = d.dot(d);
-        let (t, distance_sq) = if dotp <= 0.0 {
-            (0.0, (p - self.p0).hypot2())
-        } else if dotp >= d_squared {
-            (1.0, (p - self.p1).hypot2())
-        } else {
-            let t = dotp / d_squared;
-            let dist = (p - self.eval(t)).hypot2();
-            (t, dist)
-        };
+        let v = p - self.p0;
+
+        // Calculate projection parameter `t` of the point onto the line segment s(t), with
+        // s(t) = (1-t) * p0 + t * p1.
+        //
+        // Note when the segment has 0 length, this will be positive or negative infinity or NaN;
+        // see the clamping below.
+        let t = d.dot(v) / d.hypot2();
+
+        // Clamp the parameter to be on the line segment. This clamps negative infinity and NaN to
+        // `0.`, and positive infinity to `1.`.
+        #[expect(
+            clippy::manual_clamp,
+            reason = "`clamp` uses slightly more instructions than chained `max` and `min` on x86 and aarch64"
+        )]
+        let t = { t.max(0.).min(1.) };
+
+        // Calculate ||p - s(t)||^2.
+        let distance_sq = (v - t * d).hypot2();
+
         Nearest { distance_sq, t }
     }
 }
@@ -200,7 +210,7 @@ impl ConstPoint {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(self) -> bool {
+    pub const fn is_finite(self) -> bool {
         self.0.is_finite()
     }
 
@@ -208,7 +218,7 @@ impl ConstPoint {
     ///
     /// [NaN]: f64::is_nan
     #[inline]
-    pub fn is_nan(self) -> bool {
+    pub const fn is_nan(self) -> bool {
         self.0.is_nan()
     }
 }
@@ -370,28 +380,69 @@ mod tests {
 
     #[test]
     fn line_is_finite() {
-        assert!((Line {
-            p0: Point { x: 0., y: 0. },
-            p1: Point { x: 1., y: 1. }
-        })
-        .is_finite());
+        assert!(
+            (Line {
+                p0: Point { x: 0., y: 0. },
+                p1: Point { x: 1., y: 1. }
+            })
+            .is_finite()
+        );
 
-        assert!(!(Line {
-            p0: Point { x: 0., y: 0. },
-            p1: Point {
-                x: f64::INFINITY,
-                y: 1.
-            }
-        })
-        .is_finite());
+        assert!(
+            !(Line {
+                p0: Point { x: 0., y: 0. },
+                p1: Point {
+                    x: f64::INFINITY,
+                    y: 1.
+                }
+            })
+            .is_finite()
+        );
 
-        assert!(!(Line {
-            p0: Point { x: 0., y: 0. },
-            p1: Point {
-                x: 0.,
-                y: f64::INFINITY
-            }
-        })
-        .is_finite());
+        assert!(
+            !(Line {
+                p0: Point { x: 0., y: 0. },
+                p1: Point {
+                    x: 0.,
+                    y: f64::INFINITY
+                }
+            })
+            .is_finite()
+        );
+    }
+
+    #[test]
+    fn line_nearest() {
+        use crate::{ParamCurve, ParamCurveNearest};
+
+        const EPSILON: f64 = 1e-9;
+
+        let line = Line::new((-4., 0.), (2., 1.));
+
+        // Projects onto the line segment end point.
+        let point = Point::new(4., 0.);
+        let nearest = line.nearest(point, 0.);
+        assert_eq!(nearest.t, 1.);
+        assert!((nearest.distance_sq - line.p1.distance_squared(point)).abs() < EPSILON);
+
+        // Projects onto the line segment start point.
+        let point = Point::new(0., -50.);
+        let nearest = line.nearest(point, 0.);
+        assert_eq!(nearest.t, 0.);
+        assert!((nearest.distance_sq - line.p0.distance_squared(point)).abs() < EPSILON);
+
+        // Projects onto the line segment proper (not just onto one of its extrema).
+        let point = Point::new(-1., 0.5);
+        let nearest = line.nearest(point, 0.);
+        assert!(nearest.t > 0. && nearest.t < 1.);
+        // Ensure evaluating and calculating distance manually has the same result.
+        assert!(
+            (line.eval(nearest.t).distance_squared(point) - nearest.distance_sq).abs() < EPSILON
+        );
+
+        // Test minimality while avoiding reimplementing projection in this test by checking that
+        // moving to a slightly different point on the segment increases the distance.
+        assert!(line.eval(nearest.t * 0.95).distance_squared(point) > nearest.distance_sq);
+        assert!(line.eval(nearest.t * 1.05).distance_squared(point) > nearest.distance_sq);
     }
 }

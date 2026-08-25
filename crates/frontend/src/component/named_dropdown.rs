@@ -5,41 +5,56 @@ use gpui_component::{
 };
 
 #[derive(Clone)]
-pub struct NamedDropdownItem<T: Clone> {
+pub struct NamedDropdownItem<T: Clone + PartialEq> {
     pub name: SharedString,
     pub item: T,
 }
 
-impl<T: Clone> SelectItem for NamedDropdownItem<T> {
-    type Value = Self;
+impl <T: Clone + PartialEq> PartialEq for NamedDropdownItem<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.item == other.item
+    }
+}
+
+impl<T: Clone + PartialEq> SelectItem for NamedDropdownItem<T> {
+    type Value = T;
 
     fn title(&self) -> SharedString {
         self.name.clone()
     }
 
     fn value(&self) -> &Self::Value {
-        self
+        &self.item
     }
 }
 
-pub struct NamedDropdown<T: Clone> {
+pub struct NamedDropdown<T: Clone + PartialEq> {
     items: Vec<NamedDropdownItem<T>>,
 }
 
-impl<T: Clone> NamedDropdown<T> {
+impl<T: Clone + PartialEq> NamedDropdown<T> {
     pub fn new(items: Vec<NamedDropdownItem<T>>) -> Self {
         Self { items }
     }
 
     pub fn create(items: Vec<NamedDropdownItem<T>>, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
         cx.new(|cx| {
-            let instance_list = Self::new(items);
-            SelectState::new(instance_list, None, window, cx)
+            let delegate = Self::new(items);
+            SelectState::new(delegate, None, window, cx)
+        })
+    }
+
+    pub fn create_and_select(items: Vec<NamedDropdownItem<T>>, selected: T, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
+        cx.new(|cx| {
+            let delegate = Self::new(items);
+            let mut select_state = SelectState::new(delegate, None, window, cx);
+            select_state.set_selected_value(&selected, window, cx);
+            select_state
         })
     }
 }
 
-impl<T: Clone> SelectDelegate for NamedDropdown<T> {
+impl<T: Clone + PartialEq + 'static> SelectDelegate for NamedDropdown<T> {
     type Item = NamedDropdownItem<T>;
 
     fn items_count(&self, _section: usize) -> usize {
@@ -64,7 +79,12 @@ impl<T: Clone> SelectDelegate for NamedDropdown<T> {
         None
     }
 
-    fn perform_search(&mut self, _query: &str, _window: &mut Window, _: &mut Context<SelectState<Self>>) -> Task<()> {
+    fn perform_search(
+        &mut self,
+        _query: &str,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> Task<()> {
         Task::ready(())
     }
 }

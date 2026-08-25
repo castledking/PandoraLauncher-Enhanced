@@ -1,10 +1,10 @@
-use futures_core::Stream;
+use futures_core::{ready, Stream};
 use pin_project_lite::pin_project;
 use std::{
     fmt,
     future::Future,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tower_service::Service;
 

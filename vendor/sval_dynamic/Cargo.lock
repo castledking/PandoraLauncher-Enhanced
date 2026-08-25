@@ -4,13 +4,13 @@ version = 4
 
 [[package]]
 name = "sval"
-version = "2.17.0"
+version = "2.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1aaf178a50bbdd86043fce9bf0a5867007d9b382db89d1c96ccae4601ff1ff9"
+checksum = "d94c4464e595f0284970fd9c7e9013804d035d4a61ab74b113242c874c05814d"
 
 [[package]]
 name = "sval_dynamic"
-version = "2.17.0"
+version = "2.15.0"
 dependencies = [
  "sval",
 ]

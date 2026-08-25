@@ -214,7 +214,11 @@ fn shared_export<'a>(
             .as_ref()
             .map(|ns| ns.iter().map(|s| &**s).collect()),
         method_kind,
-        start: export.start,
+        start: match export.start {
+            ast::StartKind::None => StartKind::None,
+            ast::StartKind::Public => StartKind::Public,
+            ast::StartKind::Private => StartKind::Private,
+        },
     })
 }
 
@@ -234,6 +238,7 @@ fn shared_function<'a>(func: &'a ast::Function, _intern: &'a Interner) -> Functi
                     },
                 ),
                 ty_override: arg.js_type.as_deref(),
+                optional: arg.optional,
                 desc: arg.desc.as_deref(),
             })
             .collect::<Vec<_>>();
@@ -291,6 +296,14 @@ fn shared_import<'a>(i: &'a ast::Import, intern: &'a Interner) -> Result<Import<
         })
     });
 
+    // Determine whether TypeScript should be generated for this import.
+    // For functions, this is stored on the Function struct; for types and statics,
+    // skip_typescript is not currently supported so we default to true.
+    let generate_typescript = match &i.kind {
+        ast::ImportKind::Function(f) => f.function.generate_typescript,
+        _ => true,
+    };
+
     Ok(Import {
         module: i
             .module
@@ -299,6 +312,7 @@ fn shared_import<'a>(i: &'a ast::Import, intern: &'a Interner) -> Result<Import<
             .transpose()?,
         js_namespace: i.js_namespace.clone(),
         reexport,
+        generate_typescript,
         kind: shared_import_kind(&i.kind, intern)?,
     })
 }
@@ -409,6 +423,7 @@ fn shared_import_enum<'a>(i: &'a ast::StringEnum, _intern: &'a Interner) -> Stri
 fn shared_struct<'a>(s: &'a ast::Struct, intern: &'a Interner) -> Struct<'a> {
     Struct {
         name: &s.js_name,
+        rust_name: intern.intern(&s.rust_name),
         fields: s
             .fields
             .iter()

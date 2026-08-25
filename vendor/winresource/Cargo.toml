@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "winresource"
-version = "0.1.30"
+version = "0.1.31"
 authors = ["Max Resch <resch.max@gmail.com>"]
 build = false
 autolib = false
@@ -34,7 +34,7 @@ name = "winresource"
 path = "lib.rs"
 
 [dependencies.toml]
-version = "0.9"
+version = "1.0"
 features = [
     "std",
     "parse",

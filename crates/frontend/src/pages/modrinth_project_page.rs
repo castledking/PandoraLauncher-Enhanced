@@ -71,34 +71,7 @@ impl ModrinthProjectPage {
                 can_install_latest = true;
 
                 for content_folder in ContentFolder::iter() {
-                    for summary in instance_content[content_folder].read(cx).iter() {
-                        let ContentSource::ModrinthProject {
-                            project_id: other_project_id,
-                        } = &summary.content_source
-                        else {
-                            continue;
-                        };
-
-                        if project_id.as_str() != &**other_project_id {
-                            continue;
-                        }
-
-                        let installed_content = InstalledContent {
-                            content_id: summary.id,
-                            status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
-                        };
-                        all_installed_content.push(installed_content);
-                        specific_installed_content[content_folder].push(installed_content);
-                    }
-
-                    let content = instance_content[content_folder].clone();
-                    let project_id = project_id.clone();
-                    cx.observe(&content, move |page, entity, cx| {
-                        let specific = &mut page.specific_installed_content[content_folder];
-
-                        specific.clear();
-
-                        let content = entity.read(cx);
+                    if let Some(content) = instance_content[content_folder].read(cx) {
                         for summary in content.iter() {
                             let ContentSource::ModrinthProject {
                                 project_id: other_project_id,
@@ -111,10 +84,37 @@ impl ModrinthProjectPage {
                                 continue;
                             }
 
-                            specific.push(InstalledContent {
+                            let installed_content = InstalledContent {
                                 content_id: summary.id,
                                 status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
-                            });
+                            };
+                            all_installed_content.push(installed_content);
+                            specific_installed_content[content_folder].push(installed_content);
+                        }
+                    }
+
+                    let content = instance_content[content_folder].clone();
+                    let project_id = project_id.clone();
+                    cx.observe(&content, move |page, entity, cx| {
+                        let specific = &mut page.specific_installed_content[content_folder];
+
+                        specific.clear();
+
+                        if let Some(content) = entity.read(cx) {
+                            for summary in content.iter() {
+                                let ContentSource::ModrinthProject { project_id: other_project_id } = &summary.content_source else {
+                                    continue;
+                                };
+
+                                if project_id.as_str() != &**other_project_id {
+                                    continue;
+                                }
+
+                                specific.push(InstalledContent {
+                                    content_id: summary.id,
+                                    status: summary.update.status_if_matches(loader, minecraft_version.as_str()),
+                                });
+                            }
                         }
 
                         page.all_installed_content.clear();
@@ -383,8 +383,7 @@ impl Render for ModrinthProjectPage {
                     let text = if gv.len() <= 5 {
                         gv.iter().map(|v| v.as_ref()).collect::<Vec<_>>().join(", ")
                     } else {
-                        format!(
-                            "{} - {} ({} versions)",
+                        t::modrinth::versions::range(
                             gv.first().map(|v| v.as_ref()).unwrap_or(""),
                             gv.last().map(|v| v.as_ref()).unwrap_or(""),
                             gv.len()

@@ -33,15 +33,71 @@ mod lut4_to_3_q0_15;
 mod rgb_xyz;
 mod rgb_xyz_opt;
 mod rgb_xyz_q1_30_opt;
-mod rgb_xyz_q2_13;
 mod rgb_xyz_q2_13_opt;
 mod t_lut3_to_3;
 mod t_lut3_to_3_q0_15;
 
+#[cfg(feature = "lut")]
+use crate::conversions::interpolator::BarycentricWeight;
+#[cfg(feature = "neon_luts")]
 pub(crate) use lut4_to_3::NeonLut4x3Factory;
+#[cfg(feature = "neon_shaper_paths")]
 pub(crate) use rgb_xyz::TransformShaperRgbNeon;
+#[cfg(feature = "neon_shaper_optimized_paths")]
 pub(crate) use rgb_xyz_opt::TransformShaperRgbOptNeon;
+#[cfg(feature = "neon_shaper_fixed_point_paths")]
 pub(crate) use rgb_xyz_q1_30_opt::TransformShaperQ1_30NeonOpt;
-pub(crate) use rgb_xyz_q2_13::TransformShaperQ2_13Neon;
+#[cfg(feature = "neon_shaper_fixed_point_paths")]
 pub(crate) use rgb_xyz_q2_13_opt::TransformShaperQ2_13NeonOpt;
+#[cfg(feature = "neon_luts")]
 pub(crate) use t_lut3_to_3::NeonLut3x3Factory;
+
+// this is required to ensure that interpolator never goes out of bounds
+#[cfg(feature = "lut")]
+fn assert_barycentric_lut_size_precondition<R, const GRID_SIZE: usize>(
+    lut: &[BarycentricWeight<R>],
+) {
+    let k = lut
+        .iter()
+        .max_by(|a, &b| a.x.cmp(&b.x))
+        .map(|x| x.x)
+        .unwrap_or(0);
+    let b = lut
+        .iter()
+        .max_by(|a, &b| a.x_n.cmp(&b.x_n))
+        .map(|x| x.x)
+        .unwrap_or(0);
+    let max_possible_product = (k as u32 * (GRID_SIZE as u32 * GRID_SIZE as u32)
+        + k as u32 * GRID_SIZE as u32
+        + k as u32) as usize;
+    let max_possible_product1 = (b as u32 * (GRID_SIZE as u32 * GRID_SIZE as u32)
+        + b as u32 * GRID_SIZE as u32
+        + b as u32) as usize;
+    let cube_size = GRID_SIZE * GRID_SIZE * GRID_SIZE;
+    assert!(max_possible_product < cube_size);
+    assert!(max_possible_product1 < cube_size);
+}
+
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn split_by_twos<T: Copy>(data: &[T], channels: usize) -> (&[T], &[T]) {
+    let len = data.len() / (channels * 4);
+    let split_point = len * 4;
+    data.split_at(split_point * channels)
+}
+
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn split_by_twos_mut<T: Copy>(data: &mut [T], channels: usize) -> (&mut [T], &mut [T]) {
+    let len = data.len() / (channels * 4);
+    let split_point = len * 4;
+    data.split_at_mut(split_point * channels)
+}
+
+#[repr(align(16), C)]
+#[allow(unused)]
+pub(crate) struct NeonAlignedU16(pub(crate) [u16; 8]);
+
+#[repr(align(16), C)]
+#[allow(unused)]
+pub(crate) struct NeonAlignedF32(pub(crate) [f32; 4]);

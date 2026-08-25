@@ -62,7 +62,12 @@ impl SelectDelegate for InstanceDropdown {
         None
     }
 
-    fn perform_search(&mut self, query: &str, _window: &mut Window, _: &mut Context<SelectState<Self>>) -> Task<()> {
+    fn perform_search(
+        &mut self,
+        query: &str,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<()> {
         self.search.search(query);
         Task::ready(())
     }

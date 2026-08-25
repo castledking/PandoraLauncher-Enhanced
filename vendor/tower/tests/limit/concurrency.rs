@@ -1,4 +1,5 @@
-use crate::support;
+#[path = "../support.rs"]
+mod support;
 use tokio_test::{assert_pending, assert_ready, assert_ready_ok};
 use tower::limit::concurrency::ConcurrencyLimitLayer;
 use tower_test::{assert_request_eq, mock};

@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.61"
+rust-version = "1.71"
 name = "enumset"
-version = "1.1.10"
+version = "1.1.14"
 authors = ["Alissa Rao <aura@aura.moe>"]
 build = false
 autolib = false
@@ -27,6 +27,8 @@ readme = "README.md"
 keywords = [
     "enum",
     "bitset",
+    "flags",
+    "bitflags",
 ]
 categories = ["data-structures"]
 license = "MIT/Apache-2.0"
@@ -60,43 +62,15 @@ std = [
 name = "enumset"
 path = "src/lib.rs"
 
-[[test]]
-name = "bitset_basic_ops"
-path = "tests/bitset_basic_ops.rs"
-
-[[test]]
-name = "bitset_conversions"
-path = "tests/bitset_conversions.rs"
-
-[[test]]
-name = "bitset_explicit_repr"
-path = "tests/bitset_explicit_repr.rs"
-
-[[test]]
-name = "bitset_serde_ops"
-path = "tests/bitset_serde_ops.rs"
-
 [dependencies.defmt]
 version = "1"
 optional = true
 
 [dependencies.enumset_derive]
-version = "0.14.0"
+version = "0.15.0"
 
 [dependencies.serde]
 version = "1"
+features = ["derive"]
 optional = true
 default-features = false
-
-[dev-dependencies.bincode]
-version = "1"
-features = ["i128"]
-
-[dev-dependencies.rustversion]
-version = "1.0"
-
-[dev-dependencies.serde_derive]
-version = "1"
-
-[dev-dependencies.serde_json]
-version = "1"

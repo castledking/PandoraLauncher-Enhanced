@@ -4,7 +4,6 @@ JSON support for `sval`.
 Values are serialized in a `serde`-compatible way.
 */
 
-#![doc(html_logo_url = "https://raw.githubusercontent.com/sval-rs/sval/main/asset/logo.svg")]
 #![no_std]
 #![deny(missing_docs)]
 

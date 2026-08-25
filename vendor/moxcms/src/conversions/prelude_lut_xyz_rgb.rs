@@ -26,13 +26,13 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#![cfg(feature = "lut")]
 use crate::conversions::lut3x4::create_lut3_samples;
 use crate::err::try_vec;
 use crate::mlaf::mlaf;
-use crate::trc::ToneCurveEvaluator;
 use crate::{
     CmsError, ColorProfile, GammaLutInterpolate, InPlaceStage, Matrix3f, PointeeSizeExpressible,
-    RenderingIntent, Rgb, TransformOptions, filmlike_clip,
+    Rgb, TransformOptions,
 };
 use num_traits::AsPrimitive;
 use std::marker::PhantomData;
@@ -42,7 +42,6 @@ pub(crate) struct XyzToRgbStage<T: Clone> {
     pub(crate) g_gamma: Box<[T; 65536]>,
     pub(crate) b_gamma: Box<[T; 65536]>,
     pub(crate) matrices: Vec<Matrix3f>,
-    pub(crate) intent: RenderingIntent,
     pub(crate) bit_depth: usize,
     pub(crate) gamma_lut: usize,
 }
@@ -77,43 +76,32 @@ impl<T: Clone + AsPrimitive<f32>> InPlaceStage for XyzToRgbStage<T> {
         let color_scale = 1f32 / max_colors as f32;
         let lut_cap = (self.gamma_lut - 1) as f32;
 
-        if self.intent != RenderingIntent::AbsoluteColorimetric {
-            for dst in dst.chunks_exact_mut(3) {
-                let mut rgb = Rgb::new(dst[0], dst[1], dst[2]);
-                if rgb.is_out_of_gamut() {
-                    rgb = filmlike_clip(rgb);
-                }
-                let r = mlaf(0.5f32, rgb.r, lut_cap).min(lut_cap).max(0f32) as u16;
-                let g = mlaf(0.5f32, rgb.g, lut_cap).min(lut_cap).max(0f32) as u16;
-                let b = mlaf(0.5f32, rgb.b, lut_cap).min(lut_cap).max(0f32) as u16;
+        for dst in dst.chunks_exact_mut(3) {
+            let rgb = Rgb::new(dst[0], dst[1], dst[2]);
+            let r = mlaf(0.5f32, rgb.r, lut_cap).min(lut_cap).max(0f32) as u16;
+            let g = mlaf(0.5f32, rgb.g, lut_cap).min(lut_cap).max(0f32) as u16;
+            let b = mlaf(0.5f32, rgb.b, lut_cap).min(lut_cap).max(0f32) as u16;
 
-                dst[0] = self.r_gamma[r as usize].as_() * color_scale;
-                dst[1] = self.g_gamma[g as usize].as_() * color_scale;
-                dst[2] = self.b_gamma[b as usize].as_() * color_scale;
-            }
-        } else {
-            for dst in dst.chunks_exact_mut(3) {
-                let rgb = Rgb::new(dst[0], dst[1], dst[2]);
-                let r = mlaf(0.5f32, rgb.r, lut_cap).min(lut_cap).max(0f32) as u16;
-                let g = mlaf(0.5f32, rgb.g, lut_cap).min(lut_cap).max(0f32) as u16;
-                let b = mlaf(0.5f32, rgb.b, lut_cap).min(lut_cap).max(0f32) as u16;
-
-                dst[0] = self.r_gamma[r as usize].as_() * color_scale;
-                dst[1] = self.g_gamma[g as usize].as_() * color_scale;
-                dst[2] = self.b_gamma[b as usize].as_() * color_scale;
-            }
+            dst[0] = self.r_gamma[r as usize].as_() * color_scale;
+            dst[1] = self.g_gamma[g as usize].as_() * color_scale;
+            dst[2] = self.b_gamma[b as usize].as_() * color_scale;
         }
 
         Ok(())
     }
 }
 
+#[cfg(feature = "extended_range")]
+use crate::trc::ToneCurveEvaluator;
+
+#[cfg(feature = "extended_range")]
 pub(crate) struct XyzToRgbStageExtended<T: Clone> {
     pub(crate) gamma_evaluator: Box<dyn ToneCurveEvaluator>,
     pub(crate) matrices: Vec<Matrix3f>,
     pub(crate) phantom_data: PhantomData<T>,
 }
 
+#[cfg(feature = "extended_range")]
 impl<T: Clone + AsPrimitive<f32>> InPlaceStage for XyzToRgbStageExtended<T> {
     fn transform(&self, dst: &mut [f32]) -> Result<(), CmsError> {
         if !self.matrices.is_empty() {
@@ -268,7 +256,8 @@ where
     f32: AsPrimitive<T>,
     u32: AsPrimitive<T>,
 {
-    if !T::FINITE {
+    #[cfg(feature = "extended_range")]
+    if !T::FINITE && options.allow_extended_range_rgb_xyz {
         if let Some(extended_gamma) = dest.try_extended_gamma_evaluator() {
             let xyz_to_rgb = dest.rgb_to_xyz_matrix().inverse();
 
@@ -319,7 +308,6 @@ where
         g_gamma: gamma_map_g,
         b_gamma: gamma_map_b,
         matrices,
-        intent: options.rendering_intent,
         gamma_lut: GAMMA_LUT,
         bit_depth: BIT_DEPTH,
     };

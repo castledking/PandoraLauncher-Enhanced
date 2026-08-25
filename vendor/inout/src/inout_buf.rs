@@ -1,9 +1,9 @@
 use crate::{
-    errors::{IntoArrayError, NotEqualError},
     InOut,
+    errors::{IntoArrayError, NotEqualError},
 };
 use core::{marker::PhantomData, slice};
-use generic_array::{ArrayLength, GenericArray};
+use hybrid_array::{Array, ArraySize};
 
 /// Custom slice type which references one immutable (input) slice and one
 /// mutable (output) slice of equal length. Input and output slices are
@@ -98,7 +98,7 @@ impl<'inp, 'out, T> InOutBuf<'inp, 'out, T> {
     /// # Panics
     /// If `pos` greater or equal to buffer length.
     #[inline(always)]
-    pub fn get<'a>(&'a mut self, pos: usize) -> InOut<'a, 'a, T> {
+    pub fn get(&mut self, pos: usize) -> InOut<'_, '_, T> {
         assert!(pos < self.len);
         unsafe {
             InOut {
@@ -111,17 +111,35 @@ impl<'inp, 'out, T> InOutBuf<'inp, 'out, T> {
 
     /// Get input slice.
     #[inline(always)]
-    pub fn get_in<'a>(&'a self) -> &'a [T] {
+    pub fn get_in(&self) -> &[T] {
         unsafe { slice::from_raw_parts(self.in_ptr, self.len) }
     }
 
     /// Get output slice.
     #[inline(always)]
-    pub fn get_out<'a>(&'a mut self) -> &'a mut [T] {
+    pub fn get_out(&mut self) -> &mut [T] {
         unsafe { slice::from_raw_parts_mut(self.out_ptr, self.len) }
     }
 
-    /// Consume self and return output slice with lifetime `'a`.
+    /// Consume `self` and get the output slice with lifetime `'out` filled with data from
+    /// the input slice.
+    ///
+    /// In the case if the input and output slices point to the same memory, simply returns
+    /// the output slice. Otherwise, copies data from the former to the latter
+    /// before returning the output slice.
+    pub fn into_out_with_copied_in(self) -> &'out mut [T]
+    where
+        T: Copy,
+    {
+        if !core::ptr::eq(self.in_ptr, self.out_ptr) {
+            unsafe {
+                core::ptr::copy(self.in_ptr, self.out_ptr, self.len);
+            }
+        }
+        unsafe { slice::from_raw_parts_mut(self.out_ptr, self.len) }
+    }
+
+    /// Consume `self` and get output slice with lifetime `'out`.
     #[inline(always)]
     pub fn into_out(self) -> &'out mut [T] {
         unsafe { slice::from_raw_parts_mut(self.out_ptr, self.len) }
@@ -135,7 +153,7 @@ impl<'inp, 'out, T> InOutBuf<'inp, 'out, T> {
 
     /// Reborrow `self`.
     #[inline(always)]
-    pub fn reborrow<'a>(&'a mut self) -> InOutBuf<'a, 'a, T> {
+    pub fn reborrow(&mut self) -> InOutBuf<'_, '_, T> {
         Self {
             in_ptr: self.in_ptr,
             out_ptr: self.out_ptr,
@@ -149,20 +167,20 @@ impl<'inp, 'out, T> InOutBuf<'inp, 'out, T> {
     /// # Safety
     /// Behavior is undefined if any of the following conditions are violated:
     /// - `in_ptr` must point to a properly initialized value of type `T` and
-    /// must be valid for reads for `len * mem::size_of::<T>()` many bytes.
+    ///   must be valid for reads for `len * mem::size_of::<T>()` many bytes.
     /// - `out_ptr` must point to a properly initialized value of type `T` and
-    /// must be valid for both reads and writes for `len * mem::size_of::<T>()`
-    /// many bytes.
+    ///   must be valid for both reads and writes for `len * mem::size_of::<T>()`
+    ///   many bytes.
     /// - `in_ptr` and `out_ptr` must be either equal or non-overlapping.
     /// - If `in_ptr` and `out_ptr` are equal, then the memory referenced by
-    /// them must not be accessed through any other pointer (not derived from
-    /// the return value) for the duration of lifetime 'a. Both read and write
-    /// accesses are forbidden.
+    ///   them must not be accessed through any other pointer (not derived from
+    ///   the return value) for the duration of lifetime 'a. Both read and write
+    ///   accesses are forbidden.
     /// - If `in_ptr` and `out_ptr` are not equal, then the memory referenced by
-    /// `out_ptr` must not be accessed through any other pointer (not derived from
-    /// the return value) for the duration of lifetime 'a. Both read and write
-    /// accesses are forbidden. The memory referenced by `in_ptr` must not be
-    /// mutated for the duration of lifetime `'a`, except inside an `UnsafeCell`.
+    ///   `out_ptr` must not be accessed through any other pointer (not derived from
+    ///   the return value) for the duration of lifetime 'a. Both read and write
+    ///   accesses are forbidden. The memory referenced by `in_ptr` must not be
+    ///   mutated for the duration of lifetime `'a`, except inside an `UnsafeCell`.
     /// - The total size `len * mem::size_of::<T>()`  must be no larger than `isize::MAX`.
     #[inline(always)]
     pub unsafe fn from_raw(
@@ -209,19 +227,16 @@ impl<'inp, 'out, T> InOutBuf<'inp, 'out, T> {
 
     /// Partition buffer into 2 parts: buffer of arrays and tail.
     #[inline(always)]
-    pub fn into_chunks<N: ArrayLength<T>>(
+    pub fn into_chunks<N: ArraySize>(
         self,
-    ) -> (
-        InOutBuf<'inp, 'out, GenericArray<T, N>>,
-        InOutBuf<'inp, 'out, T>,
-    ) {
+    ) -> (InOutBuf<'inp, 'out, Array<T, N>>, InOutBuf<'inp, 'out, T>) {
         let chunks = self.len() / N::USIZE;
         let tail_pos = N::USIZE * chunks;
         let tail_len = self.len() - tail_pos;
         unsafe {
             let chunks = InOutBuf {
-                in_ptr: self.in_ptr as *const GenericArray<T, N>,
-                out_ptr: self.out_ptr as *mut GenericArray<T, N>,
+                in_ptr: self.in_ptr as *const Array<T, N>,
+                out_ptr: self.out_ptr as *mut Array<T, N>,
                 len: chunks,
                 _pd: PhantomData,
             };
@@ -236,7 +251,7 @@ impl<'inp, 'out, T> InOutBuf<'inp, 'out, T> {
     }
 }
 
-impl<'inp, 'out> InOutBuf<'inp, 'out, u8> {
+impl InOutBuf<'_, '_, u8> {
     /// XORs `data` with values behind the input slice and write
     /// result to the output slice.
     ///
@@ -256,14 +271,14 @@ impl<'inp, 'out> InOutBuf<'inp, 'out, u8> {
     }
 }
 
-impl<'inp, 'out, T, N> TryInto<InOut<'inp, 'out, GenericArray<T, N>>> for InOutBuf<'inp, 'out, T>
+impl<'inp, 'out, T, N> TryInto<InOut<'inp, 'out, Array<T, N>>> for InOutBuf<'inp, 'out, T>
 where
-    N: ArrayLength<T>,
+    N: ArraySize,
 {
     type Error = IntoArrayError;
 
     #[inline(always)]
-    fn try_into(self) -> Result<InOut<'inp, 'out, GenericArray<T, N>>, Self::Error> {
+    fn try_into(self) -> Result<InOut<'inp, 'out, Array<T, N>>, Self::Error> {
         if self.len() == N::USIZE {
             Ok(InOut {
                 in_ptr: self.in_ptr as *const _,

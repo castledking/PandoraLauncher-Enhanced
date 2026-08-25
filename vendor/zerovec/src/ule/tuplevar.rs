@@ -199,7 +199,7 @@ macro_rules! tuple_varule {
             }
         }
 
-        #[cfg(all(feature = "serde", feature = "alloc"))]
+        #[cfg(feature = "serde")]
         impl<'de, $($T: VarULE + ?Sized,)+ Format> serde::Deserialize<'de> for alloc::boxed::Box<$name<$($T,)+ Format>>
             where
                 // This impl should be present on almost all deserializable VarULE types

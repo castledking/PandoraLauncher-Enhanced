@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::{Error, Length, LengthUnit, Stream};
+use alloc::string::ToString;
+use alloc::vec;
 
 /// List of all SVG directional positions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -22,19 +24,13 @@ impl DirectionalPosition {
     /// Checks whether the value can be a horizontal position.
     #[inline]
     pub fn is_horizontal(&self) -> bool {
-        matches!(
-            self,
-            DirectionalPosition::Center | DirectionalPosition::Left | DirectionalPosition::Right
-        )
+        matches!(self, Self::Center | Self::Left | Self::Right)
     }
 
     /// Checks whether the value can be a vertical position.
     #[inline]
     pub fn is_vertical(&self) -> bool {
-        matches!(
-            self,
-            DirectionalPosition::Center | DirectionalPosition::Top | DirectionalPosition::Bottom
-        )
+        matches!(self, Self::Center | Self::Top | Self::Bottom)
     }
 }
 
@@ -42,17 +38,17 @@ impl From<DirectionalPosition> for Length {
     fn from(value: DirectionalPosition) -> Self {
         match value {
             DirectionalPosition::Left | DirectionalPosition::Top => {
-                Length::new(0.0, LengthUnit::Percent)
+                Self::new(0.0, LengthUnit::Percent)
             }
             DirectionalPosition::Right | DirectionalPosition::Bottom => {
-                Length::new(100.0, LengthUnit::Percent)
+                Self::new(100.0, LengthUnit::Percent)
             }
-            DirectionalPosition::Center => Length::new(50.0, LengthUnit::Percent),
+            DirectionalPosition::Center => Self::new(50.0, LengthUnit::Percent),
         }
     }
 }
 
-impl std::str::FromStr for DirectionalPosition {
+impl core::str::FromStr for DirectionalPosition {
     type Err = Error;
 
     #[inline]
@@ -108,7 +104,7 @@ impl Stream<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     macro_rules! test_p {
         ($name:ident, $text:expr, $result:expr) => (

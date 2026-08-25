@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.56.0"
+rust-version = "1.88.0"
 name = "darling"
-version = "0.21.3"
+version = "0.23.0"
 authors = ["Ted Driggs <ted.driggs@outlook.com>"]
 build = false
 exclude = [
@@ -30,7 +30,7 @@ description = """
 A proc-macro library for reading attributes into structs when
 implementing custom derives.
 """
-documentation = "https://docs.rs/darling/0.21.3"
+documentation = "https://docs.rs/darling/0.23.0"
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/TedDriggs/darling"
@@ -55,6 +55,10 @@ path = "examples/automatic_bounds.rs"
 [[example]]
 name = "consume_fields"
 path = "examples/consume_fields.rs"
+
+[[example]]
+name = "enum_of_struct_variants"
+path = "examples/enum_of_struct_variants.rs"
 
 [[example]]
 name = "expr_with"
@@ -221,10 +225,10 @@ name = "unsupported_attributes"
 path = "tests/unsupported_attributes.rs"
 
 [dependencies.darling_core]
-version = "=0.21.3"
+version = "=0.23.0"
 
 [dependencies.darling_macro]
-version = "=0.21.3"
+version = "=0.23.0"
 
 [dev-dependencies.proc-macro2]
 version = "1.0.86"

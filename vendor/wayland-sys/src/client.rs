@@ -30,6 +30,8 @@ external_library!(WaylandClient, "wayland-client",
         fn wl_display_cancel_read(*mut wl_display) -> (),
         fn wl_display_dispatch(*mut wl_display) -> c_int,
         fn wl_display_dispatch_pending(*mut wl_display) -> c_int,
+        #[cfg(feature = "libwayland_client_1_23")]
+        fn wl_display_set_max_buffer_size(*mut wl_display, usize) -> (),
     // error handling
         fn wl_display_get_error(*mut wl_display) -> c_int,
         fn wl_display_get_protocol_error(*mut wl_display, *mut *const wl_interface, *mut u32) -> u32,
@@ -57,6 +59,8 @@ external_library!(WaylandClient, "wayland-client",
         fn wl_proxy_get_user_data(*mut wl_proxy) -> *mut c_void,
         fn wl_proxy_get_id(*mut wl_proxy) -> u32,
         fn wl_proxy_get_class(*mut wl_proxy) -> *const c_char,
+        #[cfg(feature = "libwayland_client_1_23")]
+        fn wl_proxy_get_display(*mut wl_proxy) -> *mut wl_display,
         fn wl_proxy_set_queue(*mut wl_proxy, *mut wl_event_queue) -> (),
         fn wl_proxy_get_version(*mut wl_proxy) -> u32,
         fn wl_proxy_create_wrapper(*mut wl_proxy) -> *mut wl_proxy,

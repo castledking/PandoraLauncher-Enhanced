@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.65"
 name = "wayland-client"
-version = "0.31.12"
+version = "0.31.11"
 authors = ["Elinor Berger <elinor@safaradeg.net>"]
 build = "build.rs"
 autolib = false
@@ -70,10 +70,10 @@ version = "1.0.2"
 features = ["event"]
 
 [dependencies.wayland-backend]
-version = "0.3.12"
+version = "0.3.11"
 
 [dependencies.wayland-scanner]
-version = "0.31.8"
+version = "0.31.7"
 
 [dev-dependencies.futures-channel]
 version = "0.3.16"

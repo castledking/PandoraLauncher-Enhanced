@@ -203,7 +203,7 @@ impl CodePoint {
         )
     }
 
-    const fn decode_public(a: u8) -> Self {
+    fn decode_public(a: u8) -> Self {
         const TABLE: [CodePoint; 256] = [
             // 0x00..0x0f
             CodePoint::INVALID,
@@ -502,13 +502,13 @@ fn u8_less_than(a: u8, b: u8) -> u8 {
 }
 
 /// Returns 0xff if a == b, 0 otherwise.
-const fn u8_equals(a: u8, b: u8) -> u8 {
+fn u8_equals(a: u8, b: u8) -> u8 {
     let diff = a ^ b;
     u8_nonzero(diff)
 }
 
 /// Returns 0xff if a != 0, 0 otherwise.
-const fn u8_nonzero(x: u8) -> u8 {
+fn u8_nonzero(x: u8) -> u8 {
     u8_broadcast8(!x & x.wrapping_sub(1))
 }
 
@@ -516,7 +516,7 @@ const fn u8_nonzero(x: u8) -> u8 {
 ///
 /// In other words, if the top bit of `x` is set,
 /// returns 0xff else 0x00.
-const fn u8_broadcast8(x: u8) -> u8 {
+fn u8_broadcast8(x: u8) -> u8 {
     let msb = x >> 7;
     0u8.wrapping_sub(msb)
 }
@@ -525,15 +525,13 @@ const fn u8_broadcast8(x: u8) -> u8 {
 ///
 /// In other words, if the top bit of `x` is set,
 /// returns 0xff else 0x00.
-const fn u8_broadcast16(x: u16) -> u8 {
+fn u8_broadcast16(x: u16) -> u8 {
     let msb = x >> 15;
     0u8.wrapping_sub(msb as u8)
 }
 
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
-    use alloc::vec::Vec;
-
     use super::*;
 
     #[test]
@@ -727,7 +725,7 @@ mod tests {
     }
 
     #[track_caller]
-    fn decode(input: &[u8]) -> Vec<u8> {
+    fn decode(input: &[u8]) -> alloc::vec::Vec<u8> {
         let length = decoded_length(input.len());
 
         let mut v = alloc::vec![0u8; length];

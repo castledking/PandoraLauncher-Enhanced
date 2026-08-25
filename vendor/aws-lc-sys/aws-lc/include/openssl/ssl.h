@@ -1,143 +1,16 @@
-/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
- * All rights reserved.
- *
- * This package is an SSL implementation written
- * by Eric Young (eay@cryptsoft.com).
- * The implementation was written so as to conform with Netscapes SSL.
- *
- * This library is free for commercial and non-commercial use as long as
- * the following conditions are aheared to.  The following conditions
- * apply to all code found in this distribution, be it the RC4, RSA,
- * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
- * included with this distribution is covered by the same copyright terms
- * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
- * Copyright remains Eric Young's, and as such any Copyright notices in
- * the code are not to be removed.
- * If this package is used in a product, Eric Young should be given attribution
- * as the author of the parts of the library used.
- * This can be in the form of a textual message at program startup or
- * in documentation (online or textual) provided with the package.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *    "This product includes cryptographic software written by
- *     Eric Young (eay@cryptsoft.com)"
- *    The word 'cryptographic' can be left out if the rouines from the library
- *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
- *    the apps directory (application code) you must include an acknowledgement:
- *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
- * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- * The licence and distribution terms for any publically available version or
- * derivative of this code cannot be changed.  i.e. this code cannot simply be
- * copied and put under another distribution licence
- * [including the GNU Public Licence.]
- */
-/* ====================================================================
- * Copyright (c) 1998-2007 The OpenSSL Project.  All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    openssl-core@openssl.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
- */
-/* ====================================================================
- * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
- * ECC cipher suite support in OpenSSL originally developed by
- * SUN MICROSYSTEMS, INC., and contributed to the OpenSSL project.
- */
-/* ====================================================================
- * Copyright 2005 Nokia. All rights reserved.
- *
- * The portions of the attached software ("Contribution") is developed by
- * Nokia Corporation and is licensed pursuant to the OpenSSL open source
- * license.
- *
- * The Contribution, originally written by Mika Kousa and Pasi Eronen of
- * Nokia Corporation, consists of the "PSK" (Pre-Shared Key) ciphersuites
- * support (see RFC 4279) to OpenSSL.
- *
- * No patent licenses or other rights except those expressly stated in
- * the OpenSSL open source license shall be deemed granted or received
- * expressly, by implication, estoppel, or otherwise.
- *
- * No assurances are provided by Nokia that the Contribution does not
- * infringe the patent or other intellectual property rights of any third
- * party or that the license provides you with all the necessary rights
- * to make use of the Contribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. IN
- * ADDITION TO THE DISCLAIMERS INCLUDED IN THE LICENSE, NOKIA
- * SPECIFICALLY DISCLAIMS ANY LIABILITY FOR CLAIMS BROUGHT BY YOU OR ANY
- * OTHER ENTITY BASED ON INFRINGEMENT OF INTELLECTUAL PROPERTY RIGHTS OR
- * OTHERWISE.
- */
+// Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+// Copyright (c) 1998-2007 The OpenSSL Project.  All rights reserved.
+// Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
+// Copyright 2005 Nokia. All rights reserved.
+//
+// ECC cipher suite support in OpenSSL originally developed by
+// SUN MICROSYSTEMS, INC., and contributed to the OpenSSL project.
+//
+// The Contribution, originally written by Mika Kousa and Pasi Eronen of
+// Nokia Corporation, consists of the "PSK" (Pre-Shared Key) ciphersuites
+// support (see RFC 4279) to OpenSSL.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 #ifndef OPENSSL_HEADER_SSL_H
 #define OPENSSL_HEADER_SSL_H
@@ -763,6 +636,12 @@ OPENSSL_EXPORT int SSL_version(const SSL *ssl);
 // SSL_OP_NO_TICKET disables session ticket support (RFC 5077).
 #define SSL_OP_NO_TICKET 0x00004000L
 
+// SSL_OP_IGNORE_UNEXPECTED_EOF configures a connection to treat an unexpected
+// transport EOF (the peer closing the connection without sending a
+// close_notify alert) as a clean shutdown. When set, |SSL_read| reports
+// |SSL_ERROR_ZERO_RETURN| instead of |SSL_ERROR_SYSCALL|. 
+#define SSL_OP_IGNORE_UNEXPECTED_EOF 0x00000080L
+
 // SSL_OP_CIPHER_SERVER_PREFERENCE configures servers to select ciphers and
 // ECDHE curves according to the server's preferences instead of the
 // client's.
@@ -972,7 +851,27 @@ OPENSSL_EXPORT int SSL_CTX_add1_chain_cert(SSL_CTX *ctx, X509 *x509);
 // it returns one and takes ownership of |x509|. Otherwise, it returns zero.
 OPENSSL_EXPORT int SSL_add0_chain_cert(SSL *ssl, X509 *x509);
 
-// SSL_CTX_add_extra_chain_cert calls |SSL_CTX_add0_chain_cert|.
+// SSL_CTX_add_extra_chain_cert appends |x509| to |ctx|'s certificate chain. On
+// success it returns one and takes ownership of |x509|; otherwise it returns
+// zero.
+//
+// OpenSSL keeps extra chain certs on a single global stack and uses it
+// whenever a certificate has no chain of its own. AWS-LC instead stores chains
+// per key-type slot, so this routes |x509| to a slot: if a leaf certificate is
+// already configured, |x509| joins the current certificate's slot (so a chain
+// built leaf-first stays together, including cross-type chains such as an RSA
+// intermediate for an ECDSA leaf); if no leaf is set yet, |x509| goes to the
+// slot matching its own key type (so chains built intermediate-first land
+// correctly once the matching leaf is added).
+//
+// To append an intermediate whose key type differs from a not-yet-configured
+// leaf (e.g. an RSA intermediate for an ECDSA leaf added before the leaf), set
+// the leaf first, or use |SSL_CTX_set1_chain|, |SSL_CTX_add1_chain_cert|, or
+// |SSL_CTX_use_certificate_chain_file|.
+//
+// |SSL_CTX_get_extra_chain_certs| and |SSL_CTX_clear_extra_chain_certs| always
+// act on the current certificate's slot, so they may target a different slot
+// than an add that routed by key type.
 OPENSSL_EXPORT int SSL_CTX_add_extra_chain_cert(SSL_CTX *ctx, X509 *x509);
 
 // SSL_add1_chain_cert appends |x509| to |ctx|'s certificate chain. It returns
@@ -1276,6 +1175,9 @@ OPENSSL_EXPORT int SSL_set_ocsp_response(SSL *ssl, const uint8_t *response,
 #define SSL_SIGN_RSA_PSS_RSAE_SHA384 0x0805
 #define SSL_SIGN_RSA_PSS_RSAE_SHA512 0x0806
 #define SSL_SIGN_ED25519 0x0807
+#define SSL_SIGN_MLDSA44 0x0904
+#define SSL_SIGN_MLDSA65 0x0905
+#define SSL_SIGN_MLDSA87 0x0906
 
 // SSL_SIGN_RSA_PKCS1_MD5_SHA1 is an internal signature algorithm used to
 // specify raw RSASSA-PKCS1-v1_5 with an MD5/SHA-1 concatenation, as used in TLS
@@ -1350,6 +1252,25 @@ OPENSSL_EXPORT int SSL_set_signing_algorithm_prefs(SSL *ssl,
 OPENSSL_EXPORT int SSL_CTX_use_cert_and_key(SSL_CTX *ctx, X509 *x509,
                                             EVP_PKEY *privatekey,
                                             STACK_OF(X509) *chain, int override);
+
+// SSL_use_cert_and_key sets |x509|, |privatekey|, and |chain| on |ssl|.
+// The |privatekey| argument must be the private key of the certificate |x509|.
+// If the override argument is 0, then |x509|, |privatekey|, and |chain| are
+// set only if all were not previously set. If override is non-0, then the
+// certificate, private key and chain certs are always set. |privatekey| and
+// |x509| are not copied or duplicated, their reference counts are incremented.
+// In OpenSSL, a shallow copy of |chain| is stored with a reference count
+// increment for all |X509| objects in the chain. In AWS-LC,
+// we represent X509 chains as a CRYPTO_BUFFER stack. Therefore, we create a
+// an internal copy and leave the |chain| parameter untouched. This means,
+// changes to |chain| after this function is called will not update in |ssl|.
+// This is different from OpenSSL which stores a reference to the X509
+// certificates in the |chain| object.
+//
+// Returns one on success and zero on error.
+OPENSSL_EXPORT int SSL_use_cert_and_key(SSL *ssl, X509 *x509,
+                                        EVP_PKEY *privatekey,
+                                        STACK_OF(X509) *chain, int override);
 
 // Certificate and private key convenience functions.
 
@@ -2145,7 +2066,9 @@ OPENSSL_EXPORT int SSL_SESSION_to_bytes_for_ticket(const SSL_SESSION *in,
                                                    size_t *out_len);
 
 // SSL_SESSION_from_bytes parses |in_len| bytes from |in| as an SSL_SESSION. It
-// returns a newly-allocated |SSL_SESSION| on success or NULL on error.
+// returns a newly-allocated |SSL_SESSION| on success or NULL on error. The
+// caller is responsible for protecting the integrity of the serialized session
+// data; no minimum-length validation is performed on individual fields.
 OPENSSL_EXPORT SSL_SESSION *SSL_SESSION_from_bytes(const uint8_t *in,
                                                    size_t in_len,
                                                    const SSL_CTX *ctx);
@@ -3282,9 +3205,9 @@ OPENSSL_EXPORT void SSL_CTX_set0_client_CAs(SSL_CTX *ctx,
 // |SSL_CTX_set_client_CA_list|.
 //
 // If configured as a client, it returns the client certificate CA list sent by
-// the server. In this mode, the behavior is undefined except during the
-// callbacks set by |SSL_CTX_set_cert_cb| and |SSL_CTX_set_client_cert_cb| or
-// when the handshake is paused because of them.
+// the server. This may be called during the callbacks set by
+// |SSL_CTX_set_cert_cb| and |SSL_CTX_set_client_cert_cb|, when the handshake
+// is paused because of them, or after the handshake has completed.
 OPENSSL_EXPORT STACK_OF(X509_NAME) *SSL_get_client_CA_list(const SSL *ssl);
 
 // SSL_get0_server_requested_CAs returns the CAs sent by a server to guide a
@@ -5254,6 +5177,9 @@ OPENSSL_EXPORT long BIO_set_ssl(BIO *bio, SSL *ssl, int take_owership);
 // not be freed. It returns one on success or something other than one on error.
 OPENSSL_EXPORT long BIO_get_ssl(BIO *bio, SSL **ssl);
 
+// BIO_new_ssl_connect requires socket support for the underlying connect BIO.
+// It is unavailable on platforms that define OPENSSL_NO_SOCK.
+#if !defined(OPENSSL_NO_SOCK)
 // BIO_new_ssl_connect uses |ctx| to return a newly allocated BIO chain with
 // |BIO_new_ssl|, followed by a connect BIO.
 //
@@ -5261,6 +5187,7 @@ OPENSSL_EXPORT long BIO_get_ssl(BIO *bio, SSL **ssl);
 // caveats hold true for this function as well. See |BIO_f_ssl| for more
 // details.
 OPENSSL_EXPORT BIO *BIO_new_ssl_connect(SSL_CTX *ctx);
+#endif  // !OPENSSL_NO_SOCK
 
 // BIO_new_ssl returns a newly allocated SSL BIO created with |ctx|. A client
 // SSL is created if |client| is non-zero, and a server is created if otherwise.
@@ -6087,6 +6014,68 @@ OPENSSL_EXPORT OPENSSL_DEPRECATED int SSL_CTX_get_security_level(
 // |SSL_CTX_get_security_level| about implied security levels for AWS-LC.
 OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_CTX_set_security_level(
     const SSL_CTX *ctx, int level);
+
+// SSL_get_security_level returns 0. This is only to maintain compatibility
+// with OpenSSL. See |SSL_CTX_get_security_level|.
+OPENSSL_EXPORT OPENSSL_DEPRECATED int SSL_get_security_level(const SSL *ssl);
+
+// SSL_set_security_level does nothing. See documentation in
+// |SSL_CTX_get_security_level| about implied security levels for AWS-LC.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_set_security_level(const SSL *ssl,
+                                                              int level);
+
+// SSL_security_callback is the type of a security callback function set via
+// |SSL_CTX_set_security_callback| or |SSL_set_security_callback|. In OpenSSL,
+// this callback is invoked to make security decisions based on the configured
+// security level. In AWS-LC, security levels are not supported and the callback
+// is never invoked, so any restrictions the callback would have enforced are
+// silently bypassed. These functions are provided only for API compatibility.
+typedef int (*SSL_security_callback)(const SSL *ssl, const SSL_CTX *ctx,
+                                     int op, int bits, int nid, void *other,
+                                     void *ex);
+
+// SSL_CTX_set_security_callback stores |cb| on |ctx| but never invokes it.
+// AWS-LC never invokes the callback, so any restrictions the callback would
+// have enforced are silently bypassed.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_CTX_set_security_callback(
+    SSL_CTX *ctx, SSL_security_callback cb);
+
+// SSL_CTX_get_security_callback returns the callback previously set with
+// |SSL_CTX_set_security_callback|, or NULL if none was set.
+OPENSSL_EXPORT OPENSSL_DEPRECATED SSL_security_callback
+SSL_CTX_get_security_callback(const SSL_CTX *ctx);
+
+// SSL_CTX_set0_security_ex_data stores |ex| on |ctx| for use by a security
+// callback. The data is never used internally.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_CTX_set0_security_ex_data(
+    SSL_CTX *ctx, void *ex);
+
+// SSL_CTX_get0_security_ex_data returns the data previously set with
+// |SSL_CTX_set0_security_ex_data|, or NULL if none was set.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void *SSL_CTX_get0_security_ex_data(
+    const SSL_CTX *ctx);
+
+// SSL_set_security_callback stores |cb| on |ssl| but never invokes it.
+// AWS-LC never invokes the callback, so any restrictions the callback would
+// have enforced are silently bypassed.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_set_security_callback(
+    SSL *ssl, SSL_security_callback cb);
+
+// SSL_get_security_callback returns the callback previously set with
+// |SSL_set_security_callback|, or the callback inherited from |SSL_CTX| if
+// none was set directly on the |SSL|.
+OPENSSL_EXPORT OPENSSL_DEPRECATED SSL_security_callback
+SSL_get_security_callback(const SSL *ssl);
+
+// SSL_set0_security_ex_data stores |ex| on |ssl| for use by a security
+// callback. The data is never used internally.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void SSL_set0_security_ex_data(SSL *ssl,
+                                                                 void *ex);
+
+// SSL_get0_security_ex_data returns the data previously set with
+// |SSL_set0_security_ex_data|, or NULL if none was set.
+OPENSSL_EXPORT OPENSSL_DEPRECATED void *SSL_get0_security_ex_data(
+    const SSL *ssl);
 
 
 // General No-op Functions [Deprecated].

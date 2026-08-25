@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.65"
 name = "wayland-cursor"
-version = "0.31.12"
+version = "0.31.11"
 authors = ["Elinor Berger <elinor@safaradeg.net>"]
 build = false
 autolib = false
@@ -51,7 +51,7 @@ version = "1.0.2"
 features = ["shm"]
 
 [dependencies.wayland-client]
-version = "0.31.12"
+version = "0.31.11"
 
 [dependencies.xcursor]
 version = "0.3.1"

@@ -38,7 +38,6 @@ use crate::naive::NaiveDate;
 )]
 #[cfg_attr(feature = "rkyv-validation", archive(check_bytes))]
 #[cfg_attr(all(feature = "arbitrary", feature = "std"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Month {
     /// January
     January = 0,
@@ -249,7 +248,6 @@ impl num_traits::FromPrimitive for Month {
 /// A duration in calendar months
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 #[cfg_attr(all(feature = "arbitrary", feature = "std"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Months(pub(crate) u32);
 
 impl Months {
@@ -286,13 +284,6 @@ impl fmt::Display for ParseMonthError {
 impl fmt::Debug for ParseMonthError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ParseMonthError {{ .. }}")
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for ParseMonthError {
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "ParseMonthError {{ .. }}")
     }
 }
 

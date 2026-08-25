@@ -60,7 +60,7 @@ impl Ellipse {
 
     /// Create an ellipse from an affine transformation of the unit circle.
     #[inline(always)]
-    pub fn from_affine(affine: Affine) -> Self {
+    pub const fn from_affine(affine: Affine) -> Self {
         Ellipse { inner: affine }
     }
 
@@ -75,6 +75,7 @@ impl Ellipse {
     }
 
     /// Create a new `Ellipse` with the provided radii.
+    #[inline]
     #[must_use]
     pub fn with_radii(self, new_radii: Vec2) -> Ellipse {
         let rotation = self.inner.svd().1;
@@ -87,18 +88,12 @@ impl Ellipse {
     ///
     /// The rotation is clockwise, for a y-down coordinate system. For more
     /// on rotation, See [`Affine::rotate`].
+    #[inline]
     #[must_use]
     pub fn with_rotation(self, rotation: f64) -> Ellipse {
         let scale = self.inner.svd().0;
         let translation = self.inner.translation();
         Ellipse::private_new(translation, scale.x, scale.y, rotation)
-    }
-
-    #[deprecated(since = "0.7.0", note = "use with_rotation instead")]
-    #[must_use]
-    #[doc(hidden)]
-    pub fn with_x_rotation(self, rotation_radians: f64) -> Ellipse {
-        self.with_rotation(rotation_radians)
     }
 
     /// This gives us an internal method without any type conversions.
@@ -125,14 +120,35 @@ impl Ellipse {
     ///
     /// The first number is the horizontal radius and the second is the vertical
     /// radius, before rotation.
+    ///
+    /// If you are only interested in the value of the greatest or smallest radius of this ellipse,
+    /// consider using [`Ellipse::major_radius`] or [`Ellipse::minor_radius`] instead.
+    #[inline]
     pub fn radii(&self) -> Vec2 {
         self.inner.svd().0
+    }
+
+    /// Returns the major radius of this ellipse.
+    ///
+    /// This metric is also known as the semi-major axis.
+    #[inline]
+    pub fn major_radius(&self) -> f64 {
+        self.inner.svd().0.x
+    }
+
+    /// Returns the minor radius of this ellipse.
+    ///
+    /// This metric is also known as the semi-minor axis.
+    #[inline]
+    pub fn minor_radius(&self) -> f64 {
+        self.inner.svd().0.y
     }
 
     /// The ellipse's rotation, in radians.
     ///
     /// This allows all possible ellipses to be drawn by always starting with
     /// an ellipse with the two radii on the x and y axes.
+    #[inline]
     pub fn rotation(&self) -> f64 {
         self.inner.svd().1
     }
@@ -140,6 +156,7 @@ impl Ellipse {
     /// Returns the radii and the rotation of this ellipse.
     ///
     /// Equivalent to `(self.radii(), self.rotation())` but more efficient.
+    #[inline]
     pub fn radii_and_rotation(&self) -> (Vec2, f64) {
         self.inner.svd()
     }
@@ -148,7 +165,7 @@ impl Ellipse {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(&self) -> bool {
+    pub const fn is_finite(&self) -> bool {
         self.inner.is_finite()
     }
 
@@ -156,14 +173,8 @@ impl Ellipse {
     ///
     /// [NaN]: f64::is_nan
     #[inline]
-    pub fn is_nan(&self) -> bool {
+    pub const fn is_nan(&self) -> bool {
         self.inner.is_nan()
-    }
-
-    #[doc(hidden)]
-    #[deprecated(since = "0.7.0", note = "use rotation() instead")]
-    pub fn x_rotation(&self) -> f64 {
-        self.rotation()
     }
 }
 
@@ -194,6 +205,7 @@ impl Sub<Vec2> for Ellipse {
 
 impl Mul<Ellipse> for Affine {
     type Output = Ellipse;
+    #[inline]
     fn mul(self, other: Ellipse) -> Self::Output {
         Ellipse {
             inner: self * other.inner,
@@ -202,6 +214,7 @@ impl Mul<Ellipse> for Affine {
 }
 
 impl From<Circle> for Ellipse {
+    #[inline]
     fn from(circle: Circle) -> Self {
         Ellipse::new(circle.center, Vec2::splat(circle.radius), 0.0)
     }
@@ -222,10 +235,22 @@ impl Shape for Ellipse {
         .path_elements(tolerance)
     }
 
+    /// The area of the ellipse.
+    ///
+    /// This is always positive if the result is finite.
+    ///
+    /// If non-finite, this will be [`f64::INFINITY`] or [`f64::NAN`] depending on whether the
+    /// inner affine's [determinant](Affine::determinant) is [`f64::INFINITY`] (either positive or
+    /// negative) or [`f64::NAN`].
     #[inline]
     fn area(&self) -> f64 {
-        let Vec2 { x, y } = self.radii();
-        PI * x * y
+        // `Ellipse` is represented as a unit circle transformed by `Affine`. The transformed area
+        // of a region is `area * |det(affine)|`, see
+        // <https://en.wikipedia.org/w/index.php?title=Determinant&oldid=1344268205#Geometric_meaning>.
+        //
+        // A unit circle has area `PI`. Therefore, the area of this ellipse is PI multiplied by the
+        // affine's determinant.
+        PI * self.inner.determinant().abs()
     }
 
     /// Approximate the ellipse perimeter.
@@ -242,7 +267,7 @@ impl Shape for Ellipse {
         // Note: the radii are calculated from an inner affine map (`self.inner`), and may be NaN.
         // Currently, constructing an ellipse with infinite radii will produce an ellipse whose
         // calculated radii are NaN.
-        if !self.radii().is_finite() {
+        if !radii.is_finite() {
             return f64::NAN;
         }
 
@@ -261,6 +286,7 @@ impl Shape for Ellipse {
         agm_elliptic_perimeter(accuracy, radii)
     }
 
+    #[inline]
     fn winding(&self, pt: Point) -> i32 {
         // Strategy here is to apply the inverse map to the point and see if it is in the unit
         // circle.

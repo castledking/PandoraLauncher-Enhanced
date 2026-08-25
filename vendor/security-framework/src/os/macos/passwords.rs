@@ -67,7 +67,7 @@ impl SecKeychainItem {
     pub fn set_password(&mut self, password: &[u8]) -> Result<()> {
         unsafe {
             cvt(SecKeychainItemModifyAttributesAndData(
-                self.as_concrete_TypeRef(),
+                self.as_CFTypeRef() as *mut _,
                 ptr::null(),
                 password.len() as u32,
                 password.as_ptr().cast(),
@@ -80,7 +80,7 @@ impl SecKeychainItem {
     #[inline]
     pub fn delete(self) {
         unsafe {
-            SecKeychainItemDelete(self.as_concrete_TypeRef());
+            SecKeychainItemDelete(self.as_CFTypeRef() as *mut _);
         }
     }
 }
@@ -100,9 +100,9 @@ pub fn find_generic_password(
 ) -> Result<(SecKeychainItemPassword, SecKeychainItem)> {
     let keychains_or_none = keychains.map(CFArray::from_CFTypes);
 
-    let keychains_or_null = match &keychains_or_none {
+    let keychains_or_null = match keychains_or_none {
         None => ptr::null(),
-        Some(keychains) => keychains.as_CFTypeRef(),
+        Some(ref keychains) => keychains.as_CFTypeRef(),
     };
 
     let mut data_len = 0;
@@ -151,9 +151,9 @@ pub fn find_internet_password(
 ) -> Result<(SecKeychainItemPassword, SecKeychainItem)> {
     let keychains_or_none = keychains.map(CFArray::from_CFTypes);
 
-    let keychains_or_null = match &keychains_or_none {
+    let keychains_or_null = match keychains_or_none {
         None => ptr::null(),
-        Some(keychains) => keychains.as_CFTypeRef(),
+        Some(ref keychains) => keychains.as_CFTypeRef(),
     };
 
     let mut data_len = 0;
@@ -377,6 +377,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn default_keychain_test_missing_password_default() {
         let service = "default_this_service_does_not_exist";
         let account = "this_account_is_bogus";
@@ -403,6 +404,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn default_keychain_test_round_trip_password_default() {
         let service = "test_round_trip_password_default";
         let account = "this_is_the_test_account";
@@ -448,6 +450,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn default_keychain_test_change_password_default() {
         let service = "test_change_password_default";
         let account = "this_is_the_test_account";

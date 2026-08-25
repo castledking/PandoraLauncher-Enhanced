@@ -1,6 +1,6 @@
 [package]
 name = "kqueue"
-version = "1.1.1"
+version = "1.2.0"
 authors = ["William Orr <will@worrbase.com>"]
 description = "kqueue interface for BSDs"
 license = "MIT"
@@ -25,13 +25,16 @@ targets = [
 ]
 
 [dependencies]
-kqueue-sys = "^1.0.4"
+kqueue-sys = "^1.1.1"
 libc = "^0.2.17"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 dhat = "0.3.2"
 tempfile = "3.1.0"
+
+[profile.bench]
+debug = true
 
 [[bench]]
 name = "criterion_scaling"

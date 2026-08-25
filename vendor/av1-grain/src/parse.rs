@@ -7,6 +7,8 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
+use std::ops::{Range, RangeFrom, RangeTo};
+
 use arrayvec::ArrayVec;
 use nom::{
     branch::alt,
@@ -16,7 +18,8 @@ use nom::{
     error::{Error as NomError, ErrorKind, FromExternalError, ParseError},
     multi::{many1, separated_list0, separated_list1},
     sequence::{delimited, preceded},
-    AsChar, Compare, Err as NomErr, IResult, Input, Parser,
+    AsChar, Compare, Err as NomErr, IResult, InputIter, InputLength, InputTakeAtPosition, Parser,
+    Slice,
 };
 
 use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS};
@@ -47,25 +50,32 @@ use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y
 ///
 /// - If the file cannot be opened
 /// - If the file does not contain a properly formatted film grain table
-#[inline]
 pub fn parse_grain_table(input: &str) -> anyhow::Result<Vec<GrainTableSegment>> {
     let (input, _) = grain_table_header(input).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let (_, segments) = many1(grain_table_segment)
-        .parse(input)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let (_, segments) =
+        many1(grain_table_segment)(input).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     Ok(segments.into_iter().flatten().collect())
 }
 
 fn grain_table_header(input: &str) -> IResult<&str, ()> {
-    let (input, _) = delimited(multispace0, tag("filmgrn1"), line_ending).parse(input)?;
+    let (input, _) = delimited(multispace0, tag("filmgrn1"), line_ending)(input)?;
     Ok((input, ()))
 }
 
-fn line<I, O, E: ParseError<I>, F>(parser: F) -> impl Parser<I, Output = O, Error = E>
+// FIXME: Clippy false positive
+#[allow(clippy::trait_duplication_in_bounds)]
+fn line<I, O, E: ParseError<I>, F>(parser: F) -> impl FnMut(I) -> IResult<I, O, E>
 where
-    I: Input + Clone + Compare<&'static str>,
-    <I as Input>::Item: AsChar + Clone,
-    F: Parser<I, Output = O, Error = E>,
+    I: InputTakeAtPosition
+        + Clone
+        + Slice<Range<usize>>
+        + Slice<RangeFrom<usize>>
+        + Slice<RangeTo<usize>>
+        + InputIter
+        + InputLength
+        + Compare<&'static str>,
+    <I as InputTakeAtPosition>::Item: AsChar + Clone,
+    F: Parser<I, O, E>,
 {
     delimited(multispace0, parser, alt((line_ending, eof)))
 }
@@ -131,48 +141,45 @@ fn e_params(input: &str) -> IResult<&str, EParams> {
         )),
         |items: Vec<&str>| {
             if items.len() != 5 {
-                return Err(NomErr::<NomError<&str>>::Failure(
-                    NomError::from_external_error(
-                        input,
-                        ErrorKind::Verify,
-                        "Expected 5 values on E line",
-                    ),
-                ));
+                return Err(NomErr::Failure(NomError::from_external_error(
+                    input,
+                    ErrorKind::Verify,
+                    "Expected 5 values on E line",
+                )));
             }
             let parsed = EParams {
                 start: items[0].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse start_time",
                     ))
                 })?,
                 end: items[1].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse end_time",
                     ))
                 })?,
                 apply: items[2].parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse apply_grain",
                     ))
                 })? > 0,
                 seed: items[3].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse random_seed",
                     ))
                 })?,
             };
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     if params.end < params.start {
         return Err(NomErr::Failure(NomError::from_external_error(
@@ -210,105 +217,102 @@ fn p_params(input: &str) -> IResult<&str, PParams> {
         )),
         |items: Vec<&str>| {
             if items.len() != 12 {
-                return Err(NomErr::<NomError<&str>>::Failure(
-                    NomError::from_external_error(
-                        input,
-                        ErrorKind::Verify,
-                        "Expected 12 values on p line",
-                    ),
-                ));
+                return Err(NomErr::Failure(NomError::from_external_error(
+                    input,
+                    ErrorKind::Verify,
+                    "Expected 12 values on p line",
+                )));
             }
 
             let parsed = PParams {
                 ar_coeff_lag: items[0].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse ar_coeff_lag",
                     ))
                 })?,
                 ar_coeff_shift: items[1].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse ar_coeff_shift",
                     ))
                 })?,
                 grain_scale_shift: items[2].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse grain_scale_shift",
                     ))
                 })?,
                 scaling_shift: items[3].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse scaling_shift",
                     ))
                 })?,
                 chroma_scaling_from_luma: items[4].parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse chroma_scaling_from_luma",
                     ))
                 })? > 0,
                 overlap_flag: items[5].parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse overlap_flag",
                     ))
                 })? > 0,
                 cb_mult: items[6].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_mult",
                     ))
                 })?,
                 cb_luma_mult: items[7].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_luma_mult",
                     ))
                 })?,
                 cb_offset: items[8].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_offset",
                     ))
                 })?,
                 cr_mult: items[9].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_mult",
                     ))
                 })?,
                 cr_luma_mult: items[10].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_luma_mult",
                     ))
                 })?,
                 cr_offset: items[11].parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_offset",
                     ))
                 })?,
             };
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     if params.scaling_shift < 8 || params.scaling_shift > 11 {
         return Err(NomErr::Failure(NomError::from_external_error(
@@ -336,7 +340,7 @@ fn p_params(input: &str) -> IResult<&str, PParams> {
 }
 
 fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
-    let (input, values) = map_res(
+    let (input, values) = map_res::<_, _, _, _, NomErr<NomError<&str>>, _, _>(
         line(preceded(
             tag("sY"),
             preceded(space1, separated_list1(space1, digit1)),
@@ -345,17 +349,16 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 parsed.push(item.parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse Y-plane points",
                     ))
                 })?);
             }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     let len = values[0] as usize;
     if values.len() != len * 2 + 1 {
@@ -380,7 +383,7 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
 }
 
 fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
-    let (input, values) = map_res(
+    let (input, values) = map_res::<_, _, _, _, NomErr<NomError<&str>>, _, _>(
         line(preceded(
             tag("sCb"),
             preceded(space1, separated_list1(space1, digit1)),
@@ -389,17 +392,16 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 parsed.push(item.parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse Cb-plane points",
                     ))
                 })?);
             }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     let len = values[0] as usize;
     if values.len() != len * 2 + 1 {
@@ -424,7 +426,7 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 }
 
 fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
-    let (input, values) = map_res(
+    let (input, values) = map_res::<_, _, _, _, NomErr<NomError<&str>>, _, _>(
         line(preceded(
             tag("sCr"),
             preceded(space1, separated_list1(space1, digit1)),
@@ -433,17 +435,16 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 parsed.push(item.parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse Cr-plane points",
                     ))
                 })?);
             }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     let len = values[0] as usize;
     if values.len() != len * 2 + 1 {
@@ -468,11 +469,11 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 }
 
 fn integer(input: &str) -> IResult<&str, &str> {
-    recognize(preceded(opt(char('-')), digit1)).parse(input)
+    recognize(preceded(opt(char('-')), digit1))(input)
 }
 
 fn c_y_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_Y_COEFFS>> {
-    let (input, values) = map_res(
+    let (input, values) = map_res::<_, _, _, _, NomErr<NomError<&str>>, _, _>(
         line(preceded(
             tag("cY"),
             preceded(space0, separated_list0(multispace1, integer)),
@@ -481,17 +482,16 @@ fn c_y_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_Y_COE
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 parsed.push(item.parse::<i8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse Y-plane coeffs",
                     ))
                 })?);
             }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     if values.len() != count {
         return Err(NomErr::Failure(NomError::from_external_error(
@@ -505,7 +505,7 @@ fn c_y_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_Y_COE
 }
 
 fn c_cb_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_COEFFS>> {
-    let (input, values) = map_res(
+    let (input, values) = map_res::<_, _, _, _, NomErr<NomError<&str>>, _, _>(
         line(preceded(
             tag("cCb"),
             preceded(space1, separated_list1(multispace1, integer)),
@@ -514,17 +514,16 @@ fn c_cb_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_C
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 parsed.push(item.parse::<i8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse Cb-plane coeffs",
                     ))
                 })?);
             }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     if values.len() != count + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
@@ -542,7 +541,7 @@ fn c_cb_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_C
 }
 
 fn c_cr_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_COEFFS>> {
-    let (input, values) = map_res(
+    let (input, values) = map_res::<_, _, _, _, NomErr<NomError<&str>>, _, _>(
         line(preceded(
             tag("cCr"),
             preceded(space1, separated_list1(multispace1, integer)),
@@ -551,17 +550,16 @@ fn c_cr_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_C
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 parsed.push(item.parse::<i8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                    NomErr::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse Cr-plane coeffs",
                     ))
                 })?);
             }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
+            Ok(parsed)
         },
-    )
-    .parse(input)?;
+    )(input)?;
 
     if values.len() != count + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
@@ -578,15 +576,11 @@ fn c_cr_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_C
     Ok((input, values.into_iter().collect()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_luma_only_table() {
-        // This is the luma-only table format generated by
-        // both aomenc's photon noise utility and by av1an.
-        let input = r#"filmgrn1
+#[test]
+fn parse_luma_only_table() {
+    // This is the luma-only table format generated by
+    // both aomenc's photon noise utility and by av1an.
+    let input = r#"filmgrn1
 E 0 9223372036854775807 1 7391 1
   p 0 6 0 8 0 1 0 0 0 0 0 0
   sY 14  0 20 20 5 39 4 59 3 78 3 98 3 118 3 137 3 157 3 177 3 196 3 216 4 235 4 255 4
@@ -596,53 +590,53 @@ E 0 9223372036854775807 1 7391 1
   cCb 0
   cCr 0
 "#;
-        let expected = GrainTableSegment {
-            start_time: 0,
-            end_time: 9_223_372_036_854_775_807,
-            scaling_points_y: ArrayVec::from([
-                [0, 20],
-                [20, 5],
-                [39, 4],
-                [59, 3],
-                [78, 3],
-                [98, 3],
-                [118, 3],
-                [137, 3],
-                [157, 3],
-                [177, 3],
-                [196, 3],
-                [216, 4],
-                [235, 4],
-                [255, 4],
-            ]),
-            scaling_points_cb: ArrayVec::new(),
-            scaling_points_cr: ArrayVec::new(),
-            scaling_shift: 8,
-            ar_coeff_lag: 0,
-            ar_coeffs_y: ArrayVec::new(),
-            ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
-            ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
-            ar_coeff_shift: 6,
-            cb_mult: 0,
-            cb_luma_mult: 0,
-            cb_offset: 0,
-            cr_mult: 0,
-            cr_luma_mult: 0,
-            cr_offset: 0,
-            overlap_flag: true,
-            chroma_scaling_from_luma: false,
-            grain_scale_shift: 0,
-            random_seed: 7391,
-        };
-        let output = parse_grain_table(input).expect("Test failed");
-        assert_eq!(vec![expected], output);
-    }
+    let expected = GrainTableSegment {
+        start_time: 0,
+        end_time: 9_223_372_036_854_775_807,
+        scaling_points_y: ArrayVec::from([
+            [0, 20],
+            [20, 5],
+            [39, 4],
+            [59, 3],
+            [78, 3],
+            [98, 3],
+            [118, 3],
+            [137, 3],
+            [157, 3],
+            [177, 3],
+            [196, 3],
+            [216, 4],
+            [235, 4],
+            [255, 4],
+        ]),
+        scaling_points_cb: ArrayVec::new(),
+        scaling_points_cr: ArrayVec::new(),
+        scaling_shift: 8,
+        ar_coeff_lag: 0,
+        ar_coeffs_y: ArrayVec::new(),
+        ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
+        ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
+        ar_coeff_shift: 6,
+        cb_mult: 0,
+        cb_luma_mult: 0,
+        cb_offset: 0,
+        cr_mult: 0,
+        cr_luma_mult: 0,
+        cr_offset: 0,
+        overlap_flag: true,
+        chroma_scaling_from_luma: false,
+        grain_scale_shift: 0,
+        random_seed: 7391,
+    };
+    let output = parse_grain_table(input).expect("Test failed");
+    assert_eq!(vec![expected], output);
+}
 
-    #[test]
-    fn parse_luma_chroma_table() {
-        // This is the luma+chroma table format generated by
-        // both aomenc's photon noise utility and by av1an.
-        let input = r#"filmgrn1
+#[test]
+fn parse_luma_chroma_table() {
+    // This is the luma+chroma table format generated by
+    // both aomenc's photon noise utility and by av1an.
+    let input = r#"filmgrn1
 E 0 9223372036854775807 1 7391 1
   p 0 6 0 8 0 1 128 192 256 128 192 256
   sY 14  0 0 20 4 39 3 59 3 78 3 98 3 118 4 137 4 157 4 177 4 196 4 216 5 235 5 255 5
@@ -652,73 +646,73 @@ E 0 9223372036854775807 1 7391 1
   cCb 0
   cCr 0
 "#;
-        let expected = GrainTableSegment {
-            start_time: 0,
-            end_time: 9_223_372_036_854_775_807,
-            scaling_points_y: ArrayVec::from([
-                [0, 0],
-                [20, 4],
-                [39, 3],
-                [59, 3],
-                [78, 3],
-                [98, 3],
-                [118, 4],
-                [137, 4],
-                [157, 4],
-                [177, 4],
-                [196, 4],
-                [216, 5],
-                [235, 5],
-                [255, 5],
-            ]),
-            scaling_points_cb: ArrayVec::from([
-                [0, 0],
-                [28, 0],
-                [57, 0],
-                [85, 0],
-                [113, 0],
-                [142, 0],
-                [170, 0],
-                [198, 0],
-                [227, 0],
-                [255, 1],
-            ]),
-            scaling_points_cr: ArrayVec::from([
-                [0, 0],
-                [28, 0],
-                [57, 0],
-                [85, 0],
-                [113, 0],
-                [142, 0],
-                [170, 0],
-                [198, 0],
-                [227, 0],
-                [255, 1],
-            ]),
-            scaling_shift: 8,
-            ar_coeff_lag: 0,
-            ar_coeffs_y: ArrayVec::new(),
-            ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
-            ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
-            ar_coeff_shift: 6,
-            cb_mult: 128,
-            cb_luma_mult: 192,
-            cb_offset: 256,
-            cr_mult: 128,
-            cr_luma_mult: 192,
-            cr_offset: 256,
-            overlap_flag: true,
-            chroma_scaling_from_luma: false,
-            grain_scale_shift: 0,
-            random_seed: 7391,
-        };
-        let output = parse_grain_table(input).expect("Test failed");
-        assert_eq!(vec![expected], output);
-    }
+    let expected = GrainTableSegment {
+        start_time: 0,
+        end_time: 9_223_372_036_854_775_807,
+        scaling_points_y: ArrayVec::from([
+            [0, 0],
+            [20, 4],
+            [39, 3],
+            [59, 3],
+            [78, 3],
+            [98, 3],
+            [118, 4],
+            [137, 4],
+            [157, 4],
+            [177, 4],
+            [196, 4],
+            [216, 5],
+            [235, 5],
+            [255, 5],
+        ]),
+        scaling_points_cb: ArrayVec::from([
+            [0, 0],
+            [28, 0],
+            [57, 0],
+            [85, 0],
+            [113, 0],
+            [142, 0],
+            [170, 0],
+            [198, 0],
+            [227, 0],
+            [255, 1],
+        ]),
+        scaling_points_cr: ArrayVec::from([
+            [0, 0],
+            [28, 0],
+            [57, 0],
+            [85, 0],
+            [113, 0],
+            [142, 0],
+            [170, 0],
+            [198, 0],
+            [227, 0],
+            [255, 1],
+        ]),
+        scaling_shift: 8,
+        ar_coeff_lag: 0,
+        ar_coeffs_y: ArrayVec::new(),
+        ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
+        ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
+        ar_coeff_shift: 6,
+        cb_mult: 128,
+        cb_luma_mult: 192,
+        cb_offset: 256,
+        cr_mult: 128,
+        cr_luma_mult: 192,
+        cr_offset: 256,
+        overlap_flag: true,
+        chroma_scaling_from_luma: false,
+        grain_scale_shift: 0,
+        random_seed: 7391,
+    };
+    let output = parse_grain_table(input).expect("Test failed");
+    assert_eq!(vec![expected], output);
+}
 
-    #[test]
-    fn parse_complex_table() {
-        let input = r#"filmgrn1
+#[test]
+fn parse_complex_table() {
+    let input = r#"filmgrn1
 E 0 417083 1 7391 1
 	p 3 7 0 11 0 1 128 192 256 128 192 256
 	sY 6  0 53 13 53 40 64 94 49 121 46 255 46
@@ -791,7 +785,6 @@ E 20020000 9223372036854775807 1 0 1
 	cY 1 -3 1 2 5 3 -2 -6 8 6 -12 -18 -2 3 5 7 -42 44 21 -3 -1 4 -29 67
 	cCb -1 0 1 0 -1 0 -1 0 5 -4 -3 -9 1 1 2 -4 -21 39 10 -2 -3 -2 -7 44 1
 	cCr 1 0 -3 2 -3 -1 0 1 -1 -4 5 -2 -1 -1 -5 -6 3 20 10 4 -2 0 9 23 -1"#;
-        let output = parse_grain_table(input);
-        assert!(output.is_ok());
-    }
+    let output = parse_grain_table(input);
+    assert!(output.is_ok());
 }

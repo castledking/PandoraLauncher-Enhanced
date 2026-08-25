@@ -11,8 +11,8 @@ use smallvec::SmallVec;
 use crate::common::FloatFuncs;
 
 use crate::{
-    common::solve_quadratic, fit_to_bezpath, fit_to_bezpath_opt, offset::CubicOffset, Affine, Arc,
-    BezPath, CubicBez, Line, ParamCurve, ParamCurveArclen, PathEl, PathSeg, Point, QuadBez, Vec2,
+    Affine, Arc, BezPath, CubicBez, Line, ParamCurve, ParamCurveArclen, PathEl, PathSeg, Point,
+    QuadBez, Vec2, common::solve_quadratic,
 };
 
 /// Defines the connection between two segments of a stroke.
@@ -41,7 +41,7 @@ pub enum Cap {
     Round,
 }
 
-/// Describes the visual style of a stroke.
+/// The visual style of a stroke.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -66,9 +66,17 @@ pub struct Stroke {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StrokeOpts {
     opt_level: StrokeOptLevel,
+    /// When `true`, dashes are emitted in the order they appear along the path. The default `false` delays a subpath's first dash so it can be merged with a dash that wraps through `ClosePath`; this option disables both the reorder and the wraparound merge, so a dash spanning the seam is truncated there.
+    stable_dash_order: bool,
 }
 
-/// Optimization level for computing
+/// Optimization level for computing stroke outlines.
+///
+/// Note that in the current implementation, this setting has no effect.
+/// However, having a tradeoff between optimization of number of segments
+/// and speed makes sense and may be added in the future, so applications
+/// should set it appropriately. For real time rendering, the appropriate
+/// value is `Subdivide`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StrokeOptLevel {
     /// Adaptively subdivide segments in half.
@@ -80,59 +88,59 @@ pub enum StrokeOptLevel {
 impl Default for StrokeOpts {
     fn default() -> Self {
         let opt_level = StrokeOptLevel::Subdivide;
-        StrokeOpts { opt_level }
+        StrokeOpts {
+            opt_level,
+            stable_dash_order: false,
+        }
     }
 }
 
 impl Default for Stroke {
     fn default() -> Self {
-        Self {
-            width: 1.0,
-            join: Join::Round,
-            miter_limit: 4.0,
-            start_cap: Cap::Round,
-            end_cap: Cap::Round,
-            dash_pattern: SmallVec::default(),
-            dash_offset: 0.0,
-        }
+        Self::new(1.0)
     }
 }
 
 impl Stroke {
     /// Creates a new stroke with the specified width.
-    pub fn new(width: f64) -> Self {
+    pub const fn new(width: f64) -> Self {
         Self {
             width,
-            ..Stroke::default()
+            join: Join::Round,
+            miter_limit: 4.0,
+            start_cap: Cap::Round,
+            end_cap: Cap::Round,
+            dash_pattern: SmallVec::new_const(),
+            dash_offset: 0.0,
         }
     }
 
     /// Builder method for setting the join style.
-    pub fn with_join(mut self, join: Join) -> Self {
+    pub const fn with_join(mut self, join: Join) -> Self {
         self.join = join;
         self
     }
 
     /// Builder method for setting the limit for miter joins.
-    pub fn with_miter_limit(mut self, limit: f64) -> Self {
+    pub const fn with_miter_limit(mut self, limit: f64) -> Self {
         self.miter_limit = limit;
         self
     }
 
     /// Builder method for setting the cap style for the start of the stroke.
-    pub fn with_start_cap(mut self, cap: Cap) -> Self {
+    pub const fn with_start_cap(mut self, cap: Cap) -> Self {
         self.start_cap = cap;
         self
     }
 
     /// Builder method for setting the cap style for the end of the stroke.
-    pub fn with_end_cap(mut self, cap: Cap) -> Self {
+    pub const fn with_end_cap(mut self, cap: Cap) -> Self {
         self.end_cap = cap;
         self
     }
 
     /// Builder method for setting the cap style.
-    pub fn with_caps(mut self, cap: Cap) -> Self {
+    pub const fn with_caps(mut self, cap: Cap) -> Self {
         self.start_cap = cap;
         self.end_cap = cap;
         self
@@ -150,6 +158,26 @@ impl Stroke {
             .extend(pattern.into_iter().map(|dash| *dash.borrow()));
         self
     }
+
+    /// Returns `true` if all floating-point stroke parameters are [finite].
+    ///
+    /// [finite]: f64::is_finite
+    pub fn is_finite(&self) -> bool {
+        self.width.is_finite()
+            && self.miter_limit.is_finite()
+            && self.dash_offset.is_finite()
+            && self.dash_pattern.iter().all(|dash| dash.is_finite())
+    }
+
+    /// Returns `true` if any floating-point stroke parameter is [`NaN`].
+    ///
+    /// [`NaN`]: f64::is_nan
+    pub fn is_nan(&self) -> bool {
+        self.width.is_nan()
+            || self.miter_limit.is_nan()
+            || self.dash_offset.is_nan()
+            || self.dash_pattern.iter().any(|dash| dash.is_nan())
+    }
 }
 
 impl StrokeOpts {
@@ -158,20 +186,29 @@ impl StrokeOpts {
         self.opt_level = opt_level;
         self
     }
+
+    /// When `true`, dashes are emitted in the order they appear along the path.
+    pub fn stable_dash_order(mut self, stable: bool) -> Self {
+        self.stable_dash_order = stable;
+        self
+    }
 }
 
 /// Collection of values representing lengths in a dash pattern.
 pub type Dashes = SmallVec<[f64; 4]>;
 
-/// Internal structure used for creating strokes.
-#[derive(Default)]
-struct StrokeCtx {
+/// A structure that is used for creating strokes.
+///
+/// See also [`stroke_with`].
+#[derive(Default, Debug)]
+pub struct StrokeCtx {
     // As a possible future optimization, we might not need separate storage
     // for forward and backward paths, we can add forward to the output in-place.
     // However, this structure is clearer and the cost fairly modest.
     output: BezPath,
     forward_path: BezPath,
     backward_path: BezPath,
+    result_path: BezPath,
     start_pt: Point,
     start_norm: Vec2,
     start_tan: Vec2,
@@ -182,13 +219,37 @@ struct StrokeCtx {
     join_thresh: f64,
 }
 
+impl StrokeCtx {
+    /// Return the path that defines the expanded stroke.
+    pub fn output(&self) -> &BezPath {
+        &self.output
+    }
+}
+
+impl StrokeCtx {
+    fn reset(&mut self) {
+        self.output.truncate(0);
+        self.forward_path.truncate(0);
+        self.backward_path.truncate(0);
+        self.start_pt = Point::default();
+        self.start_norm = Vec2::default();
+        self.start_tan = Vec2::default();
+        self.last_pt = Point::default();
+        self.last_tan = Vec2::default();
+        self.join_thresh = 0.0;
+    }
+}
+
 /// Expand a stroke into a fill.
 ///
 /// The `tolerance` parameter controls the accuracy of the result. In general,
-/// the number of subdivisions in the output scales to the -1/6 power of the
-/// parameter, for example making it 1/64 as big generates twice as many
-/// segments. The appropriate value depends on the application; if the result
-/// of the stroke will be scaled up, a smaller value is needed.
+/// the number of subdivisions in the output scales at least to the -1/4 power
+/// of the parameter, for example making it 1/16 as big generates twice as many
+/// segments. Currently the algorithm is not tuned for extremely fine tolerances.
+/// The theoretically optimum scaling exponent is -1/6, but achieving this may
+/// require slow numerical techniques (currently a subject of research). The
+/// appropriate value depends on the application; if the result of the stroke
+/// will be scaled up, a smaller value is needed.
 ///
 /// This method attempts a fairly high degree of correctness, but ultimately
 /// is based on computing parallel curves and adding joins and caps, rather than
@@ -202,11 +263,38 @@ pub fn stroke(
     opts: &StrokeOpts,
     tolerance: f64,
 ) -> BezPath {
+    let mut ctx = StrokeCtx::default();
+    stroke_with(path, style, opts, tolerance, &mut ctx);
+
+    ctx.output
+}
+
+/// Expand a stroke into a fill.
+///
+/// This is the same as [`stroke`], except for the fact that you can explicitly pass a
+/// `StrokeCtx`. By doing so, you can reuse the same context over multiple calls and ensure
+/// that the number of reallocations is minimized.
+///
+/// Unlike [`stroke`], this method doesn't return an owned version of the expanded stroke as a
+/// [`BezPath`]. Instead, you can get a reference to the resulting path by calling
+/// [`StrokeCtx::output`].
+pub fn stroke_with(
+    path: impl IntoIterator<Item = PathEl>,
+    style: &Stroke,
+    opts: &StrokeOpts,
+    tolerance: f64,
+    ctx: &mut StrokeCtx,
+) {
     if style.dash_pattern.is_empty() {
-        stroke_undashed(path, style, tolerance, *opts)
+        stroke_undashed(path, style, tolerance, ctx);
     } else {
-        let dashed = dash(path.into_iter(), style.dash_offset, &style.dash_pattern);
-        stroke_undashed(dashed, style, tolerance, *opts)
+        let dashed = dash_iter(
+            path.into_iter(),
+            style.dash_offset,
+            &style.dash_pattern,
+            opts.stable_dash_order,
+        );
+        stroke_undashed(dashed, style, tolerance, ctx);
     }
 }
 
@@ -215,12 +303,11 @@ fn stroke_undashed(
     path: impl IntoIterator<Item = PathEl>,
     style: &Stroke,
     tolerance: f64,
-    opts: StrokeOpts,
-) -> BezPath {
-    let mut ctx = StrokeCtx {
-        join_thresh: 2.0 * tolerance / style.width,
-        ..StrokeCtx::default()
-    };
+    ctx: &mut StrokeCtx,
+) {
+    ctx.reset();
+    ctx.join_thresh = 2.0 * tolerance / style.width;
+
     for el in path {
         let p0 = ctx.last_pt;
         match el {
@@ -242,7 +329,7 @@ fn stroke_undashed(
                     let q = QuadBez::new(p0, p1, p2);
                     let (tan0, tan1) = PathSeg::Quad(q).tangents();
                     ctx.do_join(style, tan0);
-                    ctx.do_cubic(style, q.raise(), tolerance, opts);
+                    ctx.do_cubic(style, q.raise(), tolerance);
                     ctx.last_tan = tan1;
                 }
             }
@@ -251,7 +338,7 @@ fn stroke_undashed(
                     let c = CubicBez::new(p0, p1, p2, p3);
                     let (tan0, tan1) = PathSeg::Cubic(c).tangents();
                     ctx.do_join(style, tan0);
-                    ctx.do_cubic(style, c, tolerance, opts);
+                    ctx.do_cubic(style, c, tolerance);
                     ctx.last_tan = tan1;
                 }
             }
@@ -267,7 +354,6 @@ fn stroke_undashed(
         }
     }
     ctx.finish(style);
-    ctx.output
 }
 
 fn round_cap(out: &mut BezPath, tolerance: f64, center: Point, norm: Vec2) {
@@ -306,13 +392,6 @@ fn extend_reversed(out: &mut BezPath, elements: &[PathEl]) {
             PathEl::CurveTo(p1, p2, _) => out.curve_to(p2, p1, end),
             _ => unreachable!(),
         }
-    }
-}
-
-fn fit_with_opts(co: &CubicOffset, tolerance: f64, opts: StrokeOpts) -> BezPath {
-    match opts.opt_level {
-        StrokeOptLevel::Subdivide => fit_to_bezpath(co, tolerance),
-        StrokeOptLevel::Optimized => fit_to_bezpath_opt(co, tolerance),
     }
 }
 
@@ -396,12 +475,14 @@ impl StrokeCtx {
                                 let h = ab.cross(fp_this - fp_last) / cross;
                                 let miter_pt = fp_this - cd * h;
                                 self.forward_path.line_to(miter_pt);
+                                self.backward_path.line_to(p0);
                             } else if cross < 0.0 {
                                 let fp_last = p0 + last_norm;
                                 let fp_this = p0 + norm;
                                 let h = ab.cross(fp_this - fp_last) / cross;
                                 let miter_pt = fp_this - cd * h;
                                 self.backward_path.line_to(miter_pt);
+                                self.forward_path.line_to(p0);
                             }
                         }
                         self.forward_path.line_to(p0 - norm);
@@ -430,7 +511,7 @@ impl StrokeCtx {
         self.last_pt = p1;
     }
 
-    fn do_cubic(&mut self, style: &Stroke, c: CubicBez, tolerance: f64, opts: StrokeOpts) {
+    fn do_cubic(&mut self, style: &Stroke, c: CubicBez, tolerance: f64) {
         // First, detect degenerate linear case
 
         // Ordinarily, this is the direction of the chord, but if the chord is very
@@ -475,17 +556,10 @@ impl StrokeCtx {
             }
         }
 
-        // A tuning parameter for regularization. A value too large may distort the curve,
-        // while a value too small may fail to generate smooth curves. This is a somewhat
-        // arbitrary value, and should be revisited.
-        const DIM_TUNE: f64 = 0.25;
-        let dimension = tolerance * DIM_TUNE;
-        let co = CubicOffset::new_regularized(c, -0.5 * style.width, dimension);
-        let forward = fit_with_opts(&co, tolerance, opts);
-        self.forward_path.extend(forward.into_iter().skip(1));
-        let co = CubicOffset::new_regularized(c, 0.5 * style.width, dimension);
-        let backward = fit_with_opts(&co, tolerance, opts);
-        self.backward_path.extend(backward.into_iter().skip(1));
+        crate::offset::offset_cubic(c, -0.5 * style.width, tolerance, &mut self.result_path);
+        self.forward_path.extend(self.result_path.iter().skip(1));
+        crate::offset::offset_cubic(c, 0.5 * style.width, tolerance, &mut self.result_path);
+        self.backward_path.extend(self.result_path.iter().skip(1));
         self.last_pt = c.p3;
     }
 
@@ -534,8 +608,7 @@ impl StrokeCtx {
 }
 
 /// An implementation of dashing as an iterator-to-iterator transformation.
-#[doc(hidden)]
-pub struct DashIterator<'a, T> {
+struct DashIterator<'a, T> {
     inner: T,
     input_done: bool,
     closepath_pending: bool,
@@ -554,6 +627,8 @@ pub struct DashIterator<'a, T> {
     last_pt: Point,
     stash: Vec<PathEl>,
     stash_ix: usize,
+    stable_dash_order: bool,
+    needs_moveto: bool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -582,6 +657,9 @@ impl<T: Iterator<Item = PathEl>> Iterator for DashIterator<'_, T> {
                 }
                 DashState::ToStash => {
                     if let Some(el) = self.step() {
+                        if self.stable_dash_order {
+                            return Some(el);
+                        }
                         self.stash.push(el);
                     }
                 }
@@ -641,17 +719,25 @@ pub fn dash<'a>(
     dash_offset: f64,
     dashes: &'a [f64],
 ) -> impl Iterator<Item = PathEl> + 'a {
-    dash_impl(inner, dash_offset, dashes)
+    dash_iter(inner, dash_offset, dashes, false)
 }
 
-// This is only a separate function to make `DashIterator::new()` typecheck.
-fn dash_impl<T: Iterator<Item = PathEl>>(
-    inner: T,
+fn dash_iter<'a>(
+    inner: impl Iterator<Item = PathEl> + 'a,
     dash_offset: f64,
-    dashes: &[f64],
-) -> DashIterator<'_, T> {
-    // ensure that offset is positive and minimal by normalization using period
+    dashes: &'a [f64],
+    stable_dash_order: bool,
+) -> DashIterator<'a, impl Iterator<Item = PathEl> + 'a> {
+    // Ensure that offset is positive and minimal by normalization using period
     let period = dashes.iter().sum();
+    // The SVG spec requires odd-length dash arrays to be doubled to become even-length:
+    // <https://www.w3.org/TR/SVG2/painting.html#StrokeDasharrayProperty>
+    // This prevents gaps and dashes from swapping with one another as the offset increases.
+    let period = if dashes.len() % 2 == 1 {
+        2.0 * period
+    } else {
+        period
+    };
     let dash_offset = dash_offset.rem_euclid(period);
 
     let mut dash_ix = 0;
@@ -682,16 +768,12 @@ fn dash_impl<T: Iterator<Item = PathEl>>(
         last_pt: Point::ORIGIN,
         stash: Vec::new(),
         stash_ix: 0,
+        stable_dash_order,
+        needs_moveto: true,
     }
 }
 
 impl<'a, T: Iterator<Item = PathEl>> DashIterator<'a, T> {
-    #[doc(hidden)]
-    #[deprecated(since = "0.10.4", note = "use dash() instead")]
-    pub fn new(inner: T, dash_offset: f64, dashes: &'a [f64]) -> Self {
-        dash_impl(inner, dash_offset, dashes)
-    }
-
     fn get_input(&mut self) {
         loop {
             if self.closepath_pending {
@@ -752,7 +834,8 @@ impl<'a, T: Iterator<Item = PathEl>> DashIterator<'a, T> {
     /// Move arc length forward to next event.
     fn step(&mut self) -> Option<PathEl> {
         let mut result = None;
-        if self.state == DashState::ToStash && self.stash.is_empty() {
+        if self.state == DashState::ToStash && self.needs_moveto {
+            self.needs_moveto = false;
             if self.is_active {
                 result = Some(PathEl::MoveTo(self.current_seg.start()));
             } else {
@@ -793,7 +876,7 @@ impl<'a, T: Iterator<Item = PathEl>> DashIterator<'a, T> {
         if self.state == DashState::ToStash {
             // Have looped back without breaking a dash, just play it back
             self.stash.push(PathEl::ClosePath);
-        } else if self.is_active {
+        } else if self.is_active && !self.stable_dash_order {
             // connect with path in stash, skip MoveTo.
             self.stash_ix = 1;
         }
@@ -805,14 +888,16 @@ impl<'a, T: Iterator<Item = PathEl>> DashIterator<'a, T> {
         self.dash_ix = self.init_dash_ix;
         self.dash_remaining = self.init_dash_remaining;
         self.is_active = self.init_is_active;
+        self.needs_moveto = true;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::dash_iter;
     use crate::{
-        dash, segments, stroke, Cap::Butt, CubicBez, Join::Miter, Line, PathSeg, Shape, Stroke,
-        StrokeOpts,
+        BezPath, Cap::Butt, CubicBez, Join::Miter, Line, PathEl, PathSeg, Shape, Stroke,
+        StrokeOpts, dash, segments, stroke,
     };
 
     // A degenerate stroke with a cusp at the endpoint.
@@ -828,6 +913,37 @@ mod tests {
         let stroke_style = Stroke::new(1.);
         let stroked = stroke(path, &stroke_style, &StrokeOpts::default(), 0.001);
         assert!(stroked.is_finite());
+    }
+
+    #[test]
+    /// <https://github.com/linebender/kurbo/issues/482>
+    fn dash_miter_join() {
+        let path = BezPath::from_vec(vec![
+            PathEl::MoveTo((70.0, 80.0).into()),
+            PathEl::LineTo((0.0, 80.0).into()),
+            PathEl::LineTo((0.0, 77.0).into()),
+        ]);
+        let expected_stroke = BezPath::from_vec(vec![
+            PathEl::MoveTo((70.0, 90.0).into()),
+            PathEl::LineTo((0.0, 90.0).into()),
+            // Miter join point on forward path
+            PathEl::LineTo((-10.0, 90.0).into()),
+            PathEl::LineTo((-10.0, 80.0).into()),
+            PathEl::LineTo((-10.0, 77.0).into()),
+            PathEl::LineTo((10.0, 77.0).into()),
+            PathEl::LineTo((10.0, 80.0).into()),
+            // Miter join point on backward path
+            PathEl::LineTo((0.0, 80.0).into()),
+            PathEl::LineTo((0.0, 70.0).into()),
+            PathEl::LineTo((70.0, 70.0).into()),
+            PathEl::ClosePath,
+        ]);
+        let stroke_style = Stroke::new(20.0)
+            .with_join(Miter)
+            .with_caps(Butt)
+            .with_dashes(0.0, [73.0, 12.0]);
+        let stroke = stroke(path, &stroke_style, &StrokeOpts::default(), 0.25);
+        assert_eq!(stroke, expected_stroke);
     }
 
     // Test cases adapted from https://github.com/linebender/vello/pull/388
@@ -879,6 +995,55 @@ mod tests {
     }
 
     #[test]
+    fn dash_sequence_closed_path() {
+        let shape = crate::Rect::from_points((0.0, 0.0), (4.0, 4.0));
+        let dashes = [5., 1.];
+        let expansion = [
+            PathEl::MoveTo((4.0, 2.0).into()),
+            PathEl::LineTo((4.0, 4.0).into()),
+            PathEl::LineTo((1.0, 4.0).into()),
+            PathEl::MoveTo((0.0, 4.0).into()),
+            PathEl::LineTo((0.0, 0.0).into()),
+            PathEl::LineTo((4.0, 0.0).into()),
+            PathEl::LineTo((4.0, 1.0).into()),
+        ];
+        let iter = dash(shape.path_elements(0.), 0., &dashes);
+        assert_eq!(iter.collect::<Vec<PathEl>>(), expansion);
+    }
+
+    #[test]
+    fn dash_sequence_stable_order() {
+        let shape = Line::new((0.0, 0.0), (21.0, 0.0));
+        let dashes = [1., 5., 2., 5.];
+        let expansion = [
+            PathSeg::Line(Line::new((0., 0.), (1., 0.))),
+            PathSeg::Line(Line::new((6., 0.), (8., 0.))),
+            PathSeg::Line(Line::new((13., 0.), (14., 0.))),
+            PathSeg::Line(Line::new((19., 0.), (21., 0.))),
+        ];
+        let iter = segments(dash_iter(shape.path_elements(0.), 0., &dashes, true));
+        assert_eq!(iter.collect::<Vec<PathSeg>>(), expansion);
+    }
+
+    #[test]
+    fn dash_sequence_closed_path_stable_order() {
+        let shape = crate::Rect::from_points((0.0, 0.0), (4.0, 4.0));
+        let dashes = [5., 1.];
+        let expansion = [
+            PathEl::MoveTo((0.0, 0.0).into()),
+            PathEl::LineTo((4.0, 0.0).into()),
+            PathEl::LineTo((4.0, 1.0).into()),
+            PathEl::MoveTo((4.0, 2.0).into()),
+            PathEl::LineTo((4.0, 4.0).into()),
+            PathEl::LineTo((1.0, 4.0).into()),
+            PathEl::MoveTo((0.0, 4.0).into()),
+            PathEl::LineTo((0.0, 0.0).into()),
+        ];
+        let iter = dash_iter(shape.path_elements(0.), 0., &dashes, true);
+        assert_eq!(iter.collect::<Vec<PathEl>>(), expansion);
+    }
+
+    #[test]
     fn dash_sequence_offset() {
         // Same as dash_sequence, but with a dash offset
         // of 3, which skips the first dash and cuts into
@@ -894,6 +1059,46 @@ mod tests {
         assert_eq!(iter.collect::<Vec<PathSeg>>(), expansion);
     }
 
+    // Differently-sized subpaths verify stable mode restarts the dash pattern per subpath without leaking state.
+    #[test]
+    fn dash_stable_order_multi_subpath() {
+        let mut path = BezPath::new();
+        path.move_to((0., 0.));
+        path.line_to((2., 0.));
+        path.line_to((2., 2.));
+        path.line_to((0., 2.));
+        path.close_path();
+        path.move_to((10., 10.));
+        path.line_to((15., 10.));
+        path.line_to((15., 14.));
+        path.line_to((10., 14.));
+        path.close_path();
+        let dashes = [3., 1.];
+        let expansion = [
+            PathEl::MoveTo((0., 0.).into()),
+            PathEl::LineTo((2., 0.).into()),
+            PathEl::LineTo((2., 1.).into()),
+            PathEl::MoveTo((2., 2.).into()),
+            PathEl::LineTo((0., 2.).into()),
+            PathEl::LineTo((0., 1.).into()),
+            PathEl::MoveTo((10., 10.).into()),
+            PathEl::LineTo((13., 10.).into()),
+            PathEl::MoveTo((14., 10.).into()),
+            PathEl::LineTo((15., 10.).into()),
+            PathEl::LineTo((15., 12.).into()),
+            PathEl::MoveTo((15., 13.).into()),
+            PathEl::LineTo((15., 14.).into()),
+            PathEl::LineTo((13., 14.).into()),
+            PathEl::MoveTo((12., 14.).into()),
+            PathEl::LineTo((10., 14.).into()),
+            PathEl::LineTo((10., 13.).into()),
+            PathEl::MoveTo((10., 12.).into()),
+            PathEl::LineTo((10., 10.).into()),
+        ];
+        let iter = dash_iter(path.into_iter(), 0., &dashes, true);
+        assert_eq!(iter.collect::<Vec<PathEl>>(), expansion);
+    }
+
     #[test]
     fn dash_negative_offset() {
         let shape = Line::new((0.0, 0.0), (28.0, 0.0));
@@ -901,5 +1106,76 @@ mod tests {
         let pos = segments(dash(shape.path_elements(0.), 60., &dashes)).collect::<Vec<PathSeg>>();
         let neg = segments(dash(shape.path_elements(0.), -60., &dashes)).collect::<Vec<PathSeg>>();
         assert_eq!(neg, pos);
+    }
+
+    #[test]
+    fn dash_odd_length_matches_doubled() {
+        let shape = Line::new((0.0, 0.0), (50.0, 0.0));
+        let odd = [10.];
+        let doubled = [10., 10.];
+        for offset in [0., 5., 9., 10., 11., 15., 20., 25., 100., -7.] {
+            let from_odd =
+                segments(dash(shape.path_elements(0.), offset, &odd)).collect::<Vec<PathSeg>>();
+            let from_doubled =
+                segments(dash(shape.path_elements(0.), offset, &doubled)).collect::<Vec<PathSeg>>();
+            assert_eq!(from_odd, from_doubled, "mismatch at offset {offset}");
+        }
+    }
+
+    #[test]
+    fn dash_three_element_matches_doubled() {
+        let shape = Line::new((0.0, 0.0), (200.0, 0.0));
+        let three = [20., 10., 3.];
+        let doubled = [20., 10., 3., 20., 10., 3.];
+        for offset in [0., 15., 32., 33., 34., 50., 66., 99.] {
+            let from_three =
+                segments(dash(shape.path_elements(0.), offset, &three)).collect::<Vec<PathSeg>>();
+            let from_doubled =
+                segments(dash(shape.path_elements(0.), offset, &doubled)).collect::<Vec<PathSeg>>();
+            assert_eq!(from_three, from_doubled, "mismatch at offset {offset}");
+        }
+    }
+
+    #[test]
+    fn stroke_is_finite_fields() {
+        let finite = Stroke::new(2.0)
+            .with_miter_limit(4.0)
+            .with_dashes(0.0, [1.0, 2.0]);
+        assert!(finite.is_finite());
+
+        let non_finite_width = Stroke::new(f64::INFINITY);
+        assert!(!non_finite_width.is_finite());
+
+        let non_finite_miter = Stroke::new(2.0).with_miter_limit(f64::NAN);
+        assert!(!non_finite_miter.is_finite());
+
+        let non_finite_dash_offset = Stroke::new(2.0).with_dashes(f64::NEG_INFINITY, [1.0, 2.0]);
+        assert!(!non_finite_dash_offset.is_finite());
+
+        let non_finite_dash_pattern = Stroke::new(2.0).with_dashes(0.0, [1.0, f64::NAN]);
+        assert!(!non_finite_dash_pattern.is_finite());
+    }
+
+    #[test]
+    fn stroke_is_nan_fields() {
+        let finite = Stroke::new(2.0)
+            .with_miter_limit(4.0)
+            .with_dashes(0.0, [1.0, 2.0]);
+        assert!(!finite.is_nan());
+
+        let nan_width = Stroke::new(f64::NAN);
+        assert!(nan_width.is_nan());
+
+        let nan_miter = Stroke::new(2.0).with_miter_limit(f64::NAN);
+        assert!(nan_miter.is_nan());
+
+        let nan_dash_offset = Stroke::new(2.0).with_dashes(f64::NAN, [1.0, 2.0]);
+        assert!(nan_dash_offset.is_nan());
+
+        let nan_dash_pattern = Stroke::new(2.0).with_dashes(0.0, [1.0, f64::NAN]);
+        assert!(nan_dash_pattern.is_nan());
+
+        let infinite_width = Stroke::new(f64::INFINITY);
+        assert!(!infinite_width.is_nan());
     }
 }

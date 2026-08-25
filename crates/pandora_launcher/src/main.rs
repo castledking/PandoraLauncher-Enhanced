@@ -205,7 +205,7 @@ fn main() {
             frontend_recv,
             quit_handler,
         );
-        log::info!("Quiting...");
+        log::info!("Quitting...");
     } else {
         eprintln!("Connecting to existing local socket: {socket:?}");
 

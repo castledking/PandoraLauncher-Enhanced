@@ -140,6 +140,9 @@ use crate::{Extensions, Result};
 /// Deserialize a response of bytes via json:
 ///
 /// ```
+/// # extern crate serde;
+/// # extern crate serde_json;
+/// # extern crate http;
 /// use http::Response;
 /// use serde::de;
 ///
@@ -157,6 +160,9 @@ use crate::{Extensions, Result};
 /// Or alternatively, serialize the body of a response to json
 ///
 /// ```
+/// # extern crate serde;
+/// # extern crate serde_json;
+/// # extern crate http;
 /// use http::Response;
 /// use serde::ser;
 ///

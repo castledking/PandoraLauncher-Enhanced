@@ -30,8 +30,7 @@ need an arena of objects with heterogeneous types, consider another crate.
 
 ### `#![no_std]` Support
 
-This crate supports `no_std` environments that have access to the `alloc`
-crate. Disable the on-by-default `"std"` feature:
+Requires the `alloc` nightly feature. Disable the on-by-default `"std"` feature:
 
 ```toml
 [dependencies.id-arena]

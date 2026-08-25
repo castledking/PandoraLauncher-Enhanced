@@ -79,7 +79,7 @@ impl ServerName<'_> {
 }
 
 impl fmt::Debug for ServerName<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::DnsName(d) => f.debug_tuple("DnsName").field(&d.as_ref()).finish(),
             Self::IpAddress(i) => f.debug_tuple("IpAddress").field(i).finish(),
@@ -163,12 +163,6 @@ impl From<std::net::Ipv4Addr> for ServerName<'_> {
 impl From<std::net::Ipv6Addr> for ServerName<'_> {
     fn from(v6: std::net::Ipv6Addr) -> Self {
         Self::IpAddress(IpAddr::V6(v6.into()))
-    }
-}
-
-impl<'a> From<DnsName<'a>> for ServerName<'a> {
-    fn from(dns_name: DnsName<'a>) -> Self {
-        Self::DnsName(dns_name)
     }
 }
 
@@ -292,21 +286,20 @@ impl Hash for DnsNameInner<'_> {
 impl fmt::Debug for DnsNameInner<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Borrowed(s) => f.write_fmt(format_args!("{s:?}")),
+            Self::Borrowed(s) => f.write_fmt(format_args!("{:?}", s)),
             #[cfg(feature = "alloc")]
-            Self::Owned(s) => f.write_fmt(format_args!("{s:?}")),
+            Self::Owned(s) => f.write_fmt(format_args!("{:?}", s)),
         }
     }
 }
 
 /// The provided input could not be parsed because
 /// it is not a syntactically-valid DNS Name.
-#[allow(clippy::exhaustive_structs)]
 #[derive(Debug)]
 pub struct InvalidDnsNameError;
 
 impl fmt::Display for InvalidDnsNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("invalid dns name")
     }
 }
@@ -383,7 +376,6 @@ const fn validate(input: &[u8]) -> Result<(), InvalidDnsNameError> {
 /// Note: because we intend to replace this type with `core::net::IpAddr` as soon as it is
 /// stabilized, the identity of this type should not be considered semver-stable. However, the
 /// attached interfaces are stable; they form a subset of those provided by `core::net::IpAddr`.
-#[allow(clippy::exhaustive_enums)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IpAddr {
     /// An Ipv4 address.
@@ -447,12 +439,6 @@ impl From<std::net::Ipv6Addr> for IpAddr {
 /// attached interfaces are stable; they form a subset of those provided by `core::net::Ipv4Addr`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Ipv4Addr([u8; 4]);
-
-impl From<[u8; 4]> for Ipv4Addr {
-    fn from(value: [u8; 4]) -> Self {
-        Self(value)
-    }
-}
 
 impl TryFrom<&str> for Ipv4Addr {
     type Error = AddrParseError;
@@ -556,7 +542,7 @@ mod parser {
     }
 
     impl<'a> Parser<'a> {
-        pub(super) const fn new(input: &'a [u8]) -> Self {
+        pub(super) fn new(input: &'a [u8]) -> Self {
             Parser { state: input }
         }
 
@@ -778,8 +764,8 @@ use parser::{AddrKind, Parser};
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AddrParseError(AddrKind);
 
-impl fmt::Display for AddrParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl core::fmt::Display for AddrParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.write_str(match self.0 {
             AddrKind::Ipv4 => "invalid IPv4 address syntax",
             AddrKind::Ipv6 => "invalid IPv6 address syntax",
@@ -866,7 +852,7 @@ mod tests {
     fn test_validation() {
         for (input, expected) in TESTS {
             #[cfg(feature = "std")]
-            println!("test: {input:?} expected valid? {expected:?}");
+            println!("test: {:?} expected valid? {:?}", input, expected);
             let name_ref = DnsName::try_from(*input);
             assert_eq!(*expected, name_ref.is_ok());
             let name = DnsName::try_from(input.to_string());
@@ -877,20 +863,20 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[test]
     fn error_is_debug() {
-        assert_eq!(format!("{InvalidDnsNameError:?}"), "InvalidDnsNameError");
+        assert_eq!(format!("{:?}", InvalidDnsNameError), "InvalidDnsNameError");
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn error_is_display() {
-        assert_eq!(format!("{InvalidDnsNameError}"), "invalid dns name");
+        assert_eq!(format!("{}", InvalidDnsNameError), "invalid dns name");
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn dns_name_is_debug() {
         let example = DnsName::try_from("example.com".to_string()).unwrap();
-        assert_eq!(format!("{example:?}"), "DnsName(\"example.com\")");
+        assert_eq!(format!("{:?}", example), "DnsName(\"example.com\")");
     }
 
     #[cfg(feature = "alloc")]
@@ -902,7 +888,7 @@ mod tests {
         #[cfg(feature = "std")]
         {
             use std::collections::HashSet;
-            let mut h = HashSet::<DnsName<'_>>::new();
+            let mut h = HashSet::<DnsName>::new();
             h.insert(example);
         }
     }

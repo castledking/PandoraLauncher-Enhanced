@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.65"
+rust-version = "1.71"
 name = "wayland-sys"
-version = "0.31.8"
+version = "0.31.11"
 authors = ["Elinor Berger <elinor@safaradeg.net>"]
 build = "build.rs"
 autolib = false
@@ -43,6 +43,9 @@ client = [
 cursor = ["client"]
 dlopen = ["once_cell"]
 egl = ["client"]
+libwayland_client_1_23 = []
+libwayland_server_1_22 = []
+libwayland_server_1_23 = ["libwayland_server_1_22"]
 server = [
     "libc",
     "memoffset",
@@ -55,7 +58,7 @@ name = "wayland_sys"
 path = "src/lib.rs"
 
 [dependencies.dlib]
-version = "0.5.1"
+version = "0.5.3"
 optional = true
 
 [dependencies.libc]

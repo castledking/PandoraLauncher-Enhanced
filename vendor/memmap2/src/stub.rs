@@ -10,7 +10,10 @@ pub struct MmapInner {
 
 impl MmapInner {
     fn new() -> io::Result<MmapInner> {
-        Err(io::ErrorKind::Unsupported.into())
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "platform not supported",
+        ))
     }
 
     pub fn map(_: usize, _: &File, _: u64, _: bool, _: bool) -> io::Result<MmapInner> {

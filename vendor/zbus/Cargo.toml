@@ -11,9 +11,9 @@
 
 [package]
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.85"
 name = "zbus"
-version = "5.14.0"
+version = "5.13.2"
 authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
 build = false
 autolib = false
@@ -31,6 +31,7 @@ keywords = [
 categories = ["os::unix-apis"]
 license = "MIT"
 repository = "https://github.com/z-galaxy/zbus/"
+resolver = "2"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -203,13 +204,13 @@ optional = true
 version = "0.7"
 
 [dependencies.zbus_macros]
-version = "5.14.0"
+version = "5.13.2"
 
 [dependencies.zbus_names]
 version = "4.3.1"
 
 [dependencies.zvariant]
-version = "5.10.0"
+version = "5.9.2"
 features = ["enumflags2"]
 
 [dev-dependencies.criterion]
@@ -261,7 +262,7 @@ features = [
 ]
 default-features = false
 
-[target."cfg(unix)".dependencies.async-recursion]
+[target.'cfg(any(target_os = "macos", windows))'.dependencies.async-recursion]
 version = "1.1.1"
 
 [target."cfg(unix)".dependencies.libc]
@@ -276,9 +277,6 @@ features = [
     "std",
 ]
 default-features = false
-
-[target."cfg(windows)".dependencies.async-recursion]
-version = "1.1.1"
 
 [target."cfg(windows)".dependencies.uds_windows]
 version = "1.1.0"

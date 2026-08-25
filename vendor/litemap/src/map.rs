@@ -40,9 +40,7 @@ litemap_impl!(not(feature = "alloc"), S);
 
 #[cfg(feature = "alloc")]
 impl<K, V> LiteMap<K, V> {
-    /// Construct a new [`LiteMap`] backed by Vec  
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*  
+    /// Construct a new [`LiteMap`] backed by Vec    
     pub const fn new_vec() -> Self {
         Self {
             values: alloc::vec::Vec::new(),
@@ -68,8 +66,6 @@ impl<K, V, S> LiteMap<K, V, S> {
 #[cfg(feature = "alloc")]
 impl<K, V> LiteMap<K, V, Vec<(K, V)>> {
     /// Convert a [`LiteMap`] into a sorted `Vec<(K, V)>`.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[inline]
     pub fn into_tuple_vec(self) -> Vec<(K, V)> {
         self.values
@@ -150,8 +146,6 @@ where
     ///
     /// The trait bounds allow transforming most slice and string types.
     ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
-    ///
     /// # Examples
     ///
     /// ```
@@ -176,7 +170,7 @@ where
     {
         let mut values = SB::lm_with_capacity(self.len());
         for i in 0..self.len() {
-            #[expect(clippy::unwrap_used)] // iterating over our own length
+            #[allow(clippy::unwrap_used)] // iterating over our own length
             let (k, v) = self.values.lm_get(i).unwrap();
             values.lm_push(Box::from(k.borrow()), Box::from(v.borrow()))
         }
@@ -190,8 +184,6 @@ where
     /// Returns a new [`LiteMap`] with owned keys and cloned values.
     ///
     /// The trait bounds allow transforming most slice and string types.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Examples
     ///
@@ -216,7 +208,7 @@ where
     {
         let mut values = SB::lm_with_capacity(self.len());
         for i in 0..self.len() {
-            #[expect(clippy::unwrap_used)] // iterating over our own length
+            #[allow(clippy::unwrap_used)] // iterating over our own length
             let (k, v) = self.values.lm_get(i).unwrap();
             values.lm_push(Box::from(k.borrow()), v.clone())
         }
@@ -230,8 +222,6 @@ where
     /// Returns a new [`LiteMap`] with cloned keys and owned values.
     ///
     /// The trait bounds allow transforming most slice and string types.
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     ///
     /// # Examples
     ///
@@ -256,7 +246,7 @@ where
     {
         let mut values = SB::lm_with_capacity(self.len());
         for i in 0..self.len() {
-            #[expect(clippy::unwrap_used)] // iterating over our own length
+            #[allow(clippy::unwrap_used)] // iterating over our own length
             let (k, v) = self.values.lm_get(i).unwrap();
             values.lm_push(k.clone(), Box::from(v.borrow()))
         }
@@ -290,7 +280,7 @@ where
         Q: Ord + ?Sized,
     {
         match self.find_index(key) {
-            #[expect(clippy::unwrap_used)] // find_index returns a valid index
+            #[allow(clippy::unwrap_used)] // find_index returns a valid index
             Ok(found) => Some(self.values.lm_get(found).unwrap().1),
             Err(_) => None,
         }
@@ -388,7 +378,7 @@ where
     /// ```
     pub fn as_sliced(&self) -> LiteMap<K, V, &S::Slice> {
         // Won't panic: 0..self.len() is within range
-        #[expect(clippy::unwrap_used)]
+        #[allow(clippy::unwrap_used)]
         let subslice = self.values.lm_get_range(0..self.len()).unwrap();
         LiteMap {
             values: subslice,
@@ -415,7 +405,7 @@ where
     /// ```
     pub fn as_slice(&self) -> &S::Slice {
         // Won't panic: 0..self.len() is within range
-        #[expect(clippy::unwrap_used)]
+        #[allow(clippy::unwrap_used)]
         self.values.lm_get_range(0..self.len()).unwrap()
     }
 }
@@ -449,7 +439,7 @@ where
     {
         let mut values = SB::lm_with_capacity(self.len());
         for i in 0..self.len() {
-            #[expect(clippy::unwrap_used)] // iterating over our own length
+            #[allow(clippy::unwrap_used)] // iterating over our own length
             let (k, v) = self.values.lm_get(i).unwrap();
             values.lm_push(k.borrow(), v.borrow())
         }
@@ -483,7 +473,7 @@ where
     {
         let mut values = SB::lm_with_capacity(self.len());
         for i in 0..self.len() {
-            #[expect(clippy::unwrap_used)] // iterating over our own length
+            #[allow(clippy::unwrap_used)] // iterating over our own length
             let (k, v) = self.values.lm_get(i).unwrap();
             values.lm_push(k.borrow(), v.clone())
         }
@@ -517,7 +507,7 @@ where
     {
         let mut values = SB::lm_with_capacity(self.len());
         for i in 0..self.len() {
-            #[expect(clippy::unwrap_used)] // iterating over our own length
+            #[allow(clippy::unwrap_used)] // iterating over our own length
             let (k, v) = self.values.lm_get(i).unwrap();
             values.lm_push(k.clone(), v.borrow())
         }
@@ -582,7 +572,7 @@ where
         Q: Ord + ?Sized,
     {
         match self.find_index(key) {
-            #[expect(clippy::unwrap_used)] // find_index returns a valid index
+            #[allow(clippy::unwrap_used)] // find_index returns a valid index
             Ok(found) => Some(self.values.lm_get_mut(found).unwrap().1),
             Err(_) => None,
         }
@@ -646,7 +636,7 @@ where
     /// Version of [`Self::insert()`] that returns both the key and the old value.
     fn insert_save_key(&mut self, key: K, value: V) -> Option<(K, V)> {
         match self.values.lm_binary_search_by(|k| k.cmp(&key)) {
-            #[expect(clippy::unwrap_used)] // Index came from binary_search
+            #[allow(clippy::unwrap_used)] // Index came from binary_search
             Ok(found) => Some((
                 key,
                 mem::replace(self.values.lm_get_mut(found).unwrap().1, value),
@@ -745,7 +735,7 @@ where
                 idx
             }
         };
-        #[expect(clippy::unwrap_used)] // item at idx found or inserted above
+        #[allow(clippy::unwrap_used)] // item at idx found or inserted above
         Ok((idx, self.values.lm_get(idx).unwrap().1))
     }
 
@@ -865,7 +855,7 @@ where
 {
     type Output = V;
     fn index(&self, key: &K) -> &V {
-        #[expect(clippy::panic)] // documented
+        #[allow(clippy::panic)] // documented
         match self.get(key) {
             Some(v) => v,
             None => panic!("no entry found for key"),
@@ -878,7 +868,7 @@ where
     S: StoreMut<K, V>,
 {
     fn index_mut(&mut self, key: &K) -> &mut V {
-        #[expect(clippy::panic)] // documented
+        #[allow(clippy::panic)] // documented
         match self.get_mut(key) {
             Some(v) => v,
             None => panic!("no entry found for key"),
@@ -1017,9 +1007,10 @@ impl<'a, K, V> LiteMap<K, V, &'a [(K, V)]> {
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// const MAP: LiteMap<&str, usize, &[(&str, usize)]> =
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> =
     ///     LiteMap::from_sorted_store_unchecked(&[("a", 11), ("b", 22)]);
-    /// assert_eq!(const { MAP.const_len() }, 2);
+    /// static len: usize = map.const_len();
+    /// assert_eq!(len, 2);
     /// ```
     #[inline]
     pub const fn const_len(&self) -> usize {
@@ -1035,9 +1026,10 @@ impl<'a, K, V> LiteMap<K, V, &'a [(K, V)]> {
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// const MAP: LiteMap<&str, usize, &[(&str, usize)]> =
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> =
     ///     LiteMap::from_sorted_store_unchecked(&[]);
-    /// assert!(const { MAP.const_is_empty() });
+    /// static is_empty: bool = map.const_is_empty();
+    /// assert!(is_empty);
     /// ```
     #[inline]
     pub const fn const_is_empty(&self) -> bool {
@@ -1057,12 +1049,14 @@ impl<'a, K, V> LiteMap<K, V, &'a [(K, V)]> {
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// const MAP: LiteMap<&str, usize, &[(&str, usize)]> =
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> =
     ///     LiteMap::from_sorted_store_unchecked(&[("a", 11), ("b", 22)]);
-    /// assert_eq!(const { *MAP.const_get_indexed_or_panic(0) }, ("a", 11));
+    /// static t: &(&str, usize) = map.const_get_indexed_or_panic(0);
+    /// assert_eq!(t.0, "a");
+    /// assert_eq!(t.1, 11);
     /// ```
     #[inline]
-    #[expect(clippy::indexing_slicing)] // documented
+    #[allow(clippy::indexing_slicing)] // documented
     pub const fn const_get_indexed_or_panic(&self, index: usize) -> &'a (K, V) {
         &self.values[index]
     }
@@ -1077,7 +1071,7 @@ const fn const_cmp_bytes(a: &[u8], b: &[u8]) -> Ordering {
         (b.len(), Ordering::Greater)
     };
     let mut i = 0;
-    #[expect(clippy::indexing_slicing)] // indexes in range by above checks
+    #[allow(clippy::indexing_slicing)] // indexes in range by above checks
     while i < max {
         if a[i] == b[i] {
             i += 1;
@@ -1103,7 +1097,7 @@ impl<'a, V> LiteMap<&'a str, V, &'a [(&'a str, V)]> {
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// const MAP: LiteMap<&str, usize, &[(&str, usize)]> =
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> =
     ///     LiteMap::from_sorted_store_unchecked(&[
     ///         ("abc", 11),
     ///         ("bcd", 22),
@@ -1112,16 +1106,18 @@ impl<'a, V> LiteMap<&'a str, V, &'a [(&'a str, V)]> {
     ///         ("efg", 55),
     ///     ]);
     ///
-    /// assert_eq!(const { MAP.const_get_with_index("def") }, Some((3, &44)));
+    /// static d: Option<(usize, &usize)> = map.const_get_with_index("def");
+    /// assert_eq!(d, Some((3, &44)));
     ///
-    /// assert_eq!(const { MAP.const_get_with_index("dng") }, None);
+    /// static n: Option<(usize, &usize)> = map.const_get_with_index("dng");
+    /// assert_eq!(n, None);
     /// ```
     pub const fn const_get_with_index(&self, key: &str) -> Option<(usize, &'a V)> {
         let mut i = 0;
         let mut j = self.const_len();
         while i < j {
             let mid = (i + j) / 2;
-            #[expect(clippy::indexing_slicing)] // in range
+            #[allow(clippy::indexing_slicing)] // in range
             let x = &self.values[mid];
             match const_cmp_bytes(key.as_bytes(), x.0.as_bytes()) {
                 Ordering::Equal => return Some((mid, &x.1)),
@@ -1145,7 +1141,7 @@ impl<'a, V> LiteMap<&'a [u8], V, &'a [(&'a [u8], V)]> {
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// const MAP: LiteMap<&[u8], usize, &[(&[u8], usize)]> =
+    /// static map: LiteMap<&[u8], usize, &[(&[u8], usize)]> =
     ///     LiteMap::from_sorted_store_unchecked(&[
     ///         (b"abc", 11),
     ///         (b"bcd", 22),
@@ -1154,16 +1150,18 @@ impl<'a, V> LiteMap<&'a [u8], V, &'a [(&'a [u8], V)]> {
     ///         (b"efg", 55),
     ///     ]);
     ///
-    /// assert_eq!(const { MAP.const_get_with_index(b"def") }, Some((3, &44)));
+    /// static d: Option<(usize, &usize)> = map.const_get_with_index(b"def");
+    /// assert_eq!(d, Some((3, &44)));
     ///
-    /// assert_eq!(const { MAP.const_get_with_index(b"dng") }, None);
+    /// static n: Option<(usize, &usize)> = map.const_get_with_index(b"dng");
+    /// assert_eq!(n, None);
     /// ```
     pub const fn const_get_with_index(&self, key: &[u8]) -> Option<(usize, &'a V)> {
         let mut i = 0;
         let mut j = self.const_len();
         while i < j {
             let mid = (i + j) / 2;
-            #[expect(clippy::indexing_slicing)] // in range
+            #[allow(clippy::indexing_slicing)] // in range
             let x = &self.values[mid];
             match const_cmp_bytes(key, x.0) {
                 Ordering::Equal => return Some((mid, &x.1)),
@@ -1188,7 +1186,7 @@ macro_rules! impl_const_get_with_index_for_integer {
                 let mut j = self.const_len();
                 while i < j {
                     let mid = (i + j) / 2;
-                    #[expect(clippy::indexing_slicing)] // in range
+                    #[allow(clippy::indexing_slicing)] // in range
                     let x = &self.values[mid];
                     if key == x.0 {
                         return Some((mid, &x.1));
@@ -1317,25 +1315,25 @@ where
 {
     /// Gets a reference to the key in the entry.
     pub fn key(&self) -> &K {
-        #[expect(clippy::unwrap_used)] // index is valid while we have a reference to the map
+        #[allow(clippy::unwrap_used)] // index is valid while we have a reference to the map
         self.map.values.lm_get(self.index).unwrap().0
     }
 
     /// Gets a reference to the value in the entry.
     pub fn get(&self) -> &V {
-        #[expect(clippy::unwrap_used)] // index is valid while we have a reference to the map
+        #[allow(clippy::unwrap_used)] // index is valid while we have a reference to the map
         self.map.values.lm_get(self.index).unwrap().1
     }
 
     /// Gets a mutable reference to the value in the entry.
     pub fn get_mut(&mut self) -> &mut V {
-        #[expect(clippy::unwrap_used)] // index is valid while we have a reference to the map
+        #[allow(clippy::unwrap_used)] // index is valid while we have a reference to the map
         self.map.values.lm_get_mut(self.index).unwrap().1
     }
 
     /// Converts the entry into a mutable reference to the value in the entry with a lifetime bound to the map.
     pub fn into_mut(self) -> &'a mut V {
-        #[expect(clippy::unwrap_used)] // index is valid while we have a reference to the map
+        #[allow(clippy::unwrap_used)] // index is valid while we have a reference to the map
         self.map.values.lm_get_mut(self.index).unwrap().1
     }
 
@@ -1365,7 +1363,7 @@ where
         // index is valid insert index that was found via binary search
         // it's valid while we have a reference to the map
         self.map.values.lm_insert(self.index, self.key, value);
-        #[expect(clippy::unwrap_used)] // we inserted at self.index above
+        #[allow(clippy::unwrap_used)] // we inserted at self.index above
         self.map.values.lm_get_mut(self.index).unwrap().1
     }
 }
@@ -1376,7 +1374,7 @@ where
     S: StoreMut<K, V>,
 {
     /// Gets the entry for the given key in the map for in-place manipulation.
-    pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
+    pub fn entry(&mut self, key: K) -> Entry<K, V, S> {
         match self.values.lm_binary_search_by(|k| k.cmp(&key)) {
             Ok(index) => Entry::Occupied(OccupiedEntry { map: self, index }),
             Err(index) => Entry::Vacant(VacantEntry {

@@ -34,14 +34,7 @@ use thiserror::Error;
 
 use ustr::Ustr;
 
-use crate::{
-    BackendState, BackendStateFileWatching, FolderChanges, IoOrSerializationError, WatchTarget,
-    id_slab::{GetId, Id},
-    launcher_import,
-    mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager},
-    persistent::Persistent,
-    server_list_pinger::{PingResult, ServerListPinger},
-};
+use crate::{BackendState, BackendStateFileWatching, WatchTarget, fs::{FolderChanges, IoOrSerializationError}, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent, server_list_pinger::{PingResult, ServerListPinger}};
 
 #[derive(Debug)]
 pub struct Instance {
@@ -435,7 +428,7 @@ impl Instance {
 
         if servers.move_index(from_index, to_index) {
             let bytes = nbt::encode::write_named(&result);
-            if let Err(err) = crate::write_safe(&server_dat_path, &bytes) {
+            if let Err(err) = crate::fs::write_safe(&server_dat_path, &bytes) {
                 log::error!("Error while writing server.dat: {err:?}");
                 backend.send.send_error("Error while writing server.dat: {err}");
                 return;
@@ -921,7 +914,7 @@ impl Instance {
                 let mut used_aux_paths = FxHashSet::default();
                 if let Some(summaries) = &state.summaries {
                     for summary in summaries.iter() {
-                        let Some(aux_path) = crate::pandora_aux_path_for_content(&summary) else {
+                        let Some(aux_path) = crate::fs::pandora_aux_path_for_content(&summary) else {
                             continue;
                         };
                         if paths.contains(aux_path.as_path()) {
@@ -1205,26 +1198,17 @@ fn create_instance_content_summary(
         filename
     };
 
+    let filename: Arc<str> = filename.into();
+
     let mut hasher = DefaultHasher::new();
     filename_without_disabled.hash(&mut hasher);
     let filename_hash = hasher.finish();
 
-    let filename: Arc<str> = filename.into();
-    let lowercase_filename = filename.to_lowercase();
-    let lowercase_filename = if lowercase_filename == &*filename {
-        filename.clone()
-    } else {
-        lowercase_filename.into()
-    };
-
     let content_source = mod_metadata_manager.read_content_sources().get(&summary.hash).unwrap_or_default();
 
-    let lowercase_search_keys = summary
-        .id
-        .clone()
-        .into_iter()
-        .chain(summary.name.clone().into_iter())
-        .chain(std::iter::once(lowercase_filename))
+    let lowercase_search_keys = summary.id.as_ref().map(lowercase_arc).into_iter()
+        .chain(summary.name.as_ref().map(lowercase_arc).into_iter())
+        .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
 
     let disabled_children = read_disabled_children_for(&summary, path).unwrap_or_default();
@@ -1256,11 +1240,16 @@ fn create_instance_content_summary(
     })
 }
 
-fn try_load_resourcepack_folder(
-    pack_mcmeta_bytes: &[u8],
-    pack_png_bytes: Option<&[u8]>,
-    path: &Path,
-) -> Option<InstanceContentSummary> {
+fn lowercase_arc(s: &Arc<str>) -> Arc<str> {
+    let lowercase = s.to_lowercase();
+    if lowercase == &**s {
+        return s.clone();
+    } else {
+        return lowercase.into();
+    }
+}
+
+fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option<&[u8]>, path: &Path) -> Option<InstanceContentSummary> {
     let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
         return None;
     };
@@ -1272,19 +1261,10 @@ fn try_load_resourcepack_folder(
     let filename_hash = hasher.finish();
 
     let filename: Arc<str> = filename.into();
-    let lowercase_filename = filename.to_lowercase();
-    let lowercase_filename = if lowercase_filename == &*filename {
-        filename.clone()
-    } else {
-        lowercase_filename.into()
-    };
 
-    let lowercase_search_keys = summary
-        .id
-        .clone()
-        .into_iter()
-        .chain(summary.name.clone().into_iter())
-        .chain(std::iter::once(lowercase_filename))
+    let lowercase_search_keys = summary.id.as_ref().map(lowercase_arc).into_iter()
+        .chain(summary.name.as_ref().map(lowercase_arc).into_iter())
+        .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
 
     return Some(InstanceContentSummary {
@@ -1303,9 +1283,12 @@ fn try_load_resourcepack_folder(
     });
 }
 
-fn read_disabled_children_for(summary: &ContentSummary, path: &Path) -> Option<AuxDisabledChildren> {
-    let aux_path = crate::pandora_aux_path(&summary.id, &summary.name, path)?;
-    let aux: AuxiliaryContentMeta = crate::read_json(&aux_path).ok()?;
+fn read_disabled_children_for(
+    summary: &ContentSummary,
+    path: &Path,
+) -> Option<AuxDisabledChildren> {
+    let aux_path = crate::fs::pandora_aux_path(&summary.id, &summary.name, path)?;
+    let aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).ok()?;
     Some(aux.disabled_children)
 }
 

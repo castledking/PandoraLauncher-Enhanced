@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.60"
 name = "ordered-float"
-version = "5.1.0"
+version = "4.6.0"
 authors = [
     "Jonathan Reem <jonathan.reem@gmail.com>",
     "Matt Brubeck <mbrubeck@limpet.net>",
@@ -40,33 +40,6 @@ categories = [
 ]
 license = "MIT"
 repository = "https://github.com/reem/rust-ordered-float"
-
-[features]
-default = ["std"]
-libm = ["num-traits/libm"]
-randtest = [
-    "rand/std",
-    "rand/std_rng",
-]
-rkyv = ["rkyv_32"]
-rkyv_16 = [
-    "dep:rkyv",
-    "rkyv?/size_16",
-]
-rkyv_32 = [
-    "dep:rkyv",
-    "rkyv?/size_32",
-]
-rkyv_64 = [
-    "dep:rkyv",
-    "rkyv?/size_64",
-]
-rkyv_ck = ["rkyv?/validation"]
-serde = [
-    "dep:serde",
-    "rand?/serde1",
-]
-std = ["num-traits/std"]
 
 [lib]
 name = "ordered_float"
@@ -137,3 +110,30 @@ default-features = false
 
 [dev-dependencies.serde_test]
 version = "1.0"
+
+[features]
+default = ["std"]
+libm = ["num-traits/libm"]
+randtest = [
+    "rand/std",
+    "rand/std_rng",
+]
+rkyv = ["rkyv_32"]
+rkyv_16 = [
+    "dep:rkyv",
+    "rkyv?/size_16",
+]
+rkyv_32 = [
+    "dep:rkyv",
+    "rkyv?/size_32",
+]
+rkyv_64 = [
+    "dep:rkyv",
+    "rkyv?/size_64",
+]
+rkyv_ck = ["rkyv?/validation"]
+serde = [
+    "dep:serde",
+    "rand?/serde1",
+]
+std = ["num-traits/std"]

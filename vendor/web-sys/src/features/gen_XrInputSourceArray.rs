@@ -5,7 +5,11 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = XRInputSourceArray , typescript_type = "XRInputSourceArray")]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "XRInputSourceArray",
+        typescript_type = "XRInputSourceArray"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `XrInputSourceArray` class."]
     #[doc = ""]
@@ -17,7 +21,7 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     pub type XrInputSourceArray;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (structural , method , getter , js_class = "XRInputSourceArray" , js_name = length)]
+    #[wasm_bindgen(method, getter, js_class = "XRInputSourceArray", js_name = "length")]
     #[doc = "Getter for the `length` field of this object."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/length)"]
@@ -29,7 +33,7 @@ extern "C" {
     pub fn length(this: &XrInputSourceArray) -> u32;
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "XrInputSource")]
-    # [wasm_bindgen (catch , method , structural , js_class = "XRInputSourceArray" , js_name = forEach)]
+    #[wasm_bindgen(catch, method, js_class = "XRInputSourceArray", js_name = "forEach")]
     #[doc = "The `forEach()` method."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/forEach)"]
@@ -44,9 +48,8 @@ extern "C" {
     ) -> Result<(), JsValue>;
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "XrInputSource")]
-    #[wasm_bindgen(method, structural, js_class = "XRInputSourceArray", indexing_getter)]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray", indexing_getter)]
     #[doc = "Indexing getter. As in the literal Javascript `this[key]`."]
-    #[doc = ""]
     #[doc = ""]
     #[doc = ""]
     #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourceArray`*"]
@@ -56,7 +59,7 @@ extern "C" {
     pub fn get(this: &XrInputSourceArray, index: u32) -> Option<XrInputSource>;
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "XrInputSource")]
-    # [wasm_bindgen (method , structural , js_class = "XRInputSourceArray" , js_name = entries)]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray")]
     #[doc = "The `entries()` method."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/entries)"]
@@ -67,7 +70,7 @@ extern "C" {
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
     pub fn entries(this: &XrInputSourceArray) -> ::js_sys::Iterator<XrInputSource>;
     #[cfg(web_sys_unstable_apis)]
-    # [wasm_bindgen (method , structural , js_class = "XRInputSourceArray" , js_name = keys)]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray")]
     #[doc = "The `keys()` method."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/keys)"]
@@ -79,7 +82,7 @@ extern "C" {
     pub fn keys(this: &XrInputSourceArray) -> ::js_sys::Iterator<::js_sys::Number>;
     #[cfg(web_sys_unstable_apis)]
     #[cfg(feature = "XrInputSource")]
-    # [wasm_bindgen (method , structural , js_class = "XRInputSourceArray" , js_name = values)]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray")]
     #[doc = "The `values()` method."]
     #[doc = ""]
     #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/values)"]

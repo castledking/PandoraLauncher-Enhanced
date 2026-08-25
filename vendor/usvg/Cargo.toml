@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.65.0"
+edition = "2024"
+rust-version = "1.87.0"
 name = "usvg"
-version = "0.45.1"
+version = "0.46.0"
 build = false
 exclude = ["tests"]
 autolib = false
@@ -28,6 +28,7 @@ keywords = ["svg"]
 categories = ["multimedia::images"]
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/linebender/resvg"
+resolver = "2"
 
 [features]
 default = [
@@ -68,7 +69,7 @@ version = "0.22"
 version = "0.3"
 
 [dependencies.flate2]
-version = "1.0"
+version = "1.1"
 features = ["rust_backend"]
 default-features = false
 
@@ -78,10 +79,10 @@ optional = true
 default-features = false
 
 [dependencies.imagesize]
-version = "0.13"
+version = "0.14.0"
 
 [dependencies.kurbo]
-version = "0.11"
+version = "0.13.0"
 
 [dependencies.log]
 version = "0.4"
@@ -91,7 +92,7 @@ version = "0.5"
 features = ["eq-separator"]
 
 [dependencies.roxmltree]
-version = "0.20"
+version = "0.21.1"
 
 [dependencies.rustybuzz]
 version = "0.20.1"
@@ -107,7 +108,7 @@ version = "1.0"
 version = "0.1.1"
 
 [dependencies.svgtypes]
-version = "0.15.3"
+version = "0.16.1"
 
 [dependencies.tiny-skia-path]
 version = "0.11.4"
@@ -128,4 +129,4 @@ optional = true
 version = "0.1"
 
 [dev-dependencies.once_cell]
-version = "1.5"
+version = "1.21"

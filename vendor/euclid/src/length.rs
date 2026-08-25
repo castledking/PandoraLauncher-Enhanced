@@ -23,8 +23,6 @@ use core::iter::Sum;
 use core::marker::PhantomData;
 use core::ops::{Add, Div, Mul, Neg, Sub};
 use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
-#[cfg(feature = "malloc_size_of")]
-use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use num_traits::{NumCast, Saturating};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -92,13 +90,6 @@ unsafe impl<T: Zeroable, U> Zeroable for Length<T, U> {}
 
 #[cfg(feature = "bytemuck")]
 unsafe impl<T: Pod, U: 'static> Pod for Length<T, U> {}
-
-#[cfg(feature = "malloc_size_of")]
-impl<T: MallocSizeOf, U> MallocSizeOf for Length<T, U> {
-    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
-        self.0.size_of(ops)
-    }
-}
 
 impl<T, U> Length<T, U> {
     /// Associate a value with a unit of measure.
@@ -282,7 +273,7 @@ impl<T: Mul, U> Mul<T> for Length<T, U> {
 impl<T: Copy + Mul<T, Output = T>, U> MulAssign<T> for Length<T, U> {
     #[inline]
     fn mul_assign(&mut self, scale: T) {
-        *self = *self * scale;
+        *self = *self * scale
     }
 }
 
@@ -300,7 +291,7 @@ impl<T: Div, U> Div<T> for Length<T, U> {
 impl<T: Copy + Div<T, Output = T>, U> DivAssign<T> for Length<T, U> {
     #[inline]
     fn div_assign(&mut self, scale: T) {
-        *self = *self / scale;
+        *self = *self / scale
     }
 }
 

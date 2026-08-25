@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.85"
 name = "native-dialog"
-version = "0.9.6"
+version = "0.9.7"
 authors = ["balthild <ibalthild@gmail.com>"]
 build = false
 autolib = false
@@ -44,9 +44,6 @@ windows_visual_styles = [
 [lib]
 name = "native_dialog"
 path = "src/lib.rs"
-
-[dependencies.dirs]
-version = "6.0.0"
 
 [dependencies.formatx]
 version = "0.2.3"

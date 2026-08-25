@@ -1,6 +1,6 @@
 [package]
 name = "native-dialog"
-version = "0.9.6"
+version = "0.9.7"
 authors = ["balthild <ibalthild@gmail.com>"]
 edition = "2024"
 description = "A library to display dialogs. Supports GNU/Linux, BSD Unix, macOS and Windows."
@@ -10,7 +10,6 @@ repository = "https://github.com/balthild/native-dialog-rs"
 rust-version = "1.85"
 
 [dependencies]
-dirs = "6.0.0"
 formatx = "0.2.3"
 raw-window-handle = "0.6.2"
 thiserror = "2.0.12"

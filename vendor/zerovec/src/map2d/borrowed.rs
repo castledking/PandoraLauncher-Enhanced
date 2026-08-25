@@ -218,8 +218,8 @@ where
     /// map.insert(&1, "one", "foo");
     /// map.insert(&2, "two", "bar");
     /// let borrowed = map.as_borrowed();
-    /// assert!(borrowed.get0(&1).is_some());
-    /// assert!(borrowed.get0(&3).is_none());
+    /// assert!(matches!(borrowed.get0(&1), Some(_)));
+    /// assert!(matches!(borrowed.get0(&3), None));
     /// ```
     #[inline]
     pub fn get0<'l>(&'l self, key0: &K0) -> Option<ZeroMap2dCursor<'a, 'a, K0, K1, V>> {
@@ -236,8 +236,8 @@ where
     /// map.insert(&1, "one", "foo");
     /// map.insert(&2, "two", "bar");
     /// let borrowed = map.as_borrowed();
-    /// assert!(borrowed.get0_by(|probe| probe.cmp(&1)).is_some());
-    /// assert!(borrowed.get0_by(|probe| probe.cmp(&3)).is_none());
+    /// assert!(matches!(borrowed.get0_by(|probe| probe.cmp(&1)), Some(_)));
+    /// assert!(matches!(borrowed.get0_by(|probe| probe.cmp(&3)), None));
     /// ```
     pub fn get0_by<'l>(
         &'l self,

@@ -1,5 +1,6 @@
 #[cfg(not(feature = "tokio"))]
 use async_io::Async;
+use std::io;
 #[cfg(target_os = "linux")]
 use std::os::unix::io::FromRawFd;
 #[cfg(unix)]
@@ -34,13 +35,12 @@ impl super::ReadHalf for Arc<Async<UnixStream>> {
         poll_fn(|cx| {
             let (len, fds) = loop {
                 match fd_recvmsg(self.as_fd(), buf) {
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        match self.poll_readable(cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(res) => res?,
-                        }
-                    }
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => match self.poll_readable(cx)
+                    {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(res) => res?,
+                    },
                     v => break v?,
                 }
             };
@@ -54,7 +54,7 @@ impl super::ReadHalf for Arc<Async<UnixStream>> {
         true
     }
 
-    async fn peer_credentials(&mut self) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+    async fn peer_credentials(&mut self) -> io::Result<crate::fdo::ConnectionCredentials> {
         get_unix_peer_creds(self).await
     }
 }
@@ -66,7 +66,7 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
         &mut self,
         buffer: &[u8],
         #[cfg(unix)] fds: &[BorrowedFd<'_>],
-    ) -> std::io::Result<usize> {
+    ) -> io::Result<usize> {
         poll_fn(|cx| {
             loop {
                 match fd_sendmsg(
@@ -75,13 +75,12 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
                     #[cfg(unix)]
                     fds,
                 ) {
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        match self.poll_writable(cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(res) => res?,
-                        }
-                    }
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => match self.poll_writable(cx)
+                    {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(res) => res?,
+                    },
                     v => return Poll::Ready(v),
                 }
             }
@@ -89,7 +88,7 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
         .await
     }
 
-    async fn close(&mut self) -> std::io::Result<()> {
+    async fn close(&mut self) -> io::Result<()> {
         let stream = self.clone();
         crate::Task::spawn_blocking(
             move || stream.get_ref().shutdown(std::net::Shutdown::Both),
@@ -99,7 +98,7 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-    async fn send_zero_byte(&mut self) -> std::io::Result<Option<usize>> {
+    async fn send_zero_byte(&mut self) -> io::Result<Option<usize>> {
         send_zero_byte(self).await.map(Some)
     }
 
@@ -108,7 +107,7 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
         true
     }
 
-    async fn peer_credentials(&mut self) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+    async fn peer_credentials(&mut self) -> io::Result<crate::fdo::ConnectionCredentials> {
         super::ReadHalf::peer_credentials(self).await
     }
 }
@@ -137,8 +136,8 @@ impl super::ReadHalf for tokio::net::unix::OwnedReadHalf {
                     // descriptors too.
                     fd_recvmsg(stream.as_fd(), buf)
                 }) {
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         match stream.poll_read_ready(cx) {
                             Poll::Pending => return Poll::Pending,
                             Poll::Ready(res) => res?,
@@ -156,7 +155,7 @@ impl super::ReadHalf for tokio::net::unix::OwnedReadHalf {
         true
     }
 
-    async fn peer_credentials(&mut self) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+    async fn peer_credentials(&mut self) -> io::Result<crate::fdo::ConnectionCredentials> {
         get_unix_peer_creds(self.as_ref()).await
     }
 }
@@ -168,7 +167,7 @@ impl super::WriteHalf for tokio::net::unix::OwnedWriteHalf {
         &mut self,
         buffer: &[u8],
         #[cfg(unix)] fds: &[BorrowedFd<'_>],
-    ) -> std::io::Result<usize> {
+    ) -> io::Result<usize> {
         let stream = self.as_ref();
         poll_fn(|cx| {
             loop {
@@ -180,8 +179,8 @@ impl super::WriteHalf for tokio::net::unix::OwnedWriteHalf {
                         fds,
                     )
                 }) {
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         match stream.poll_write_ready(cx) {
                             Poll::Pending => return Poll::Pending,
                             Poll::Ready(res) => res?,
@@ -194,12 +193,12 @@ impl super::WriteHalf for tokio::net::unix::OwnedWriteHalf {
         .await
     }
 
-    async fn close(&mut self) -> std::io::Result<()> {
+    async fn close(&mut self) -> io::Result<()> {
         tokio::io::AsyncWriteExt::shutdown(self).await
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-    async fn send_zero_byte(&mut self) -> std::io::Result<Option<usize>> {
+    async fn send_zero_byte(&mut self) -> io::Result<Option<usize>> {
         send_zero_byte(self.as_ref()).await.map(Some)
     }
 
@@ -208,7 +207,7 @@ impl super::WriteHalf for tokio::net::unix::OwnedWriteHalf {
         true
     }
 
-    async fn peer_credentials(&mut self) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+    async fn peer_credentials(&mut self) -> io::Result<crate::fdo::ConnectionCredentials> {
         get_unix_peer_creds(self.as_ref()).await
     }
 }
@@ -229,7 +228,7 @@ impl super::ReadHalf for Arc<Async<UnixStream>> {
         }
     }
 
-    async fn peer_credentials(&mut self) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+    async fn peer_credentials(&mut self) -> io::Result<crate::fdo::ConnectionCredentials> {
         let stream = self.clone();
         crate::Task::spawn_blocking(
             move || {
@@ -255,11 +254,11 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
         &mut self,
         buf: &[u8],
         #[cfg(unix)] _fds: &[BorrowedFd<'_>],
-    ) -> std::io::Result<usize> {
+    ) -> io::Result<usize> {
         futures_lite::AsyncWriteExt::write(&mut self.as_ref(), buf).await
     }
 
-    async fn close(&mut self) -> std::io::Result<()> {
+    async fn close(&mut self) -> io::Result<()> {
         let stream = self.clone();
         crate::Task::spawn_blocking(
             move || stream.get_ref().shutdown(std::net::Shutdown::Both),
@@ -268,13 +267,13 @@ impl super::WriteHalf for Arc<Async<UnixStream>> {
         .await?
     }
 
-    async fn peer_credentials(&mut self) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+    async fn peer_credentials(&mut self) -> io::Result<crate::fdo::ConnectionCredentials> {
         super::ReadHalf::peer_credentials(self).await
     }
 }
 
 #[cfg(unix)]
-fn fd_recvmsg(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> std::io::Result<(usize, Vec<OwnedFd>)> {
+fn fd_recvmsg(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> io::Result<(usize, Vec<OwnedFd>)> {
     use std::mem::MaybeUninit;
 
     let mut iov = [IoSliceMut::new(buffer)];
@@ -283,8 +282,8 @@ fn fd_recvmsg(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> std::io::Result<(usize, 
 
     let msg = recvmsg(fd, &mut iov, &mut ancillary, RecvFlags::empty())?;
     if msg.bytes == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
             "failed to read from socket",
         ));
     }
@@ -301,8 +300,8 @@ fn fd_recvmsg(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> std::io::Result<(usize, 
                 continue;
             }
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
                     "unexpected CMSG kind",
                 ));
             }
@@ -312,7 +311,7 @@ fn fd_recvmsg(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> std::io::Result<(usize, 
 }
 
 #[cfg(unix)]
-fn fd_sendmsg(fd: BorrowedFd<'_>, buffer: &[u8], fds: &[BorrowedFd<'_>]) -> std::io::Result<usize> {
+fn fd_sendmsg(fd: BorrowedFd<'_>, buffer: &[u8], fds: &[BorrowedFd<'_>]) -> io::Result<usize> {
     use std::mem::MaybeUninit;
 
     let iov = [IoSlice::new(buffer)];
@@ -320,22 +319,22 @@ fn fd_sendmsg(fd: BorrowedFd<'_>, buffer: &[u8], fds: &[BorrowedFd<'_>]) -> std:
     let mut ancillary = SendAncillaryBuffer::new(&mut cmsg_buffer);
 
     if !fds.is_empty() && !ancillary.push(SendAncillaryMessage::ScmRights(fds)) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
             "too many file descriptors",
         ));
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "redox")))]
+    #[cfg(not(target_os = "macos"))]
     let flags = SendFlags::NOSIGNAL;
-    #[cfg(any(target_os = "macos", target_os = "redox"))]
+    #[cfg(target_os = "macos")]
     let flags = SendFlags::empty();
 
     let sent = sendmsg(fd, &iov, &mut ancillary, flags)?;
     if sent == 0 {
         // can it really happen?
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::WriteZero,
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
             "failed to write to buffer",
         ));
     }
@@ -344,7 +343,7 @@ fn fd_sendmsg(fd: BorrowedFd<'_>, buffer: &[u8], fds: &[BorrowedFd<'_>]) -> std:
 }
 
 #[cfg(unix)]
-async fn get_unix_peer_creds(fd: &impl AsFd) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+async fn get_unix_peer_creds(fd: &impl AsFd) -> io::Result<crate::fdo::ConnectionCredentials> {
     let fd = fd.as_fd().as_raw_fd();
     // FIXME: Is it likely enough for sending of 1 byte to block, to justify a task (possibly
     // launching a thread in turn)?
@@ -353,7 +352,7 @@ async fn get_unix_peer_creds(fd: &impl AsFd) -> std::io::Result<crate::fdo::Conn
 }
 
 #[cfg(unix)]
-fn get_unix_peer_creds_blocking(fd: RawFd) -> std::io::Result<crate::fdo::ConnectionCredentials> {
+fn get_unix_peer_creds_blocking(fd: RawFd) -> io::Result<crate::fdo::ConnectionCredentials> {
     // TODO: get this BorrowedFd directly from get_unix_peer_creds(), but this requires a
     // 'static lifetime due to the Task.
     let fd = unsafe { BorrowedFd::borrow_raw(fd) };
@@ -445,7 +444,7 @@ fn get_unix_peer_creds_blocking(fd: RawFd) -> std::io::Result<crate::fdo::Connec
                 creds = creds
                     .set_process_fd(unsafe { std::os::fd::OwnedFd::from_raw_fd(pidfd).into() });
             } else if ret < 0 {
-                let err = std::io::Error::last_os_error();
+                let err = io::Error::last_os_error();
                 // ENOPROTOOPT means the kernel doesn't support this feature.
                 if err.raw_os_error() != Some(libc::ENOPROTOOPT) {
                     return Err(err);
@@ -470,7 +469,7 @@ fn get_unix_peer_creds_blocking(fd: RawFd) -> std::io::Result<crate::fdo::Connec
 
         let ret = unsafe { libc::getpeereid(fd.as_raw_fd(), &mut uid, &mut gid) };
         if ret != 0 {
-            return Err(std::io::Error::last_os_error());
+            return Err(io::Error::last_os_error());
         }
 
         creds = creds.set_unix_user_id(uid);
@@ -483,13 +482,13 @@ fn get_unix_peer_creds_blocking(fd: RawFd) -> std::io::Result<crate::fdo::Connec
 
 // Send 0 byte as a separate SCM_CREDS message.
 #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-async fn send_zero_byte(fd: &impl AsFd) -> std::io::Result<usize> {
+async fn send_zero_byte(fd: &impl AsFd) -> io::Result<usize> {
     let fd = fd.as_fd().as_raw_fd();
     crate::Task::spawn_blocking(move || send_zero_byte_blocking(fd), "send zero byte").await?
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-fn send_zero_byte_blocking(fd: RawFd) -> std::io::Result<usize> {
+fn send_zero_byte_blocking(fd: RawFd) -> io::Result<usize> {
     // FIXME: Replace with rustix API when it provides SCM_CREDS support for BSD.
     // For now, use libc directly since rustix doesn't support sending SCM_CREDS on BSD.
     use std::mem::MaybeUninit;
@@ -523,7 +522,7 @@ fn send_zero_byte_blocking(fd: RawFd) -> std::io::Result<usize> {
 
     let ret = unsafe { libc::sendmsg(fd, &msg, 0) };
     if ret < 0 {
-        Err(std::io::Error::last_os_error())
+        Err(io::Error::last_os_error())
     } else {
         Ok(ret as usize)
     }

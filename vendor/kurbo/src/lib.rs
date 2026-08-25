@@ -55,25 +55,36 @@
 //! assert!(hit.distance(expectation) <= DESIRED_ACCURACY);
 //! ```
 //!
-//! # Features
+//! # Feature Flags
 //!
-//! This crate either uses the standard library or the [`libm`] crate for
-//! math functionality. The `std` feature is enabled by default, but can be
-//! disabled, as long as the `libm` feature is enabled. This is useful for
-//! `no_std` environments. However, note that the `libm` crate is not as
-//! efficient as the standard library, and that this crate still uses the
-//! `alloc` crate regardless.
+//! The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/features.html#dependency-features) are available:
 //!
-//! [`libm`]: https://docs.rs/libm
+//! - `std` (enabled by default): Get floating point functions from the standard library
+//!   (likely using your target's libc).
+//! - `libm`: Use floating point implementations from [libm][].
+//!   This is useful for `no_std` environments.
+//!   However, note that the `libm` crate is not as efficient as the standard library.
+//! - `mint`: Enable `From`/`Into` conversion of Kurbo and [mint][] types, enabling interoperability
+//!   with other graphics libraries.
+//! - `euclid`: Enable `From`/`Into` conversion of Kurbo and [euclid][] types.
+//!   Note that if you're using both Kurbo and euclid at the same time, you *must*
+//!   also enable one of euclid's `std` or `libm` features.
+//! - `serde`: Implement `serde::Deserialize` and `serde::Serialize` on various types.
+//! - `schemars`: Add best-effort support for using Kurbo types in JSON schemas using [schemars][].
+//!
+//! At least one of `std` and `libm` is required; `std` overrides `libm`.
+//! Note that Kurbo does require that an allocator is available (i.e. it uses [alloc]).
 
-// LINEBENDER LINT SET - lib.rs - v1
+// LINEBENDER LINT SET - lib.rs - v4
 // See https://linebender.org/wiki/canonical-lints/
-// These lints aren't included in Cargo.toml because they
-// shouldn't apply to examples and tests
-#![warn(unused_crate_dependencies)]
+// These lints shouldn't apply to examples or tests.
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+// These lints shouldn't apply to examples.
 #![warn(clippy::print_stdout, clippy::print_stderr)]
+// Targeting e.g. 32-bit means structs containing usize can give false positives for 64-bit.
+#![cfg_attr(target_pointer_width = "64", warn(clippy::trivially_copy_pass_by_ref))]
 // END LINEBENDER LINT SET
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![allow(
     clippy::unreadable_literal,
@@ -87,22 +98,14 @@
 #![allow(
     missing_debug_implementations,
     elided_lifetimes_in_paths,
-    single_use_lifetimes,
     trivial_numeric_casts,
     unnameable_types,
     clippy::use_self,
-    clippy::return_self_not_must_use,
     clippy::cast_possible_truncation,
-    clippy::wildcard_imports,
-    clippy::shadow_unrelated,
     clippy::missing_assert_message,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::exhaustive_enums,
-    clippy::match_same_arms,
-    clippy::partial_pub_fields,
     clippy::unseparated_literal_suffix,
-    clippy::duplicated_attributes
+    clippy::duplicated_attributes,
+    clippy::allow_attributes_without_reason
 )]
 
 #[cfg(not(any(feature = "std", feature = "libm")))]
@@ -116,11 +119,13 @@ extern crate alloc;
 
 mod affine;
 mod arc;
+mod axis;
 mod bezpath;
 mod circle;
 pub mod common;
 mod cubicbez;
 mod ellipse;
+mod expand;
 mod fit;
 mod insets;
 mod line;
@@ -148,22 +153,24 @@ mod interop_euclid;
 
 pub use crate::affine::Affine;
 pub use crate::arc::{Arc, ArcAppendIter};
+pub use crate::axis::Axis;
 pub use crate::bezpath::{
-    flatten, segments, BezPath, LineIntersection, MinDistance, PathEl, PathSeg, PathSegIter,
-    Segments,
+    BezPath, LineIntersection, MinDistance, PathEl, PathSeg, PathSegIter, Segments, flatten,
+    segments,
 };
 pub use crate::circle::{Circle, CirclePathIter, CircleSegment};
-pub use crate::cubicbez::{cubics_to_quadratic_splines, CubicBez, CubicBezIter, CuspType};
+pub use crate::cubicbez::{CubicBez, CubicBezIter, CuspType, cubics_to_quadratic_splines};
 pub use crate::ellipse::Ellipse;
+pub use crate::expand::{Diagonal2, expand_path, expand_path_signed};
 pub use crate::fit::{
-    fit_to_bezpath, fit_to_bezpath_opt, fit_to_cubic, CurveFitSample, ParamCurveFit,
+    CurveFitSample, ParamCurveFit, fit_to_bezpath, fit_to_bezpath_opt, fit_to_cubic,
 };
 pub use crate::insets::Insets;
 pub use crate::line::{ConstPoint, Line, LinePathIter};
 pub use crate::moments::{Moments, ParamCurveMoments};
 pub use crate::param_curve::{
-    Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea, ParamCurveCurvature, ParamCurveDeriv,
-    ParamCurveExtrema, ParamCurveNearest, DEFAULT_ACCURACY, MAX_EXTREMA,
+    DEFAULT_ACCURACY, MAX_EXTREMA, Nearest, ParamCurve, ParamCurveArclen, ParamCurveArea,
+    ParamCurveCurvature, ParamCurveDeriv, ParamCurveExtrema, ParamCurveNearest,
 };
 pub use crate::point::Point;
 pub use crate::quadbez::{QuadBez, QuadBezIter};
@@ -174,7 +181,7 @@ pub use crate::rounded_rect_radii::RoundedRectRadii;
 pub use crate::shape::Shape;
 pub use crate::size::Size;
 pub use crate::stroke::{
-    dash, stroke, Cap, DashIterator, Dashes, Join, Stroke, StrokeOptLevel, StrokeOpts,
+    Cap, Dashes, Join, Stroke, StrokeCtx, StrokeOptLevel, StrokeOpts, dash, stroke, stroke_with,
 };
 pub use crate::svg::{SvgArc, SvgParseError};
 pub use crate::translate_scale::TranslateScale;

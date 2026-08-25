@@ -1,8 +1,5 @@
-use compression_core::{
-    util::{PartialBuffer, WriteBuffer},
-    Level,
-};
-use liblzma::stream::{Action, Check, Stream};
+use compression_core::{util::PartialBuffer, Level};
+use liblzma::stream::{Action, Check, Status, Stream};
 use std::{
     convert::{TryFrom, TryInto},
     fmt, io,
@@ -10,8 +7,7 @@ use std::{
 
 use crate::{
     lzma::params::{LzmaEncoderParams, LzmaOptions},
-    xz2::process_stream,
-    EncodeV2, Xz2FileFormat,
+    Encode, Xz2FileFormat,
 };
 
 /// Xz2 encoding stream
@@ -80,16 +76,35 @@ impl Xz2Encoder {
     }
 }
 
-impl EncodeV2 for Xz2Encoder {
+impl Encode for Xz2Encoder {
     fn encode(
         &mut self,
-        input: &mut PartialBuffer<&[u8]>,
-        output: &mut WriteBuffer<'_>,
+        input: &mut PartialBuffer<impl AsRef<[u8]>>,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
     ) -> io::Result<()> {
-        process_stream(&mut self.stream, input, output, Action::Run).map(|_| ())
+        let previous_in = self.stream.total_in() as usize;
+        let previous_out = self.stream.total_out() as usize;
+
+        let status = self
+            .stream
+            .process(input.unwritten(), output.unwritten_mut(), Action::Run)?;
+
+        input.advance(self.stream.total_in() as usize - previous_in);
+        output.advance(self.stream.total_out() as usize - previous_out);
+
+        match status {
+            Status::Ok | Status::StreamEnd => Ok(()),
+            Status::GetCheck => Err(io::Error::other("Unexpected lzma integrity check")),
+            Status::MemNeeded => Err(io::ErrorKind::OutOfMemory.into()),
+        }
     }
 
-    fn flush(&mut self, output: &mut WriteBuffer<'_>) -> io::Result<bool> {
+    fn flush(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> io::Result<bool> {
+        let previous_out = self.stream.total_out() as usize;
+
         let action = match &self.params {
             // Multi-threaded streams don't support SyncFlush, use FullFlush instead
             #[cfg(feature = "xz-parallel")]
@@ -97,20 +112,35 @@ impl EncodeV2 for Xz2Encoder {
             _ => Action::SyncFlush,
         };
 
-        process_stream(
-            &mut self.stream,
-            &mut PartialBuffer::new(&[]),
-            output,
-            action,
-        )
+        let status = self.stream.process(&[], output.unwritten_mut(), action)?;
+
+        output.advance(self.stream.total_out() as usize - previous_out);
+
+        match status {
+            Status::Ok => Ok(false),
+            Status::StreamEnd => Ok(true),
+            Status::GetCheck => Err(io::Error::other("Unexpected lzma integrity check")),
+            Status::MemNeeded => Err(io::ErrorKind::OutOfMemory.into()),
+        }
     }
 
-    fn finish(&mut self, output: &mut WriteBuffer<'_>) -> io::Result<bool> {
-        process_stream(
-            &mut self.stream,
-            &mut PartialBuffer::new(&[]),
-            output,
-            Action::Finish,
-        )
+    fn finish(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> io::Result<bool> {
+        let previous_out = self.stream.total_out() as usize;
+
+        let status = self
+            .stream
+            .process(&[], output.unwritten_mut(), Action::Finish)?;
+
+        output.advance(self.stream.total_out() as usize - previous_out);
+
+        match status {
+            Status::Ok => Ok(false),
+            Status::StreamEnd => Ok(true),
+            Status::GetCheck => Err(io::Error::other("Unexpected lzma integrity check")),
+            Status::MemNeeded => Err(io::ErrorKind::OutOfMemory.into()),
+        }
     }
 }

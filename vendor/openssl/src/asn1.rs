@@ -24,9 +24,8 @@
 //! use openssl::asn1::Asn1Time;
 //! let tomorrow = Asn1Time::days_from_now(1);
 //! ```
-use cfg_if::cfg_if;
 use foreign_types::{ForeignType, ForeignTypeRef};
-use libc::{c_char, c_int, c_long, time_t};
+use libc::{c_char, c_int, c_long, c_void, time_t};
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -365,9 +364,9 @@ impl Asn1Time {
 
     /// Creates a new time corresponding to the specified X509 time string.
     ///
-    /// Requires BoringSSL or OpenSSL 1.1.1 or newer.
+    /// Requires BoringSSL, AWS-LC, OpenSSL 1.1.1, LibreSSL 3.6.0, or newer.
     #[corresponds(ASN1_TIME_set_string_X509)]
-    #[cfg(any(ossl111, boringssl, awslc))]
+    #[cfg(any(ossl111, boringssl, libressl360, awslc))]
     pub fn from_str_x509(s: &str) -> Result<Asn1Time, ErrorStack> {
         unsafe {
             let s = CString::new(s).unwrap();
@@ -444,6 +443,10 @@ impl Asn1StringRef {
     /// consume the string in a meaningful way without knowing the underlying
     /// format.
     #[corresponds(ASN1_STRING_to_UTF8)]
+    #[deprecated(
+        since = "0.10.81",
+        note = "truncates at the first interior NUL byte; use `to_string` instead"
+    )]
     pub fn as_utf8(&self) -> Result<OpensslString, ErrorStack> {
         unsafe {
             let mut ptr = ptr::null_mut();
@@ -456,12 +459,64 @@ impl Asn1StringRef {
         }
     }
 
+    /// Converts the ASN.1 underlying format to a UTF-8 string.
+    ///
+    /// ASN.1 strings may utilize UTF-16, ASCII, BMP, or UTF8.  This is important to
+    /// consume the string in a meaningful way without knowing the underlying
+    /// format.
+    ///
+    /// The full contents of the string are preserved, including any interior
+    /// NUL bytes. Any bytes that do not form valid UTF-8 after conversion are
+    /// replaced with U+FFFD.
+    #[corresponds(ASN1_STRING_to_UTF8)]
+    pub fn to_string(&self) -> Result<String, ErrorStack> {
+        // For string types whose conversion to UTF-8 is the identity
+        // function, copy directly out of the underlying buffer, avoiding
+        // ASN1_STRING_to_UTF8's intermediate allocation of it.
+        match unsafe { ffi::ASN1_STRING_type(self.as_ptr()) } {
+            ffi::V_ASN1_UTF8STRING => {
+                if let Ok(s) = str::from_utf8(self.as_slice()) {
+                    return Ok(s.to_owned());
+                }
+            }
+            // Latin-1 types, whose UTF-8 conversion is the identity on ASCII.
+            ffi::V_ASN1_NUMERICSTRING
+            | ffi::V_ASN1_PRINTABLESTRING
+            | ffi::V_ASN1_T61STRING
+            | ffi::V_ASN1_IA5STRING
+            | ffi::V_ASN1_VISIBLESTRING => {
+                let slice = self.as_slice();
+                if slice.is_ascii() {
+                    // SAFETY: ASCII is valid UTF-8.
+                    return Ok(unsafe { str::from_utf8_unchecked(slice) }.to_owned());
+                }
+            }
+            _ => {}
+        }
+
+        unsafe {
+            let mut ptr = ptr::null_mut();
+            let len = ffi::ASN1_STRING_to_UTF8(&mut ptr, self.as_ptr());
+            if len < 0 {
+                return Err(ErrorStack::get());
+            }
+
+            // This copies the buffer exactly once: for valid UTF-8,
+            // from_utf8_lossy is a no-op returning Cow::Borrowed and
+            // into_owned performs the copy; for invalid UTF-8, from_utf8_lossy
+            // copies with replacements and into_owned is a no-op.
+            let s = String::from_utf8_lossy(util::from_raw_parts(ptr, len as usize)).into_owned();
+            openssl_free(ptr.cast());
+            Ok(s)
+        }
+    }
+
     /// Return the string as an array of bytes.
     ///
     /// The bytes do not directly correspond to UTF-8 encoding.  To interact with
-    /// strings in rust, it is preferable to use [`as_utf8`]
+    /// strings in rust, it is preferable to use [`to_string`]
     ///
-    /// [`as_utf8`]: struct.Asn1String.html#method.as_utf8
+    /// [`to_string`]: struct.Asn1StringRef.html#method.to_string
     #[corresponds(ASN1_STRING_get0_data)]
     pub fn as_slice(&self) -> &[u8] {
         unsafe { util::from_raw_parts(ASN1_STRING_get0_data(self.as_ptr()), self.len()) }
@@ -481,11 +536,27 @@ impl Asn1StringRef {
 
 impl fmt::Debug for Asn1StringRef {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.as_utf8() {
-            Ok(openssl_string) => openssl_string.fmt(fmt),
+        match self.to_string() {
+            Ok(string) => string.fmt(fmt),
             Err(_) => fmt.write_str("error"),
         }
     }
+}
+
+#[inline]
+#[cfg(not(any(boringssl, awslc)))]
+unsafe fn openssl_free(buf: *mut c_void) {
+    ffi::OPENSSL_free(buf);
+}
+
+#[inline]
+#[cfg(any(boringssl, awslc))]
+unsafe fn openssl_free(buf: *mut c_void) {
+    ffi::CRYPTO_free(
+        buf,
+        concat!(file!(), "\0").as_ptr() as *const c_char,
+        line!() as c_int,
+    );
 }
 
 foreign_type_and_impl_send_sync! {
@@ -724,15 +795,30 @@ impl fmt::Display for Asn1ObjectRef {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         unsafe {
             let mut buf = [0; 80];
-            let len = ffi::OBJ_obj2txt(
+            let mut clamped = false;
+            let mut len = ffi::OBJ_obj2txt(
                 buf.as_mut_ptr() as *mut _,
                 buf.len() as c_int,
                 self.as_ptr(),
                 0,
             );
+            if len <= 0 {
+                return fmt.write_str("OBJ_obj2txt error");
+            }
+            if len > buf.len() as i32 {
+                // omit trailing NUL
+                len = (buf.len() - 1) as i32;
+                clamped = true;
+            }
             match str::from_utf8(&buf[..len as usize]) {
                 Err(_) => fmt.write_str("error"),
-                Ok(s) => fmt.write_str(s),
+                Ok(s) => {
+                    if clamped {
+                        fmt.write_str(&(s.to_owned() + "..."))
+                    } else {
+                        fmt.write_str(s)
+                    }
+                }
             }
         }
     }
@@ -744,16 +830,7 @@ impl fmt::Debug for Asn1ObjectRef {
     }
 }
 
-cfg_if! {
-    if #[cfg(any(ossl110, libressl, boringssl, awslc))] {
-        use ffi::ASN1_STRING_get0_data;
-    } else {
-        #[allow(bad_style)]
-        unsafe fn ASN1_STRING_get0_data(s: *mut ffi::ASN1_STRING) -> *const ::libc::c_uchar {
-            ffi::ASN1_STRING_data(s)
-        }
-    }
-}
+use ffi::ASN1_STRING_get0_data;
 
 foreign_type_and_impl_send_sync! {
     type CType = ffi::ASN1_ENUMERATED;
@@ -802,10 +879,40 @@ mod tests {
         roundtrip(-BigNum::from_u32(1234).unwrap());
     }
 
+    /// Tests that interior NUL bytes are preserved when converting to UTF-8.
+    #[test]
+    fn string_with_interior_nul() {
+        fn make_string(typ: c_int, data: &[u8]) -> Asn1String {
+            unsafe {
+                let ptr = cvt_p(ffi::ASN1_STRING_type_new(typ)).unwrap();
+                let s = Asn1String::from_ptr(ptr);
+                cvt(ffi::ASN1_STRING_set(
+                    s.as_ptr(),
+                    data.as_ptr().cast(),
+                    data.len().try_into().unwrap(),
+                ))
+                .unwrap();
+                s
+            }
+        }
+
+        // Copied directly out of the underlying buffer.
+        let s = make_string(ffi::V_ASN1_UTF8STRING, b"foo\0bar.com");
+        assert_eq!(s.as_slice(), b"foo\0bar.com");
+        assert_eq!(s.to_string().unwrap(), "foo\0bar.com");
+
+        let s = make_string(ffi::V_ASN1_IA5STRING, b"foo\0bar.com");
+        assert_eq!(s.to_string().unwrap(), "foo\0bar.com");
+
+        // Converted through ASN1_STRING_to_UTF8.
+        let s = make_string(ffi::V_ASN1_BMPSTRING, b"\0f\0\0\0o");
+        assert_eq!(s.to_string().unwrap(), "f\0o");
+    }
+
     #[test]
     fn time_from_str() {
         Asn1Time::from_str("99991231235959Z").unwrap();
-        #[cfg(ossl111)]
+        #[cfg(any(ossl111, boringssl, libressl360, awslc))]
         Asn1Time::from_str_x509("99991231235959Z").unwrap();
     }
 
@@ -901,6 +1008,13 @@ mod tests {
         Asn1Object::from_str("NOT AN OID")
             .map(|object| object.to_string())
             .expect_err("parsing invalid OID should fail");
+    }
+
+    #[test]
+    fn very_long_object() {
+        let fifty_ones = "1.".repeat(49) + "1";
+        let object = Asn1Object::from_str(&fifty_ones).unwrap();
+        assert_eq!(object.as_ref().to_string(), "1.".repeat(40) + "..");
     }
 
     #[test]

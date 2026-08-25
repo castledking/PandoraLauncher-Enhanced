@@ -40,12 +40,12 @@ pub fn emit_to_string<'files, F: Files<'files> + ?Sized>(
     {
         let mut buffer = Vec::new();
         emit_with_style(
-            renderer::PlainWriter::new(&mut buffer),
+            &mut renderer::PlainWriter::new(&mut buffer),
             config,
             files,
             diagnostic,
         )?;
-        let buffer_str: &str = core::str::from_utf8(&buffer).expect("buffer not utf8");
+        let buffer_str: &str = str::from_utf8(&buffer).expect("buffer not utf8");
         writer.push_str(buffer_str);
         Ok(())
     }
@@ -54,7 +54,7 @@ pub fn emit_to_string<'files, F: Files<'files> + ?Sized>(
     #[cfg(not(feature = "std"))]
     {
         emit_with_style(
-            renderer::PlainWriter::new(writer),
+            &mut renderer::PlainWriter::new(writer),
             config,
             files,
             diagnostic,
@@ -63,32 +63,27 @@ pub fn emit_to_string<'files, F: Files<'files> + ?Sized>(
 }
 
 #[cfg(feature = "std")]
-pub fn emit_to_io_write<'files, F: Files<'files> + ?Sized, W: std::io::Write + ?Sized>(
+pub fn emit_to_io_write<'files, F: Files<'files> + ?Sized, W: std::io::Write>(
     writer: &mut W,
     config: &Config,
     files: &'files F,
     diagnostic: &Diagnostic<F::FileId>,
 ) -> Result<(), super::files::Error> {
     emit_with_style(
-        renderer::PlainWriter::new(writer),
+        &mut renderer::PlainWriter::new(writer),
         config,
         files,
         diagnostic,
     )
 }
 
-pub fn emit_to_write_style<'files, F: Files<'files> + ?Sized, W: WriteStyle + ?Sized>(
+pub fn emit_to_write_style<'files, F: Files<'files> + ?Sized, W: WriteStyle>(
     writer: &mut W,
     config: &Config,
     files: &'files F,
     diagnostic: &Diagnostic<F::FileId>,
 ) -> Result<(), super::files::Error> {
-    emit_with_style(
-        renderer::WriteStyleByRef::new(writer),
-        config,
-        files,
-        diagnostic,
-    )
+    emit_with_style(writer, config, files, diagnostic)
 }
 
 #[deprecated(
@@ -101,14 +96,14 @@ pub fn emit_to_write_style<'files, F: Files<'files> + ?Sized, W: WriteStyle + ?S
 /// * a file was removed from the file database.
 /// * a file was changed so that it is too small to have an index
 /// * IO fails
-pub fn emit<'files, F: Files<'files> + ?Sized, W: renderer::GeneralWrite + ?Sized>(
+pub fn emit<'files, F: Files<'files> + ?Sized, W: renderer::GeneralWrite>(
     writer: &mut W,
     config: &Config,
     files: &'files F,
     diagnostic: &Diagnostic<F::FileId>,
 ) -> Result<(), super::files::Error> {
     emit_with_style(
-        renderer::PlainWriter::new(writer),
+        &mut renderer::PlainWriter::new(writer),
         config,
         files,
         diagnostic,
@@ -116,12 +111,12 @@ pub fn emit<'files, F: Files<'files> + ?Sized, W: renderer::GeneralWrite + ?Size
 }
 
 fn emit_with_style<'files, F: Files<'files> + ?Sized, W: WriteStyle>(
-    mut writer: W,
+    writer: &mut W,
     config: &Config,
     files: &'files F,
     diagnostic: &Diagnostic<F::FileId>,
 ) -> Result<(), super::files::Error> {
-    let mut renderer = Renderer::new(&mut writer, config);
+    let mut renderer = Renderer::new(writer, config);
     match config.display_style {
         DisplayStyle::Rich => RichDiagnostic::new(diagnostic, config).render(files, &mut renderer),
         DisplayStyle::Medium => ShortDiagnostic::new(diagnostic, true).render(files, &mut renderer),

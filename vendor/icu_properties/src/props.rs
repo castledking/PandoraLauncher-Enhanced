@@ -38,8 +38,6 @@ macro_rules! create_const_array {
         impl $enum_ty:ident {
             $( $(#[$const_meta:meta])* $v:vis const $i:ident: $t:ty = $e:expr; )*
         }
-        #[test]
-        fn $consts_test:ident();
     ) => {
         $( #[$meta] )*
         impl $enum_ty {
@@ -73,25 +71,6 @@ macro_rules! create_const_array {
             fn from(other: $enum_ty) -> Self {
                 other.0 as u16
             }
-        }
-
-        #[test]
-        fn $consts_test() {
-            $(
-                assert_eq!(
-                    crate::names::PropertyNamesLong::<$enum_ty>::new().get($enum_ty::$i).unwrap()
-                        // Rust identifiers use camel case
-                        .replace('_', "")
-                        // We use Ethiopian
-                        .replace("Ethiopic", "Ethiopian")
-                        // Nastaliq is missing a long name?
-                        .replace("Aran", "Nastaliq")
-                        // We spell these out
-                        .replace("LVSyllable", "LeadingVowelSyllable")
-                        .replace("LVTSyllable", "LeadingVowelTrailingSyllable"),
-                    stringify!($i)
-                );
-            )*
         }
     }
 }
@@ -220,8 +199,6 @@ impl BidiClass {
     /// (`PDI`) U+2069: terminates an isolate control
     pub const PopDirectionalIsolate: BidiClass = BidiClass(22);
 }
-#[test]
-fn bidi_props_consts();
 }
 
 make_enumerated_property! {
@@ -265,7 +242,6 @@ pub(crate) mod gc {
     #[cfg_attr(feature = "datagen", databake(path = icu_properties::props))]
     #[allow(clippy::exhaustive_enums)] // this type is stable
     #[zerovec::make_ule(GeneralCategoryULE)]
-    #[cfg_attr(not(feature = "alloc"), zerovec::skip_derive(ZeroMapKV))]
     #[repr(u8)]
     pub enum GeneralCategory {
         /// (`Cn`) A reserved unassigned code point or a noncharacter
@@ -374,20 +350,6 @@ impl GeneralCategory {
         GeneralCategory::ModifierSymbol,
         GeneralCategory::OtherSymbol,
     ];
-}
-
-#[test]
-fn gc_variants() {
-    for &variant in GeneralCategory::ALL_VALUES {
-        assert_eq!(
-            crate::names::PropertyNamesLong::<GeneralCategory>::new()
-                .get(variant)
-                .unwrap()
-                // Rust identifiers use camel case
-                .replace('_', ""),
-            format!("{variant:?}")
-        );
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default)]
@@ -766,7 +728,6 @@ impl Script {
     pub const BassaVah: Script = Script(134);
     pub const Batak: Script = Script(63);
     pub const Bengali: Script = Script(4);
-    pub const BeriaErfe: Script = Script(208);
     pub const Bhaiksuki: Script = Script(168);
     pub const Bopomofo: Script = Script(5);
     pub const Brahmi: Script = Script(65);
@@ -795,7 +756,6 @@ impl Script {
     pub const Elbasan: Script = Script(136);
     pub const Elymaic: Script = Script(185);
     pub const Ethiopian: Script = Script(11);
-    pub const Garay: Script = Script(201);
     pub const Georgian: Script = Script(12);
     pub const Glagolitic: Script = Script(56);
     pub const Gothic: Script = Script(13);
@@ -804,7 +764,6 @@ impl Script {
     pub const Gujarati: Script = Script(15);
     pub const GunjalaGondi: Script = Script(179);
     pub const Gurmukhi: Script = Script(16);
-    pub const GurungKhema: Script = Script(202);
     pub const Han: Script = Script(17);
     pub const Hangul: Script = Script(18);
     pub const HanifiRohingya: Script = Script(182);
@@ -827,7 +786,6 @@ impl Script {
     pub const Khmer: Script = Script(23);
     pub const Khojki: Script = Script(157);
     pub const Khudawadi: Script = Script(145);
-    pub const KiratRai: Script = Script(203);
     pub const Lao: Script = Script(24);
     pub const Latin: Script = Script(25);
     pub const Lepcha: Script = Script(82);
@@ -859,8 +817,8 @@ impl Script {
     pub const NagMundari: Script = Script(199);
     pub const Nandinagari: Script = Script(187);
     pub const Nastaliq: Script = Script(200);
-    pub const Newa: Script = Script(170);
     pub const NewTaiLue: Script = Script(59);
+    pub const Newa: Script = Script(170);
     pub const Nko: Script = Script(87);
     pub const Nushu: Script = Script(150);
     pub const NyiakengPuachueHmong: Script = Script(186);
@@ -875,7 +833,6 @@ impl Script {
     pub const OldSouthArabian: Script = Script(133);
     pub const OldTurkic: Script = Script(88);
     pub const OldUyghur: Script = Script(194);
-    pub const OlOnal: Script = Script(204);
     pub const Oriya: Script = Script(31);
     pub const Osage: Script = Script(171);
     pub const Osmanya: Script = Script(50);
@@ -892,14 +849,12 @@ impl Script {
     pub const Sharada: Script = Script(151);
     pub const Shavian: Script = Script(51);
     pub const Siddham: Script = Script(166);
-    pub const Sidetic: Script = Script(209);
     pub const SignWriting: Script = Script(112);
     pub const Sinhala: Script = Script(33);
     pub const Sogdian: Script = Script(183);
     pub const SoraSompeng: Script = Script(152);
     pub const Soyombo: Script = Script(176);
     pub const Sundanese: Script = Script(113);
-    pub const Sunuwar: Script = Script(205);
     pub const SylotiNagri: Script = Script(58);
     pub const Syriac: Script = Script(34);
     pub const Tagalog: Script = Script(42);
@@ -907,7 +862,6 @@ impl Script {
     pub const TaiLe: Script = Script(52);
     pub const TaiTham: Script = Script(106);
     pub const TaiViet: Script = Script(127);
-    pub const TaiYo: Script = Script(210);
     pub const Takri: Script = Script(153);
     pub const Tamil: Script = Script(35);
     pub const Tangsa: Script = Script(195);
@@ -918,10 +872,7 @@ impl Script {
     pub const Tibetan: Script = Script(39);
     pub const Tifinagh: Script = Script(60);
     pub const Tirhuta: Script = Script(158);
-    pub const Todhri: Script = Script(206);
-    pub const TolongSiki: Script = Script(211);
     pub const Toto: Script = Script(196);
-    pub const TuluTigalari: Script = Script(207);
     pub const Ugaritic: Script = Script(53);
     pub const Unknown: Script = Script(103);
     pub const Vai: Script = Script(99);
@@ -932,37 +883,6 @@ impl Script {
     pub const Yi: Script = Script(41);
     pub const ZanabazarSquare: Script = Script(177);
 }
-#[test]
-fn script_consts();
-}
-
-impl Script {
-    // Doesn't actually exist!
-    #[doc(hidden)]
-    #[allow(non_upper_case_globals)]
-    #[deprecated]
-    // Some high value that ICU4C will not use anytime soon
-    pub const Chisoi: Script = Self(60_000);
-}
-
-/// ✨ *Enabled with the `compiled_data` Cargo feature.*
-#[cfg(feature = "compiled_data")]
-impl From<Script> for icu_locale_core::subtags::Script {
-    fn from(value: Script) -> Self {
-        crate::PropertyNamesShort::new()
-            .get_locale_script(value)
-            .unwrap_or(icu_locale_core::subtags::script!("Zzzz"))
-    }
-}
-
-/// ✨ *Enabled with the `compiled_data` Cargo feature.*
-#[cfg(feature = "compiled_data")]
-impl From<icu_locale_core::subtags::Script> for Script {
-    fn from(value: icu_locale_core::subtags::Script) -> Self {
-        crate::PropertyParser::new()
-            .get_strict(value.as_str())
-            .unwrap_or(Self::Unknown)
-    }
 }
 
 make_enumerated_property! {
@@ -1028,8 +948,6 @@ impl HangulSyllableType {
     /// (`LVT`) a precomposed syllable with a leading consonant, a vowel, and a trailing consonant.
     pub const LeadingVowelTrailingSyllable: HangulSyllableType = HangulSyllableType(5);
 }
-#[test]
-fn hangul_syllable_type_consts();
 }
 
 make_enumerated_property! {
@@ -1089,8 +1007,6 @@ impl EastAsianWidth {
     pub const Narrow: EastAsianWidth = EastAsianWidth(4); //name="Na"
     pub const Wide: EastAsianWidth = EastAsianWidth(5); //name="W"
 }
-#[test]
-fn east_asian_width_consts();
 }
 
 make_enumerated_property! {
@@ -1192,16 +1108,11 @@ impl LineBreak {
 
     // Added in ICU 74:
     pub const Aksara: LineBreak = LineBreak(43); // name="AK"
-    pub const AksaraPrebase: LineBreak = LineBreak(44); // name="AP"
-    pub const AksaraStart: LineBreak = LineBreak(45); // name="AS"
-    pub const ViramaFinal: LineBreak = LineBreak(46); // name="VF"
-    pub const Virama: LineBreak = LineBreak(47); // name="VI"
-
-    // Added in ICU 78:
-    pub const UnambiguousHyphen: LineBreak = LineBreak(48); // name="HH"
+    pub const AksaraPrebase: LineBreak = LineBreak(44); // name=AP"
+    pub const AksaraStart: LineBreak = LineBreak(45); // name=AS"
+    pub const ViramaFinal: LineBreak = LineBreak(46); // name=VF"
+    pub const Virama: LineBreak = LineBreak(47); // name=VI"
 }
-#[test]
-fn line_break_consts();
 }
 
 make_enumerated_property! {
@@ -1279,8 +1190,6 @@ impl GraphemeClusterBreak {
     pub const GlueAfterZwj: GraphemeClusterBreak = GraphemeClusterBreak(16); // name="GAZ"
     pub const ZWJ: GraphemeClusterBreak = GraphemeClusterBreak(17); // name="ZWJ"
 }
-#[test]
-fn gcb_consts();
 }
 
 make_enumerated_property! {
@@ -1363,8 +1272,6 @@ impl WordBreak {
     pub const ZWJ: WordBreak = WordBreak(21); // name="ZWJ"
     pub const WSegSpace: WordBreak = WordBreak(22); // name="WSegSpace"
 }
-#[test]
-fn word_break_consts();
 }
 
 make_enumerated_property! {
@@ -1435,8 +1342,6 @@ impl SentenceBreak {
     pub const LF: SentenceBreak = SentenceBreak(13); // name="LF"
     pub const SContinue: SentenceBreak = SentenceBreak(14); // name="SC"
 }
-#[test]
-fn sentence_break_consts();
 }
 
 make_enumerated_property! {
@@ -1558,8 +1463,6 @@ impl CanonicalCombiningClass {
     pub const DoubleAbove: CanonicalCombiningClass = CanonicalCombiningClass(234); // name="DA"
     pub const IotaSubscript: CanonicalCombiningClass = CanonicalCombiningClass(240); // name="IS"
 }
-#[test]
-fn ccc_consts();
 }
 
 make_enumerated_property! {
@@ -1597,6 +1500,7 @@ make_enumerated_property! {
 ///     IndicConjunctBreak::Extend
 /// );
 /// ```
+#[doc(hidden)] // draft API in ICU4C
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(clippy::exhaustive_structs)] // newtype
@@ -1615,7 +1519,7 @@ impl IndicConjunctBreak {
 }
 
 create_const_array! {
-#[allow(missing_docs)] // These constants don't need individual documentation.
+#[doc(hidden)] // draft API in ICU4C
 #[allow(non_upper_case_globals)]
 impl IndicConjunctBreak {
     pub const None: IndicConjunctBreak = IndicConjunctBreak(0);
@@ -1623,8 +1527,6 @@ impl IndicConjunctBreak {
     pub const Extend: IndicConjunctBreak = IndicConjunctBreak(2);
     pub const Linker: IndicConjunctBreak = IndicConjunctBreak(3);
 }
-#[test]
-fn indic_conjunct_break_consts();
 }
 
 make_enumerated_property! {
@@ -1690,8 +1592,8 @@ impl IndicSyllabicCategory {
     pub const ConsonantPlaceholder: IndicSyllabicCategory = IndicSyllabicCategory(12);
     pub const ConsonantPrecedingRepha: IndicSyllabicCategory = IndicSyllabicCategory(13);
     pub const ConsonantPrefixed: IndicSyllabicCategory = IndicSyllabicCategory(14);
-    pub const ConsonantSubjoined: IndicSyllabicCategory = IndicSyllabicCategory(15);
-    pub const ConsonantSucceedingRepha: IndicSyllabicCategory = IndicSyllabicCategory(16);
+    pub const ConsonantSucceedingRepha: IndicSyllabicCategory = IndicSyllabicCategory(15);
+    pub const ConsonantSubjoined: IndicSyllabicCategory = IndicSyllabicCategory(16);
     pub const ConsonantWithStacker: IndicSyllabicCategory = IndicSyllabicCategory(17);
     pub const GeminationMark: IndicSyllabicCategory = IndicSyllabicCategory(18);
     pub const InvisibleStacker: IndicSyllabicCategory = IndicSyllabicCategory(19);
@@ -1713,8 +1615,6 @@ impl IndicSyllabicCategory {
     pub const VowelIndependent: IndicSyllabicCategory = IndicSyllabicCategory(35);
     pub const ReorderingKiller: IndicSyllabicCategory = IndicSyllabicCategory(36);
 }
-#[test]
-fn indic_syllabic_category_consts();
 }
 
 make_enumerated_property! {
@@ -1773,8 +1673,6 @@ impl JoiningType {
     pub const RightJoining: JoiningType = JoiningType(4); // name="R"
     pub const Transparent: JoiningType = JoiningType(5); // name="T"
 }
-#[test]
-fn joining_type_consts();
 }
 
 make_enumerated_property! {
@@ -1839,8 +1737,6 @@ impl VerticalOrientation {
     pub const TransformedUpright: VerticalOrientation = VerticalOrientation(2); // name="Tu"
     pub const Upright: VerticalOrientation = VerticalOrientation(3); // name="U"
 }
-#[test]
-fn vertical_orientation_consts();
 }
 
 make_enumerated_property! {
@@ -1905,8 +1801,8 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "alnum";
-    short_name: "alnum";
+    name: "Alnum";
+    short_name: "Alnum";
     ident: Alnum;
     data_marker: crate::provider::PropertyBinaryAlnumV1;
     singleton: SINGLETON_PROPERTY_BINARY_ALNUM_V1;
@@ -1987,8 +1883,8 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "blank";
-    short_name: "blank";
+    name: "Blank";
+    short_name: "Blank";
     ident: Blank;
     data_marker: crate::provider::PropertyBinaryBlankV1;
     singleton: SINGLETON_PROPERTY_BINARY_BLANK_V1;
@@ -2431,8 +2327,8 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "graph";
-    short_name: "graph";
+    name: "Graph";
+    short_name: "Graph";
     ident: Graph;
     data_marker: crate::provider::PropertyBinaryGraphV1;
     singleton: SINGLETON_PROPERTY_BINARY_GRAPH_V1;
@@ -2545,25 +2441,7 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "ID_Compat_Math_Continue";
-    short_name: "ID_Compat_Math_Continue";
-    ident: IdCompatMathContinue;
-    data_marker: crate::provider::PropertyBinaryIdCompatMathContinueV1;
-    singleton: SINGLETON_PROPERTY_BINARY_ID_COMPAT_MATH_CONTINUE_V1;
-    /// ID_Compat_Math_Continue Property
-}
-
-make_binary_property! {
-    name: "ID_Compat_Math_Start";
-    short_name: "ID_Compat_Math_Start";
-    ident: IdCompatMathStart;
-    data_marker: crate::provider::PropertyBinaryIdCompatMathStartV1;
-    singleton: SINGLETON_PROPERTY_BINARY_ID_COMPAT_MATH_START_V1;
-    /// ID_Compat_Math_Start Property
-}
-
-make_binary_property! {
-    name: "ID_Continue";
+    name: "Id_Continue";
     short_name: "IDC";
     ident: IdContinue;
     data_marker: crate::provider::PropertyBinaryIdContinueV1;
@@ -2615,7 +2493,7 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "ID_Start";
+    name: "Id_Start";
     short_name: "IDS";
     ident: IdStart;
     data_marker: crate::provider::PropertyBinaryIdStartV1;
@@ -2644,7 +2522,7 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "IDS_Binary_Operator";
+    name: "Ids_Binary_Operator";
     short_name: "IDSB";
     ident: IdsBinaryOperator;
     data_marker: crate::provider::PropertyBinaryIdsBinaryOperatorV1;
@@ -2665,7 +2543,7 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "IDS_Trinary_Operator";
+    name: "Ids_Trinary_Operator";
     short_name: "IDST";
     ident: IdsTrinaryOperator;
     data_marker: crate::provider::PropertyBinaryIdsTrinaryOperatorV1;
@@ -2686,15 +2564,6 @@ make_binary_property! {
     /// assert!(!ids_trinary_operator.contains('\u{2FF5}'));  // IDEOGRAPHIC DESCRIPTION CHARACTER SURROUND FROM ABOVE
     /// assert!(!ids_trinary_operator.contains('\u{3006}'));  // IDEOGRAPHIC CLOSING MARK
     /// ```
-}
-
-make_binary_property! {
-    name: "IDS_Unary_Operator";
-    short_name: "IDSU";
-    ident: IdsUnaryOperator;
-    data_marker: crate::provider::PropertyBinaryIdsUnaryOperatorV1;
-    singleton: SINGLETON_PROPERTY_BINARY_IDS_UNARY_OPERATOR_V1;
-    /// IDS_Unary_Operator Property
 }
 
 make_binary_property! {
@@ -2788,15 +2657,6 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "Modifier_Combining_Mark";
-    short_name: "MCM";
-    ident: ModifierCombiningMark;
-    data_marker: crate::provider::PropertyBinaryModifierCombiningMarkV1;
-    singleton: SINGLETON_PROPERTY_BINARY_MODIFIER_COMBINING_MARK_V1;
-    /// Modifier_Combining_Mark Property
-}
-
-make_binary_property! {
     name: "Noncharacter_Code_Point";
     short_name: "NChar";
     ident: NoncharacterCodePoint;
@@ -2820,7 +2680,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "NFC_Inert";
-    short_name: "nfcinert";
+    short_name: "NFC_Inert";
     ident: NfcInert;
     data_marker: crate::provider::PropertyBinaryNfcInertV1;
     singleton: SINGLETON_PROPERTY_BINARY_NFC_INERT_V1;
@@ -2829,7 +2689,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "NFD_Inert";
-    short_name: "nfdinert";
+    short_name: "NFD_Inert";
     ident: NfdInert;
     data_marker: crate::provider::PropertyBinaryNfdInertV1;
     singleton: SINGLETON_PROPERTY_BINARY_NFD_INERT_V1;
@@ -2838,7 +2698,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "NFKC_Inert";
-    short_name: "nfkcinert";
+    short_name: "NFKC_Inert";
     ident: NfkcInert;
     data_marker: crate::provider::PropertyBinaryNfkcInertV1;
     singleton: SINGLETON_PROPERTY_BINARY_NFKC_INERT_V1;
@@ -2847,7 +2707,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "NFKD_Inert";
-    short_name: "nfkdinert";
+    short_name: "NFKD_Inert";
     ident: NfkdInert;
     data_marker: crate::provider::PropertyBinaryNfkdInertV1;
     singleton: SINGLETON_PROPERTY_BINARY_NFKD_INERT_V1;
@@ -2918,8 +2778,8 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "print";
-    short_name: "print";
+    name: "Print";
+    short_name: "Print";
     ident: Print;
     data_marker: crate::provider::PropertyBinaryPrintV1;
     singleton: SINGLETON_PROPERTY_BINARY_PRINT_V1;
@@ -3019,7 +2879,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "Segment_Starter";
-    short_name: "segstart";
+    short_name: "Segment_Starter";
     ident: SegmentStarter;
     data_marker: crate::provider::PropertyBinarySegmentStarterV1;
     singleton: SINGLETON_PROPERTY_BINARY_SEGMENT_STARTER_V1;
@@ -3029,7 +2889,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "Case_Sensitive";
-    short_name: "Sensitive";
+    short_name: "Case_Sensitive";
     ident: CaseSensitive;
     data_marker: crate::provider::PropertyBinaryCaseSensitiveV1;
     singleton: SINGLETON_PROPERTY_BINARY_CASE_SENSITIVE_V1;
@@ -3154,7 +3014,7 @@ make_binary_property! {
 
 make_binary_property! {
     name: "White_Space";
-    short_name: "WSpace";
+    short_name: "space";
     ident: WhiteSpace;
     data_marker: crate::provider::PropertyBinaryWhiteSpaceV1;
     singleton: SINGLETON_PROPERTY_BINARY_WHITE_SPACE_V1;
@@ -3177,8 +3037,8 @@ make_binary_property! {
 }
 
 make_binary_property! {
-    name: "xdigit";
-    short_name: "xdigit";
+    name: "Xdigit";
+    short_name: "Xdigit";
     ident: Xdigit;
     data_marker: crate::provider::PropertyBinaryXdigitV1;
     singleton: SINGLETON_PROPERTY_BINARY_XDIGIT_V1;
@@ -3248,8 +3108,6 @@ pub use crate::emoji::EmojiSet;
 
 macro_rules! make_emoji_set {
     (
-        name: $name:literal;
-        short_name: $short_name:literal;
         ident: $ident:ident;
         data_marker: $data_marker:ty;
         singleton: $singleton:ident;
@@ -3267,15 +3125,11 @@ macro_rules! make_emoji_set {
             #[cfg(feature = "compiled_data")]
             const SINGLETON: &'static crate::provider::PropertyUnicodeSet<'static> =
                 &crate::provider::Baked::$singleton;
-            const NAME: &'static [u8] = $name.as_bytes();
-            const SHORT_NAME: &'static [u8] = $short_name.as_bytes();
         }
     }
 }
 
 make_emoji_set! {
-    name: "Basic_Emoji";
-    short_name: "Basic_Emoji";
     ident: BasicEmoji;
     data_marker: crate::provider::PropertyBinaryBasicEmojiV1;
     singleton: SINGLETON_PROPERTY_BINARY_BASIC_EMOJI_V1;
@@ -3344,7 +3198,8 @@ mod test_enumerated_property_completeness {
 
         assert!(
             fmt_diff.is_empty(),
-            "Values defined in data do not match values defined in consts. Difference:\n{fmt_diff}"
+            "Values defined in data do not match values defined in consts. Difference:\n{}",
+            fmt_diff
         );
     }
 

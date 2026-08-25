@@ -3,16 +3,12 @@
 /*
 64-bit atomic implementation using kuser_cmpxchg64 on pre-v6 Arm Linux/Android.
 
-See "Atomic operation overview by architecture" in atomic-maybe-uninit for a more comprehensive and
-detailed description of the atomic and synchronize instructions in this architecture:
-https://github.com/taiki-e/atomic-maybe-uninit/blob/HEAD/src/arch/README.md#arm
-
 Refs:
-- https://github.com/torvalds/linux/blob/v6.16/Documentation/arch/arm/kernel_user_helpers.rst
+- https://github.com/torvalds/linux/blob/v6.13/Documentation/arch/arm/kernel_user_helpers.rst
 - https://github.com/rust-lang/compiler-builtins/blob/compiler_builtins-v0.1.124/src/arm_linux.rs
 
 Note: __kuser_cmpxchg64 is always SeqCst.
-https://github.com/torvalds/linux/blob/v6.16/arch/arm/kernel/entry-armv.S#L700-L707
+https://github.com/torvalds/linux/blob/v6.13/arch/arm/kernel/entry-armv.S#L700-L707
 
 Note: On Miri and ThreadSanitizer which do not support inline assembly, we don't use
 this module and use fallback implementation instead.
@@ -20,31 +16,12 @@ this module and use fallback implementation instead.
 
 // TODO: Since Rust 1.64, the Linux kernel requirement for Rust when using std is 3.2+, so it should
 // be possible to omit the dynamic kernel version check if the std feature is enabled on Rust 1.64+.
-// https://blog.rust-lang.org/2022/08/01/Increasing-glibc-kernel-requirements
+// https://blog.rust-lang.org/2022/08/01/Increasing-glibc-kernel-requirements.html
 
 include!("macros.rs");
 
 #[path = "../fallback/outline_atomics.rs"]
 mod fallback;
-
-#[cfg(test)] // test-only (unused)
-#[cfg(not(portable_atomic_no_outline_atomics))]
-#[cfg(any(
-    all(
-        target_os = "linux",
-        any(
-            target_env = "gnu",
-            target_env = "musl",
-            target_env = "ohos",
-            all(target_env = "uclibc", not(target_feature = "crt-static")),
-        ),
-    ),
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "openbsd",
-))]
-#[path = "../detect/auxv.rs"]
-mod test_detect_auxv;
 
 #[cfg(not(portable_atomic_no_asm))]
 use core::arch::asm;
@@ -52,7 +29,7 @@ use core::{mem, sync::atomic::Ordering};
 
 use crate::utils::{Pair, U64};
 
-// https://github.com/torvalds/linux/blob/v6.16/Documentation/arch/arm/kernel_user_helpers.rst
+// https://github.com/torvalds/linux/blob/v6.13/Documentation/arch/arm/kernel_user_helpers.rst
 const KUSER_HELPER_VERSION: usize = 0xFFFF0FFC;
 // __kuser_helper_version >= 5 (kernel version 3.1+)
 const KUSER_CMPXCHG64: usize = 0xFFFF0F60;

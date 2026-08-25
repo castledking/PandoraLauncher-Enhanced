@@ -1,12 +1,11 @@
 #![forbid(unsafe_code)]
 
-use super::flush_block;
 use crate::deflate::hash_calc::StandardHashCalc;
 use crate::{
     deflate::{
         fill_window, BlockState, DeflateStream, State, MIN_LOOKAHEAD, STD_MIN_MATCH, WANT_MIN_MATCH,
     },
-    DeflateFlush,
+    flush_block, DeflateFlush,
 };
 
 pub fn deflate_medium(stream: &mut DeflateStream, flush: DeflateFlush) -> BlockState {
@@ -193,6 +192,7 @@ fn emit_match(state: &mut State, m: Match) -> bool {
     if (m.match_length as usize) < WANT_MIN_MATCH {
         for lc in &state.window.filled()[state.strstart..][..m.match_length as usize] {
             bflush |= State::tally_lit_help(&mut state.sym_buf, &mut state.l_desc, *lc);
+            state.lookahead -= 1;
         }
     } else {
         // check_match(s, m.strstart, m.match_start, m.match_length);
@@ -201,8 +201,9 @@ fn emit_match(state: &mut State, m: Match) -> bool {
             (m.strstart - m.match_start) as usize,
             m.match_length as usize - STD_MIN_MATCH,
         );
+
+        state.lookahead -= m.match_length as usize;
     }
-    state.lookahead -= m.match_length as usize;
 
     bflush
 }

@@ -11,14 +11,15 @@
 
 [package]
 edition = "2021"
-rust-version = "1.74.0"
+rust-version = "1.85.0"
 name = "tiff"
-version = "0.10.3"
+version = "0.11.3"
 authors = ["The image-rs Developers"]
 build = false
 exclude = [
     "tests/images/*",
     "tests/fuzz_images/*",
+    "tests/**/*.tif",
 ]
 autolib = false
 autobins = false
@@ -46,11 +47,20 @@ deflate = ["dep:flate2"]
 fax = ["dep:fax34"]
 jpeg = ["dep:zune-jpeg"]
 lzw = ["dep:weezl"]
+webp = ["dep:image-webp"]
 zstd = ["dep:zstd"]
 
 [lib]
 name = "tiff"
 path = "src/lib.rs"
+
+[[example]]
+name = "decode"
+path = "examples/decode.rs"
+
+[[example]]
+name = "tiff-ls"
+path = "examples/tiff-ls.rs"
 
 [[test]]
 name = "decode_bigtiff_images"
@@ -67,6 +77,10 @@ path = "tests/decode_geotiff_images.rs"
 [[test]]
 name = "decode_images"
 path = "tests/decode_images.rs"
+
+[[test]]
+name = "decode_planes"
+path = "tests/decode_planes.rs"
 
 [[test]]
 name = "encode_images"
@@ -105,6 +119,10 @@ optional = true
 [dependencies.half]
 version = "2.4.1"
 
+[dependencies.image-webp]
+version = "0.2.4"
+optional = true
+
 [dependencies.quick-error]
 version = "2.0.1"
 
@@ -117,7 +135,7 @@ version = "0.13"
 optional = true
 
 [dependencies.zune-jpeg]
-version = "0.4.17"
+version = "0.5.1"
 optional = true
 
 [dev-dependencies.crc32fast]

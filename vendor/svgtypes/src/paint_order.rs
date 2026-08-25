@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::stream::Stream;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// [`paint-order`] property variants.
 ///
@@ -45,7 +47,7 @@ impl From<[PaintOrderKind; 3]> for PaintOrder {
     }
 }
 
-impl std::str::FromStr for PaintOrder {
+impl core::str::FromStr for PaintOrder {
     type Err = ();
 
     /// Parses `PaintOrder` from a string.
@@ -67,11 +69,11 @@ impl std::str::FromStr for PaintOrder {
             s.skip_spaces();
             let name = match name {
                 // `normal` is the special value that should short-circuit.
-                "normal" => return Ok(PaintOrder::default()),
+                "normal" => return Ok(Self::default()),
                 "fill" => PaintOrderKind::Fill,
                 "stroke" => PaintOrderKind::Stroke,
                 "markers" => PaintOrderKind::Markers,
-                _ => return Ok(PaintOrder::default()),
+                _ => return Ok(Self::default()),
             };
 
             if let Some(index) = left.iter().position(|v| *v == name) {
@@ -84,11 +86,11 @@ impl std::str::FromStr for PaintOrder {
         s.skip_spaces();
         if !s.at_end() {
             // Any trailing data is an error.
-            return Ok(PaintOrder::default());
+            return Ok(Self::default());
         }
 
         if order.is_empty() {
-            return Ok(PaintOrder::default());
+            return Ok(Self::default());
         }
 
         // Any missing values should be added in the original order.
@@ -99,10 +101,10 @@ impl std::str::FromStr for PaintOrder {
         // Any duplicates is an error.
         if order[0] == order[1] || order[0] == order[2] || order[1] == order[2] {
             // Any trailing data is an error.
-            return Ok(PaintOrder::default());
+            return Ok(Self::default());
         }
 
-        Ok(PaintOrder {
+        Ok(Self {
             order: [order[0], order[1], order[2]],
         })
     }
@@ -112,7 +114,7 @@ impl std::str::FromStr for PaintOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     #[test]
     fn parse_1() {

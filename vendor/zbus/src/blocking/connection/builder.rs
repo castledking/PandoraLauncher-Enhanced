@@ -35,39 +35,6 @@ impl<'a> Builder<'a> {
         crate::connection::Builder::system().map(Self)
     }
 
-    /// Create a builder for an IBus connection.
-    ///
-    /// IBus (Intelligent Input Bus) is an input method framework. This method creates a builder
-    /// that will query the IBus daemon for its D-Bus address using the `ibus address` command.
-    ///
-    /// # Platform Support
-    ///
-    /// This method is available on Unix-like systems where IBus is installed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The `ibus` command is not found or fails to execute
-    /// - The IBus daemon is not running
-    /// - The command output cannot be parsed as a valid D-Bus address
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::error::Error;
-    /// # use zbus::blocking::connection;
-    /// #
-    /// let _conn = connection::Builder::ibus()?
-    ///     .build()?;
-    ///
-    /// // Use the connection to interact with IBus services.
-    /// # Ok::<_, Box<dyn Error + Send + Sync>>(())
-    /// ```
-    #[cfg(unix)]
-    pub fn ibus() -> Result<Self> {
-        crate::connection::Builder::ibus().map(Self)
-    }
-
     /// Create a builder for a connection that will use the given [D-Bus bus address].
     ///
     /// [D-Bus bus address]: https://dbus.freedesktop.org/doc/dbus-specification.html#addresses

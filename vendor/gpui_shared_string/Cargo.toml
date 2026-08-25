@@ -26,22 +26,8 @@ readme = false
 name = "gpui_shared_string"
 path = "gpui_shared_string.rs"
 
-[dependencies.derive_more]
-version = "2.1.1"
-features = [
-    "add",
-    "add_assign",
-    "deref",
-    "deref_mut",
-    "display",
-    "from_str",
-    "mul",
-    "mul_assign",
-    "not",
-]
-
-[dependencies.gpui_util]
-path = "../gpui_util"
+[dependencies]
+smol_str = "0.3.6"
 
 [dependencies.schemars]
 version = "1.0"

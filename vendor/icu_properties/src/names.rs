@@ -85,7 +85,7 @@ impl<T> PropertyParser<T> {
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
     #[cfg(feature = "compiled_data")]
-    #[expect(clippy::new_ret_no_self)]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> PropertyParserBorrowed<'static, T>
     where
         T: ParseableEnumeratedProperty,
@@ -382,7 +382,7 @@ impl<T: NamedEnumeratedProperty> PropertyNamesLong<T> {
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
     #[cfg(feature = "compiled_data")]
-    #[expect(clippy::new_ret_no_self)]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> PropertyNamesLongBorrowed<'static, T> {
         PropertyNamesLongBorrowed::new()
     }
@@ -515,7 +515,7 @@ impl<T: NamedEnumeratedProperty> PropertyNamesShort<T> {
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
     #[cfg(feature = "compiled_data")]
-    #[expect(clippy::new_ret_no_self)]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> PropertyNamesShortBorrowed<'static, T> {
         PropertyNamesShortBorrowed::new()
     }
@@ -661,7 +661,6 @@ impl PropertyEnumToValueNameLookup for PropertyEnumToValueNameLinearMap<'_> {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl PropertyEnumToValueNameLookup for PropertyEnumToValueNameSparseMap<'_> {
     fn get(&self, prop: u32) -> Option<&str> {
         self.map.get(&u16::try_from(prop).ok()?)
@@ -751,7 +750,6 @@ macro_rules! impl_value_getter {
         impl $ty:ident {
             $marker_n2e:ident / $singleton_n2e:ident;
             $(
-                $(#[$meta:meta])*
                 $data_struct_s:ident / $marker_e2sn:ident / $singleton_e2sn:ident;
                 $data_struct_l:ident / $marker_e2ln:ident / $singleton_e2ln:ident;
             )?
@@ -764,7 +762,6 @@ macro_rules! impl_value_getter {
         }
 
         $(
-            $(#[$meta])*
             impl NamedEnumeratedProperty for $ty {
                 type DataStructLong = $data_struct_l<'static>;
                 type DataStructShort = $data_struct_s<'static>;
@@ -880,8 +877,6 @@ impl_value_getter! {
 impl_value_getter! {
     impl CanonicalCombiningClass {
         PropertyNameParseCanonicalCombiningClassV1 / SINGLETON_PROPERTY_NAME_PARSE_CANONICAL_COMBINING_CLASS_V1;
-        #[cfg(feature = "alloc")]
-        /// ✨ *Enabled with the `alloc` Cargo feature.*
         PropertyEnumToValueNameSparseMap / PropertyNameShortCanonicalCombiningClassV1 / SINGLETON_PROPERTY_NAME_SHORT_CANONICAL_COMBINING_CLASS_V1;
         PropertyEnumToValueNameSparseMap / PropertyNameLongCanonicalCombiningClassV1 / SINGLETON_PROPERTY_NAME_LONG_CANONICAL_COMBINING_CLASS_V1;
     }
@@ -892,14 +887,6 @@ impl_value_getter! {
         PropertyNameParseIndicSyllabicCategoryV1 / SINGLETON_PROPERTY_NAME_PARSE_INDIC_SYLLABIC_CATEGORY_V1;
         PropertyEnumToValueNameLinearMap / PropertyNameShortIndicSyllabicCategoryV1 / SINGLETON_PROPERTY_NAME_SHORT_INDIC_SYLLABIC_CATEGORY_V1;
         PropertyEnumToValueNameLinearMap / PropertyNameLongIndicSyllabicCategoryV1 / SINGLETON_PROPERTY_NAME_LONG_INDIC_SYLLABIC_CATEGORY_V1;
-    }
-}
-
-impl_value_getter! {
-    impl IndicConjunctBreak {
-        PropertyNameParseIndicConjunctBreakV1 / SINGLETON_PROPERTY_NAME_PARSE_INDIC_CONJUNCT_BREAK_V1;
-        PropertyEnumToValueNameLinearMap / PropertyNameShortIndicConjunctBreakV1 / SINGLETON_PROPERTY_NAME_SHORT_INDIC_CONJUNCT_BREAK_V1;
-        PropertyEnumToValueNameLinearMap / PropertyNameLongIndicConjunctBreakV1 / SINGLETON_PROPERTY_NAME_LONG_INDIC_CONJUNCT_BREAK_V1;
     }
 }
 

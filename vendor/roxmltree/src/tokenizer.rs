@@ -1,5 +1,8 @@
 use core::ops::Range;
 use core::str;
+use alloc::string::String;
+
+use memchr::memchr2;
 
 use crate::{Error, TextPos};
 
@@ -25,7 +28,7 @@ impl XmlCharExt for char {
     fn is_xml_name_start(&self) -> bool {
         // Check for ASCII first.
         if *self as u32 <= 128 {
-            return matches!(*self as u8, b'A'..=b'Z' | b'a'..=b'z' | b':' | b'_');
+            return (*self as u8).is_xml_name_start();
         }
 
         matches!(*self as u32,
@@ -85,9 +88,17 @@ trait XmlByteExt {
     /// `[ \r\n\t]`
     fn is_xml_space(&self) -> bool;
 
+    /// Checks if the value is within the
+    /// [NameStartChar](https://www.w3.org/TR/xml/#NT-NameStartChar) range.
+    fn is_xml_name_start(&self) -> bool;
+
     /// Checks if byte is within the ASCII
     /// [Char](https://www.w3.org/TR/xml/#NT-Char) range.
     fn is_xml_name(&self) -> bool;
+
+    /// Checks if the value is within the
+    /// [Char](https://www.w3.org/TR/xml/#NT-Char) range.
+    fn is_xml_char(&self) -> bool;
 }
 
 impl XmlByteExt for u8 {
@@ -97,9 +108,47 @@ impl XmlByteExt for u8 {
     }
 
     #[inline]
+    fn is_xml_name_start(&self) -> bool {
+        matches!(*self, b'A'..=b'Z' | b'a'..=b'z' | b':' | b'_')
+    }
+
+    #[inline]
     fn is_xml_name(&self) -> bool {
         matches!(*self, b'A'..=b'Z' | b'a'..=b'z'| b'0'..=b'9'| b':' | b'_' | b'-' | b'.')
     }
+
+    #[inline]
+    fn is_xml_char(&self) -> bool {
+        *self > 0x20 || self.is_xml_space()
+    }
+}
+
+#[inline]
+fn is_xml_str(s: &str, value_start: usize, stream: &mut Stream<'_>) -> Result<()> {
+    if s.as_bytes().is_ascii() {
+        for (i, b) in s.as_bytes().iter().enumerate() {
+            if !b.is_xml_char() {
+                return Err(Error::NonXmlChar(*b as char, stream.gen_text_pos_from(value_start + i)));
+            }
+        }
+
+        Ok(())
+    } else {
+        is_xml_str_unicode(s, value_start, stream)
+    }
+}
+
+
+#[cold]
+#[inline(never)]
+fn is_xml_str_unicode(s: &str, value_start: usize, stream: &mut Stream<'_>) -> Result<()> {
+    for (i, ch) in s.char_indices() {
+        if !ch.is_xml_char() {
+            return Err(Error::NonXmlChar(ch, stream.gen_text_pos_from(value_start + i)));
+        }
+    }
+
+    Ok(())
 }
 
 /// A string slice.
@@ -122,7 +171,7 @@ impl<'input> From<&'input str> for StrSpan<'input> {
 
 impl<'input> StrSpan<'input> {
     #[inline]
-    pub fn from_substr(text: &str, start: usize, end: usize) -> StrSpan {
+    pub fn from_substr(text: &'input str, start: usize, end: usize) -> Self {
         debug_assert!(start <= end);
         StrSpan {
             text: &text[start..end],
@@ -186,24 +235,19 @@ pub enum ElementEnd<'input> {
 
 pub trait XmlEvents<'input> {
     fn token(&mut self, token: Token<'input>) -> Result<()>;
+
+    fn resolve_entity(&mut self, _pub_id: Option<&str>, _uri: &str) -> core::result::Result<Option<&'input str>, String> { Ok(None) }
 }
 
 // document ::= prolog element Misc*
 pub fn parse<'input>(
     text: &'input str,
     allow_dtd: bool,
-    events: &mut dyn XmlEvents<'input>,
+    events: &mut impl XmlEvents<'input>,
 ) -> Result<()> {
     let s = &mut Stream::new(text);
 
-    // Skip UTF-8 BOM.
-    if s.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        s.advance(3);
-    }
-
-    if s.starts_with(b"<?xml ") {
-        parse_declaration(s)?;
-    }
+    parse_declaration(s)?;
 
     parse_misc(s, events)?;
 
@@ -232,7 +276,7 @@ pub fn parse<'input>(
 }
 
 // Misc ::= Comment | PI | S
-fn parse_misc<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_misc<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     while !s.at_end() {
         s.skip_spaces();
         if s.starts_with(b"<!--") {
@@ -251,6 +295,15 @@ fn parse_misc<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>
 //
 // We don't actually return a token for the XML declaration and only validate it.
 fn parse_declaration(s: &mut Stream) -> Result<()> {
+    // Skip UTF-8 BOM.
+    if s.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        s.advance(3);
+    }
+
+    if !s.starts_with(b"<?xml ") {
+        return Ok(())
+    }
+
     fn consume_spaces(s: &mut Stream) -> Result<()> {
         if s.starts_with_space() {
             s.skip_spaces();
@@ -292,7 +345,7 @@ fn parse_declaration(s: &mut Stream) -> Result<()> {
 }
 
 // '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'
-fn parse_comment<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_comment<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     let start = s.pos();
     s.advance(4);
     let text = s.consume_chars(|s, c| !(c == '-' && s.starts_with(b"-->")))?;
@@ -314,7 +367,7 @@ fn parse_comment<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'inp
 
 // PI       ::= '<?' PITarget (S (Char* - (Char* '?>' Char*)))? '?>'
 // PITarget ::= Name - (('X' | 'x') ('M' | 'm') ('L' | 'l'))
-fn parse_pi<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_pi<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     if s.starts_with(b"<?xml ") {
         return Err(Error::UnexpectedDeclaration(s.gen_text_pos()));
     }
@@ -337,7 +390,7 @@ fn parse_pi<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) 
     Ok(())
 }
 
-fn parse_doctype<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_doctype<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     let start = s.pos();
     parse_doctype_start(s)?;
     s.skip_spaces();
@@ -408,7 +461,7 @@ fn parse_doctype_start(s: &mut Stream) -> Result<()> {
 }
 
 // ExternalID ::= 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral S SystemLiteral
-fn parse_external_id(s: &mut Stream) -> Result<bool> {
+fn parse_external_id<'input>(s: &mut Stream<'input>) -> Result<Option<(Option<&'input str>, &'input str)>> {
     let v = if s.starts_with(b"SYSTEM") || s.starts_with(b"PUBLIC") {
         let start = s.pos();
         s.advance(6);
@@ -416,21 +469,21 @@ fn parse_external_id(s: &mut Stream) -> Result<bool> {
 
         s.consume_spaces()?;
         let quote = s.consume_quote()?;
-        let _ = s.consume_bytes(|c| c != quote);
+        let first = s.consume_bytes(|c| c != quote);
         s.consume_byte(quote)?;
 
         if id == "SYSTEM" {
-            // Ok
+            Some((None, first))
         } else {
             s.consume_spaces()?;
             let quote = s.consume_quote()?;
-            let _ = s.consume_bytes(|c| c != quote);
+            let second = s.consume_bytes(|c| c != quote);
             s.consume_byte(quote)?;
-        }
 
-        true
+            Some((Some(first), second))
+        }
     } else {
-        false
+        None
     };
 
     Ok(v)
@@ -441,7 +494,7 @@ fn parse_external_id(s: &mut Stream) -> Result<bool> {
 // PEDecl      ::= '<!ENTITY' S '%' S Name S PEDef S? '>'
 fn parse_entity_decl<'input>(
     s: &mut Stream<'input>,
-    events: &mut dyn XmlEvents<'input>,
+    events: &mut impl XmlEvents<'input>,
 ) -> Result<()> {
     s.advance(8);
     s.consume_spaces()?;
@@ -455,7 +508,7 @@ fn parse_entity_decl<'input>(
 
     let name = s.consume_name()?;
     s.consume_spaces()?;
-    if let Some(definition) = parse_entity_def(s, is_ge)? {
+    if let Some(definition) = parse_entity_def(s, events, is_ge)? {
         events.token(Token::EntityDeclaration(name, definition))?;
     }
     s.skip_spaces();
@@ -472,6 +525,7 @@ fn parse_entity_decl<'input>(
 // NDataDecl   ::= S 'NDATA' S Name
 fn parse_entity_def<'input>(
     s: &mut Stream<'input>,
+    events: &mut impl XmlEvents<'input>,
     is_ge: bool,
 ) -> Result<Option<StrSpan<'input>>> {
     let c = s.curr_byte()?;
@@ -485,7 +539,7 @@ fn parse_entity_def<'input>(
             Ok(Some(value))
         }
         b'S' | b'P' => {
-            if parse_external_id(s)? {
+            if let Some((pub_id, uri)) = parse_external_id(s)? {
                 if is_ge {
                     s.skip_spaces();
                     if s.starts_with(b"NDATA") {
@@ -496,7 +550,18 @@ fn parse_entity_def<'input>(
                     }
                 }
 
-                Ok(None)
+                let value = events.resolve_entity(pub_id, uri).map_err(|msg| Error::EntityResolver(s.gen_text_pos(), msg))?;
+
+                match value {
+                    Some(value) => {
+                        let mut stream = Stream::new(value);
+                        parse_declaration(&mut stream)?;
+                        let value = StrSpan::from(&value[stream.pos..]);
+
+                        Ok(Some(value))
+                    }
+                    None => Ok(None),
+                }
             } else {
                 Err(Error::InvalidExternalID(s.gen_text_pos()))
             }
@@ -516,7 +581,7 @@ fn consume_decl(s: &mut Stream) -> Result<()> {
 
 // element ::= EmptyElemTag | STag content ETag
 // '<' Name (S Attribute)* S? '>'
-fn parse_element<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_element<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     let start = s.pos();
     s.advance(1); // <
     let (prefix, local) = s.consume_qname()?;
@@ -558,11 +623,11 @@ fn parse_element<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'inp
                 s.consume_eq()?;
                 let eq_len = u8::try_from(s.pos() - qname_end).unwrap_or(u8::MAX);
                 let quote = s.consume_quote()?;
-                let quote_c = quote as char;
                 // The attribute value must not contain the < character.
                 let value_start = s.pos();
-                s.skip_chars(|_, c| c != quote_c && c != '<')?;
+                s.advance_until2(quote, b'<')?;
                 let value = s.slice_back_span(value_start);
+                is_xml_str(value.as_str(), value_start, s)?;
                 s.consume_byte(quote)?;
                 let end = s.pos();
                 events.token(Token::Attribute(start..end, qname_len, eq_len, prefix, local, value))?;
@@ -596,7 +661,7 @@ fn parse_attribute<'input>(
 // content ::= CharData? ((element | Reference | CDSect | PI | Comment) CharData?)*
 pub fn parse_content<'input>(
     s: &mut Stream<'input>,
-    events: &mut dyn XmlEvents<'input>,
+    events: &mut impl XmlEvents<'input>,
 ) -> Result<()> {
     while !s.at_end() {
         match s.curr_byte() {
@@ -630,7 +695,7 @@ pub fn parse_content<'input>(
 // CDStart ::= '<![CDATA['
 // CData   ::= (Char* - (Char* ']]>' Char*))
 // CDEnd   ::= ']]>'
-fn parse_cdata<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_cdata<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     let start = s.pos();
     s.advance(9); // <![CDATA[
     let text = s.consume_chars(|s, c| !(c == ']' && s.starts_with(b"]]>")))?;
@@ -643,7 +708,7 @@ fn parse_cdata<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input
 // '</' Name S? '>'
 fn parse_close_element<'input>(
     s: &mut Stream<'input>,
-    events: &mut dyn XmlEvents<'input>,
+    events: &mut impl XmlEvents<'input>,
 ) -> Result<()> {
     let start = s.pos();
     s.advance(2); // </
@@ -660,7 +725,7 @@ fn parse_close_element<'input>(
     Ok(())
 }
 
-fn parse_text<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_text<'input>(s: &mut Stream<'input>, events: &mut impl XmlEvents<'input>) -> Result<()> {
     let start = s.pos();
     let text = s.consume_chars(|_, c| c != '<')?;
 
@@ -751,6 +816,11 @@ impl<'input> Stream<'input> {
     }
 
     #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        &self.span.text.as_bytes()[self.pos..self.end]
+    }
+
+    #[inline]
     pub fn advance(&mut self, n: usize) {
         debug_assert!(self.pos + n <= self.end);
         self.pos += n;
@@ -838,6 +908,17 @@ impl<'input> Stream<'input> {
     }
 
     #[inline]
+    fn advance_until2(&mut self, needle1: u8, needle2: u8) -> Result<()> {
+        match memchr2(needle1, needle2, self.as_bytes()) {
+            Some(pos) => {
+                self.advance(pos);
+                Ok(())
+            }
+            None => Err(Error::UnexpectedEndOfStream),
+        }
+    }
+
+    #[inline]
     fn chars(&self) -> str::Chars<'input> {
         self.span.as_str()[self.pos..self.end].chars()
     }
@@ -888,21 +969,8 @@ impl<'input> Stream<'input> {
     }
 
     /// Consumes according to: <https://www.w3.org/TR/xml/#NT-Reference>
-    pub fn try_consume_reference(&mut self) -> Option<Reference<'input>> {
-        let start = self.pos();
-
-        // Consume reference on a substream.
-        let mut s = self.clone();
-        let result = s.consume_reference()?;
-
-        // If the current data is a reference than advance the current stream
-        // by number of bytes read by substream.
-        self.advance(s.pos() - start);
-        Some(result)
-    }
-
     #[inline(never)]
-    fn consume_reference(&mut self) -> Option<Reference<'input>> {
+    pub fn consume_reference(&mut self) -> Option<Reference<'input>> {
         if !self.try_consume_byte(b'&') {
             return None;
         }
@@ -910,7 +978,7 @@ impl<'input> Stream<'input> {
         let reference = if self.try_consume_byte(b'#') {
             let (value, radix) = if self.try_consume_byte(b'x') {
                 let value =
-                    self.consume_bytes(|c| matches!(c, b'0'..=b'9' | b'A'..=b'F' | b'a'..=b'f'));
+                    self.consume_bytes(|c| c.is_ascii_hexdigit());
                 (value, 16)
             } else {
                 let value = self.consume_bytes(|c| c.is_ascii_digit());
@@ -1006,7 +1074,7 @@ impl<'input> Stream<'input> {
                 }
             } else {
                 // Fallback to Unicode code point.
-                match self.chars().nth(0) {
+                match self.chars().next() {
                     Some(c) if c.is_xml_name() => {
                         self.advance(c.len_utf8());
                     }
@@ -1025,20 +1093,25 @@ impl<'input> Stream<'input> {
             (self.span.slice_region(start, start), local)
         };
 
-        // Prefix must start with a `NameStartChar`.
-        if let Some(c) = prefix.chars().nth(0) {
-            if !c.is_xml_name_start() {
-                return Err(Error::InvalidName(self.gen_text_pos_from(start)));
+        fn is_xml_name_start(name: &str) -> bool {
+            if let Some(b) = name.as_bytes().first() {
+                if *b < 128 {
+                    return b.is_xml_name_start();
+                } else if let Some(c) = name.chars().next() {
+                    return c.is_xml_name_start();
+                }
             }
+
+            false
+        }
+
+        // Prefix must be empty or start with a `NameStartChar`.
+        if !prefix.is_empty() && !is_xml_name_start(prefix) {
+            return Err(Error::InvalidName(self.gen_text_pos_from(start)));
         }
 
         // Local name must start with a `NameStartChar`.
-        if let Some(c) = local.chars().nth(0) {
-            if !c.is_xml_name_start() {
-                return Err(Error::InvalidName(self.gen_text_pos_from(start)));
-            }
-        } else {
-            // If empty - error.
+        if !is_xml_name_start(local) {
             return Err(Error::InvalidName(self.gen_text_pos_from(start)));
         }
 

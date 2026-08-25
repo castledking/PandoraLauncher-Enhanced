@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use cosmic_text::{
-    fontdb::Database, Attrs, AttrsOwned, Buffer, Color, Family, FontSystem, Metrics, Shaping,
-    SwashCache,
+    fontdb::Database, Align, Attrs, AttrsOwned, Buffer, Color, Ellipsize, Family, FontSystem,
+    Metrics, Shaping, SwashCache, Wrap,
 };
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 
@@ -21,6 +21,9 @@ pub struct DrawTestCfg {
     name: String,
     /// The text to render to image
     text: String,
+    /// Optional rich text spans. When set, `set_rich_text` is used instead of `set_text`.
+    /// Each entry is `(text, attrs)` for one styled span.
+    rich_spans: Option<Vec<(String, AttrsOwned)>>,
     /// The name, details of the font to be used.
     /// Expected to be one of the fonts found under the `fonts` directory in this repository.
     font: AttrsOwned,
@@ -29,6 +32,9 @@ pub struct DrawTestCfg {
     line_height: f32,
     canvas_width: u32,
     canvas_height: u32,
+    wrap: Wrap,
+    ellipsize: Ellipsize,
+    alignment: Option<Align>,
 }
 
 impl Default for DrawTestCfg {
@@ -38,10 +44,14 @@ impl Default for DrawTestCfg {
             name: "default".into(),
             font: AttrsOwned::new(&font),
             text: "".into(),
+            rich_spans: None,
             font_size: 16.0,
             line_height: 20.0,
             canvas_width: 300,
             canvas_height: 300,
+            wrap: Wrap::WordOrGlyph,
+            ellipsize: Ellipsize::None,
+            alignment: None,
         }
     }
 }
@@ -56,6 +66,19 @@ impl DrawTestCfg {
 
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.text = text.into();
+        self
+    }
+
+    pub fn rich_text(
+        mut self,
+        spans: impl IntoIterator<Item = (&'static str, Attrs<'static>)>,
+    ) -> Self {
+        self.rich_spans = Some(
+            spans
+                .into_iter()
+                .map(|(text, attrs)| (text.to_string(), AttrsOwned::new(&attrs)))
+                .collect(),
+        );
         self
     }
 
@@ -76,6 +99,21 @@ impl DrawTestCfg {
         self
     }
 
+    pub fn wrap(mut self, wrap: Wrap) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    pub fn ellipsize(mut self, ellipsize: Ellipsize) -> Self {
+        self.ellipsize = ellipsize;
+        self
+    }
+
+    pub fn alignment(mut self, alignment: Option<Align>) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
     pub fn validate_text_rendering(self) {
         let repo_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         // Create a db with just the fonts in our fonts dir to make sure we only test those
@@ -88,12 +126,29 @@ impl DrawTestCfg {
         let mut buffer = Buffer::new(&mut font_system, metrics);
         let mut buffer = buffer.borrow_with(&mut font_system);
         let margins = 5;
+        buffer.set_wrap(self.wrap);
+        buffer.set_ellipsize(self.ellipsize);
         buffer.set_size(
             Some((self.canvas_width - margins * 2) as f32),
             Some((self.canvas_height - margins * 2) as f32),
         );
-        buffer.set_text(&self.text, &self.font.as_attrs(), Shaping::Advanced, None);
-        buffer.shape_until_scroll(true);
+        if let Some(ref spans) = self.rich_spans {
+            buffer.set_rich_text(
+                spans
+                    .iter()
+                    .map(|(text, attrs)| (text.as_str(), attrs.as_attrs())),
+                &self.font.as_attrs(),
+                Shaping::Advanced,
+                self.alignment,
+            );
+        } else {
+            buffer.set_text(
+                &self.text,
+                &self.font.as_attrs(),
+                Shaping::Advanced,
+                self.alignment,
+            );
+        }
 
         // Black
         let text_color = Color::rgb(0x00, 0x00, 0x00);

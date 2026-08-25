@@ -12,10 +12,11 @@
 [package]
 edition = "2021"
 name = "imagesize"
-version = "0.13.0"
+version = "0.14.0"
 authors = ["Maid Dog <maiddogsrl@gmail.com>"]
 build = false
 exclude = ["tests/*"]
+autolib = false
 autobins = false
 autoexamples = false
 autotests = false
@@ -35,6 +36,54 @@ categories = [
 ]
 license = "MIT"
 repository = "https://github.com/Roughsketch/imagesize"
+
+[features]
+aesprite = []
+bmp = []
+dds = []
+default = [
+    "aesprite",
+    "bmp",
+    "dds",
+    "exr",
+    "farbfeld",
+    "gif",
+    "hdr",
+    "ico",
+    "ilbm",
+    "jpeg",
+    "jxl",
+    "ktx2",
+    "mod",
+    "png",
+    "pnm",
+    "psd",
+    "qoi",
+    "tga",
+    "tiff",
+    "vtf",
+    "webp",
+    "heif",
+]
+exr = []
+farbfeld = []
+gif = []
+hdr = []
+heif = []
+ico = []
+ilbm = []
+jpeg = []
+jxl = []
+ktx2 = []
+mod = []
+png = []
+pnm = []
+psd = []
+qoi = []
+tga = []
+tiff = []
+vtf = []
+webp = []
 
 [lib]
 name = "imagesize"

@@ -11,7 +11,10 @@ use std::{
 use crate::{
     decoder::ifd::Entry,
     error::{TiffResult, UsageError},
-    tags::{CompressionMethod, IfdPointer, ResolutionUnit, SampleFormat, Tag, Type},
+    tags::{
+        ByteOrder, CompressionMethod, ExtraSamples, IfdPointer, PhotometricInterpretation,
+        ResolutionUnit, SampleFormat, Tag, Type, ValueBuffer,
+    },
     Directory, TiffError, TiffFormatError,
 };
 
@@ -37,20 +40,15 @@ pub type Predictor = crate::tags::Predictor;
 #[cfg(feature = "deflate")]
 pub type DeflateLevel = compression::DeflateLevel;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 pub enum Compression {
+    #[default]
     Uncompressed,
     #[cfg(feature = "lzw")]
     Lzw,
     #[cfg(feature = "deflate")]
     Deflate(DeflateLevel),
     Packbits,
-}
-
-impl Default for Compression {
-    fn default() -> Self {
-        Self::Uncompressed
-    }
 }
 
 impl Compression {
@@ -79,10 +77,10 @@ impl Compression {
 
 /// Encoder for Tiff and BigTiff files.
 ///
-/// With this type you can get a `DirectoryEncoder` or a `ImageEncoder`
+/// With this type you can get a [`DirectoryEncoder`] or a [`ImageEncoder`]
 /// to encode Tiff/BigTiff ifd directories with images.
 ///
-/// See `DirectoryEncoder` and `ImageEncoder`.
+/// See [`DirectoryEncoder`] and [`ImageEncoder`].
 ///
 /// # Examples
 /// ```
@@ -176,7 +174,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
     }
 
-    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    /// Create a [`DirectoryEncoder`] to encode an ifd (directory).
     ///
     /// The caller is responsible for ensuring that the directory is a valid image in the main TIFF
     /// IFD sequence. To encode additional directories that are not linked into the sequence, use
@@ -185,7 +183,7 @@ impl<W: Write + Seek, K: TiffKind> TiffEncoder<W, K> {
         Self::chain_directory(&mut self.writer, &mut self.last_ifd_chain)
     }
 
-    /// Create a [`DirectoryEncoder`] to encode an ifd directory.
+    /// Create a [`DirectoryEncoder`] to encode a non-image directory.
     ///
     /// The directory is not linked into the sequence of directories. For instance, encode Exif
     /// directories or SubIfd directories with this method.
@@ -249,6 +247,12 @@ pub struct DirectoryEncoder<'a, W: 'a + Write + Seek, K: TiffKind> {
 }
 
 /// The offset of an encoded directory in the file.
+///
+/// Both the `offset` and `pointer` field are a complete description of the start offset of the
+/// dictionary which is used to point to it. The struct also describes the extent covered by the
+/// encoding of the directory. The constructors [`new`][DirectoryOffset::new] allow the checked
+/// conversion. Note that even though the offsets are public do not expect their information to
+/// propagate when modified.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DirectoryOffset<K: TiffKind> {
     /// The start of the directory as a Tiff value.
@@ -260,7 +264,9 @@ pub struct DirectoryOffset<K: TiffKind> {
     pub offset: K::OffsetType,
     /// The start of the directory as a pure offset.
     pub pointer: IfdPointer,
-    /// The offset of its sequence link field, in our private representation.
+    /// The offset of its sequence link field, in our private representation. Before exposing this
+    /// make sure that we don't want any invariants (e.g. pointer being smaller than this). The
+    /// type should be fine.
     ifd_chain: NonZeroU64,
     /// The kind of Tiff file the offset is for.
     kind: PhantomData<K>,
@@ -295,12 +301,12 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             value.write(&mut writer)?;
         }
 
-        let entry = Self::write_value(
+        let entry = Self::write_entry_inner(
             self.writer,
-            &DirectoryEntry {
+            DirectoryEntry {
                 data_type: <T>::FIELD_TYPE,
                 count: value.count().try_into()?,
-                data: bytes,
+                data: bytes.into(),
             },
         )?;
 
@@ -309,13 +315,123 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(())
     }
 
+    /// Write a tag-value pair with prepared byte data.
+    ///
+    /// Note that the library will _not_ attempt to verify that the data type or the count of the
+    /// buffered value is permissible for the given tag. The data will be associated with the tag
+    /// exactly as-is.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    pub fn write_tag_buf(&mut self, tag: Tag, value: &ValueBuffer) -> TiffResult<()> {
+        let entry = self.write_entry_buf(value)?;
+        self.directory.extend([(tag, entry)]);
+
+        Ok(())
+    }
+
     /// Write some data to the tiff file, the offset of the data is returned.
     ///
-    /// This could be used to write tiff strips.
+    /// This could be used to write tiff strips. All of the data will be written into the file as a
+    /// slice of bytes. It can not be used as an entry in a directory directly, where very short
+    /// values are instead represented in the offset field directly. Use [`Self::write_entry`]
+    /// instead.
     pub fn write_data<T: TiffValue>(&mut self, value: T) -> TiffResult<u64> {
         let offset = self.writer.offset();
         value.write(self.writer)?;
         Ok(offset)
+    }
+
+    /// Write some data directly to the tiff file, the offset of the data is returned.
+    ///
+    /// All of the data will be written into the file as a slice of bytes. It can not be used as an
+    /// entry in a directory directly, where very short values are instead represented in the
+    /// offset field directly. Use [`Self::write_entry_buf`] instead.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    pub fn write_data_buf(&mut self, value: &ValueBuffer) -> TiffResult<u64> {
+        self.check_value_byteorder(value)?;
+        let offset = self.writer.offset();
+        self.writer.write_bytes(value.as_bytes())?;
+        Ok(offset)
+    }
+
+    /// Write a directory value into the file.
+    ///
+    /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
+    /// stored in the entry's offset field.
+    pub fn write_entry<T: TiffValue>(&mut self, value: T) -> TiffResult<Entry> {
+        Self::write_entry_inner(
+            self.writer,
+            DirectoryEntry {
+                data_type: T::FIELD_TYPE,
+                count: K::convert_offset(value.count() as u64)?,
+                // FIXME: not optimal we always allocate here. But the only other method we have
+                // available is `T::write(&mut TiffWriter<W>)` and we must pass that into
+                // `write_entry_inner` but then have a combinatorial explosion of instantiations
+                // which is absurd.
+                data: value.data(),
+            },
+        )
+    }
+
+    /// Write a directory value into the file.
+    ///
+    /// An error is returned if the byte order of the presented value does not match the byte order
+    /// of the underlying file (i.e. the [native byte order](`crate::tags::ByteOrder::native`)).
+    ///
+    /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
+    /// stored in the entry's offset field.
+    pub fn write_entry_buf(&mut self, value: &ValueBuffer) -> TiffResult<Entry> {
+        self.check_value_byteorder(value)?;
+
+        Self::write_entry_inner(
+            self.writer,
+            DirectoryEntry {
+                data_type: value.data_type(),
+                count: K::convert_offset(value.count())?,
+                data: value.as_bytes().into(),
+            },
+        )
+    }
+
+    /// Write a directory entry by its byte data.
+    ///
+    /// The data must be pre-formatted to the byte order expected by the file.
+    ///
+    /// Returns an [`Entry`]. If the value is short enough it will *not* be written in the file but
+    /// stored in the entry's offset field.
+    pub fn write_entry_bytes(&mut self, ty: Type, data: &[u8]) -> TiffResult<Entry> {
+        if data.len() % usize::from(ty.byte_len()) != 0 {
+            return Err(TiffError::UsageError(UsageError::MismatchedEntryLength {
+                ty,
+                found: data.len(),
+            }));
+        }
+
+        let count = data.len() / usize::from(ty.byte_len());
+        let count = u64::try_from(count)?;
+
+        Self::write_entry_inner(
+            self.writer,
+            DirectoryEntry {
+                data_type: ty,
+                count: K::convert_offset(count)?,
+                data: data.into(),
+            },
+        )
+    }
+
+    /// Insert previously written key-value entries.
+    ///
+    /// It is the caller's responsibility to ensure that the data referred to by the entries is
+    /// actually (or will be) written to the file. Note that small values are necessarily inline in
+    /// the entry, the size limit depends on the Tiff kind. So do not confuse a directory from a
+    /// BigTiff in a standard tiff or the other way around.
+    pub fn extend_from(&mut self, dir: &Directory) {
+        let entries = dir.iter().map(|(tag, val)| (tag, val.clone()));
+        self.directory.extend(entries);
     }
 
     /// Define the parent directory.
@@ -334,6 +450,11 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(())
     }
 
+    /// Write the IFD to the file and return the offset it is written to.
+    ///
+    /// The offset can be used as the value, or as part of a list of values, in the entry of
+    /// another directory. If you're constructing the entry directly you'll want to use an
+    /// appropriate type variant for this such as [`Type::IFD`].
     pub fn finish_with_offsets(mut self) -> TiffResult<DirectoryOffset<K>> {
         self.finish_internal()
     }
@@ -355,17 +476,21 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         Ok(offset)
     }
 
-    fn write_value(
+    // Does it really make sense that this would be a (potentially) compressible write? For actual
+    // directory values their size must match the data written so there's going to be a silent
+    // problem if that actually occurs.
+    fn write_entry_inner(
         writer: &mut TiffWriter<W>,
-        value: &DirectoryEntry<K::OffsetType>,
+        value: DirectoryEntry<K::OffsetType>,
     ) -> TiffResult<Entry> {
-        let &DirectoryEntry {
+        let DirectoryEntry {
             data: ref bytes,
             ref count,
             data_type,
         } = value;
 
         let in_entry_bytes = mem::size_of::<K::OffsetType>();
+
         let mut offset_bytes = [0; 8];
 
         if bytes.len() > in_entry_bytes {
@@ -384,6 +509,7 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
         // and some oversight, we can not clone the `count: K::OffsetType` and thus not convert it.
         // Instead, write it to a buffer...
         let mut count_bytes = [0; 8];
+        debug_assert!(in_entry_bytes == 4 || in_entry_bytes == 8);
         // Nominally Cow but we only expect `Cow::Borrowed`.
         count_bytes[..count.bytes()].copy_from_slice(&count.data());
 
@@ -395,6 +521,15 @@ impl<'a, W: 'a + Write + Seek, K: TiffKind> DirectoryEncoder<'a, W, K> {
             let count = u64::from_ne_bytes(count_bytes);
             Entry::new_u64(data_type, count, offset_bytes)
         })
+    }
+
+    fn check_value_byteorder(&self, value: &ValueBuffer) -> TiffResult<()> {
+        // FIXME: we should enable writing files with any chosen byte order.
+        if value.byte_order() != ByteOrder::native() {
+            Err(TiffError::UsageError(UsageError::ByteOrderMismatch))
+        } else {
+            Ok(())
+        }
     }
 
     /// Provides the number of bytes written by the underlying TiffWriter during the last call.
@@ -487,6 +622,7 @@ pub struct ImageEncoder<'a, W: 'a + Write + Seek, C: ColorType, K: TiffKind> {
     row_samples: u64,
     width: u32,
     height: u32,
+    extra_samples: Vec<u16>,
     rows_per_strip: u64,
     strip_offsets: Vec<K::OffsetType>,
     strip_byte_count: Vec<K::OffsetType>,
@@ -543,10 +679,13 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         encoder.write_tag(Tag::Compression, compression.tag().to_u16())?;
         encoder.write_tag(Tag::Predictor, predictor.to_u16())?;
 
-        encoder.write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
-        let sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
-        encoder.write_tag(Tag::SampleFormat, &sample_format[..])?;
         encoder.write_tag(Tag::PhotometricInterpretation, <T>::TIFF_VALUE.to_u16())?;
+
+        if matches!(<T>::TIFF_VALUE, PhotometricInterpretation::YCbCr) {
+            // The default for this tag is 2,2 for subsampling but we do not support such a
+            // transformation. Instead all samples must be provided.
+            encoder.write_tag(Tag::ChromaSubsampling, &[1u16, 1u16][..])?;
+        }
 
         encoder.write_tag(Tag::RowsPerStrip, u32::try_from(rows_per_strip)?)?;
 
@@ -556,7 +695,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
         )?;
         encoder.write_tag(Tag::XResolution, Rational { n: 1, d: 1 })?;
         encoder.write_tag(Tag::YResolution, Rational { n: 1, d: 1 })?;
-        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None.to_u16())?;
+        encoder.write_tag(Tag::ResolutionUnit, ResolutionUnit::None)?;
 
         Ok(ImageEncoder {
             encoder,
@@ -564,6 +703,7 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             strip_idx: 0,
             row_samples,
             rows_per_strip,
+            extra_samples: vec![],
             width,
             height,
             strip_offsets: Vec::new(),
@@ -573,6 +713,27 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
             predictor,
             _phantom: ::std::marker::PhantomData,
         })
+    }
+
+    pub fn extra_samples(&mut self, extra: &[ExtraSamples]) -> Result<(), TiffError> {
+        if self.strip_idx != 0 {
+            return Err(TiffError::UsageError(
+                UsageError::ReconfiguredAfterImageWrite,
+            ));
+        }
+
+        let samples = self.extra_samples.len() + extra.len() + <T>::BITS_PER_SAMPLE.len();
+        let row_samples = u64::from(self.width) * u64::try_from(samples)?;
+
+        self.extra_samples
+            .extend(extra.iter().map(ExtraSamples::to_u16));
+
+        self.encoder
+            .write_tag(Tag::ExtraSamples, &self.extra_samples[..])?;
+
+        self.row_samples = row_samples;
+
+        Ok(())
     }
 
     /// Number of samples the next strip should have.
@@ -712,6 +873,39 @@ impl<'a, W: 'a + Write + Seek, T: ColorType, K: TiffKind> ImageEncoder<'a, W, T,
     }
 
     fn finish_internal(&mut self) -> TiffResult<DirectoryOffset<K>> {
+        if self.extra_samples.is_empty() {
+            self.encoder
+                .write_tag(Tag::BitsPerSample, <T>::BITS_PER_SAMPLE)?;
+        } else {
+            let mut sample_format: Vec<_> = <T>::BITS_PER_SAMPLE.to_vec();
+            let replicated =
+                core::iter::repeat_n(<T>::BITS_PER_SAMPLE[0], self.extra_samples.len());
+            sample_format.extend(replicated);
+
+            self.encoder
+                .write_tag(Tag::BitsPerSample, &sample_format[..])?;
+
+            self.encoder.write_tag(
+                Tag::SamplesPerPixel,
+                u16::try_from(<T>::BITS_PER_SAMPLE.len() + self.extra_samples.len())?,
+            )?;
+        }
+
+        let mut sample_format: Vec<_> = <T>::SAMPLE_FORMAT.iter().map(|s| s.to_u16()).collect();
+        let extra_format = sample_format
+            .first()
+            .copied()
+            // Frankly should not occur, we have no sample format without at least one entry. We
+            // would need an interface upgrade to handle this however. Either decide to support
+            // heterogeneous sample formats or a way to provide fallback that is used for purely
+            // extra samples and not provided via a slice used for samples themselves.
+            .unwrap_or(SampleFormat::Void.to_u16());
+
+        sample_format.extend(core::iter::repeat_n(extra_format, self.extra_samples.len()));
+
+        self.encoder
+            .write_tag(Tag::SampleFormat, &sample_format[..])?;
+
         self.encoder
             .write_tag(Tag::StripOffsets, K::convert_slice(&self.strip_offsets))?;
         self.encoder.write_tag(
@@ -743,10 +937,10 @@ impl<'a, W: Write + Seek, C: ColorType, K: TiffKind> Drop for ImageEncoder<'a, W
     }
 }
 
-struct DirectoryEntry<S> {
+struct DirectoryEntry<'data, S> {
     data_type: Type,
     count: S,
-    data: Vec<u8>,
+    data: std::borrow::Cow<'data, [u8]>,
 }
 
 /// Trait to abstract over Tiff/BigTiff differences.
@@ -789,6 +983,71 @@ pub trait TiffKind {
     ///
     /// Implementations of this trait should always set `OffsetArrayType` to `[OffsetType]`.
     fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType;
+}
+
+impl<K: TiffKind> DirectoryOffset<K> {
+    /// Construct the directory pointer information from its raw offset.
+    ///
+    /// Fails in these cases:
+    ///
+    /// - if start offset is too large to be represented with the chosen TIFF format, i.e. a value
+    ///   larger than [`u32::MAX`] with a standard tiff which is only valid in a BigTiff. This
+    ///   returns [`TiffError::IntSizeError`].
+    /// - the extent of the directory would overflow the file length. This returns a
+    ///   [`TiffError::UsageError`].
+    ///
+    /// The library does *not* validate the contents or offset in any way, it just performs the
+    /// necessary math assuming the data is an accurate representation of existing content.
+    ///
+    /// # Examples
+    ///
+    /// If you have any custom way of writing a directory to a file that can not go through the
+    /// usual [`TiffEncoder::extra_directory`] then you can reconstruct the offset information as
+    /// long as you provide all the necessary data to the library. You can then use it as a parent
+    /// directory, i.e. have the library overwrite its `next` field.
+    ///
+    /// ```
+    /// use tiff::{
+    ///     encoder::{TiffEncoder, DirectoryOffset},
+    ///     Directory,
+    ///     tags::IfdPointer,
+    /// };
+    ///
+    /// # let mut file = std::io::Cursor::new(Vec::new());
+    /// let mut tiff = TiffEncoder::new(&mut file)?;
+    ///
+    /// // … some custom data writes, assume we know where a directory was written
+    /// # fn reconstruction_of_your_directory() -> Directory { Directory::from_iter([]) }
+    /// let known_offset = IfdPointer(1024);
+    /// let known_contents: Directory = reconstruction_of_your_directory();
+    ///
+    /// let reconstructed = DirectoryOffset::new(known_offset, &known_contents)?;
+    ///
+    /// // Now we can use it as if the directory was written by the `TiffEncoder` itself.
+    /// let mut chain = tiff.extra_directory()?;
+    /// chain.set_parent(&reconstructed);
+    /// chain.finish_with_offsets()?;
+    ///
+    /// # Ok::<_, tiff::TiffError>(())
+    /// ```
+    pub fn new(pointer: IfdPointer, dir: &Directory) -> TiffResult<Self> {
+        let offset = K::convert_offset(pointer.0)?;
+        let encoded = dir.encoded_len::<K>();
+        let offset_field_offset = encoded - mem::size_of_val(&offset) as u64;
+
+        let ifd_chain = pointer
+            .0
+            .checked_add(offset_field_offset)
+            .and_then(NonZeroU64::new)
+            .ok_or(TiffError::UsageError(UsageError::ZeroIfdPointer))?;
+
+        Ok(DirectoryOffset {
+            pointer,
+            offset,
+            ifd_chain,
+            kind: PhantomData,
+        })
+    }
 }
 
 /// Create a standard Tiff file.
@@ -858,4 +1117,34 @@ impl TiffKind for TiffKindBig {
     fn convert_slice(slice: &[Self::OffsetType]) -> &Self::OffsetArrayType {
         slice
     }
+}
+
+#[test]
+fn directory_offset_new_equivalent_to_writing() {
+    type K = TiffKindStandard;
+
+    let dir = Directory::from_iter(vec![
+        (
+            Tag::ImageWidth,
+            Entry::new(Type::LONG, 1, 100u32.to_ne_bytes()),
+        ),
+        (
+            Tag::ImageLength,
+            Entry::new(Type::LONG, 1, 200u32.to_ne_bytes()),
+        ),
+    ]);
+
+    let data = std::io::Cursor::new(vec![]);
+    let mut file = TiffEncoder::new(data).unwrap();
+
+    let mut as_dir_encoder = file.extra_directory().unwrap();
+    as_dir_encoder.extend_from(&dir);
+    let dir_extent = as_dir_encoder.finish_with_offsets().unwrap();
+
+    // Check we can recreate the extent had we written ourselves.
+    let synth = DirectoryOffset::<K>::new(dir_extent.pointer, &dir).unwrap();
+
+    assert_eq!(synth.pointer, dir_extent.pointer);
+    assert_eq!(synth.offset, dir_extent.offset);
+    assert_eq!(synth.ifd_chain, dir_extent.ifd_chain);
 }

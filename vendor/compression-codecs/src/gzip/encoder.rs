@@ -1,13 +1,13 @@
-use crate::{flate::params::FlateEncoderParams, EncodeV2, FlateEncoder};
-use compression_core::util::{PartialBuffer, WriteBuffer};
+use crate::{flate::params::FlateEncoderParams, Encode, FlateEncoder};
+use compression_core::util::PartialBuffer;
 use flate2::{Compression, Crc};
 use std::io;
 
 #[derive(Debug)]
 enum State {
-    Header(PartialBuffer<[u8; 10]>),
+    Header(PartialBuffer<Vec<u8>>),
     Encoding,
-    Footer(PartialBuffer<[u8; 8]>),
+    Footer(PartialBuffer<Vec<u8>>),
     Done,
 }
 
@@ -18,7 +18,7 @@ pub struct GzipEncoder {
     state: State,
 }
 
-fn header(level: Compression) -> [u8; 10] {
+fn header(level: Compression) -> Vec<u8> {
     let level_byte = if level.level() >= Compression::best().level() {
         0x02
     } else if level.level() <= Compression::fast().level() {
@@ -27,7 +27,7 @@ fn header(level: Compression) -> [u8; 10] {
         0x00
     };
 
-    [0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, level_byte, 0xff]
+    vec![0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, level_byte, 0xff]
 }
 
 impl GzipEncoder {
@@ -39,21 +39,21 @@ impl GzipEncoder {
         }
     }
 
-    fn footer(&mut self) -> [u8; 8] {
-        let mut output = [0; 8];
+    fn footer(&mut self) -> Vec<u8> {
+        let mut output = Vec::with_capacity(8);
 
-        output[..4].copy_from_slice(&self.crc.sum().to_le_bytes());
-        output[4..].copy_from_slice(&self.crc.amount().to_le_bytes());
+        output.extend(&self.crc.sum().to_le_bytes());
+        output.extend(&self.crc.amount().to_le_bytes());
 
         output
     }
 }
 
-impl EncodeV2 for GzipEncoder {
+impl Encode for GzipEncoder {
     fn encode(
         &mut self,
-        input: &mut PartialBuffer<&[u8]>,
-        output: &mut WriteBuffer<'_>,
+        input: &mut PartialBuffer<impl AsRef<[u8]>>,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
     ) -> io::Result<()> {
         loop {
             match &mut self.state {
@@ -76,13 +76,16 @@ impl EncodeV2 for GzipEncoder {
                 }
             };
 
-            if input.unwritten().is_empty() || output.has_no_spare_space() {
+            if input.unwritten().is_empty() || output.unwritten().is_empty() {
                 return Ok(());
             }
         }
     }
 
-    fn flush(&mut self, output: &mut WriteBuffer<'_>) -> io::Result<bool> {
+    fn flush(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> io::Result<bool> {
         loop {
             let done = match &mut self.state {
                 State::Header(header) => {
@@ -114,13 +117,16 @@ impl EncodeV2 for GzipEncoder {
                 return Ok(true);
             }
 
-            if output.has_no_spare_space() {
+            if output.unwritten().is_empty() {
                 return Ok(false);
             }
         }
     }
 
-    fn finish(&mut self, output: &mut WriteBuffer<'_>) -> io::Result<bool> {
+    fn finish(
+        &mut self,
+        output: &mut PartialBuffer<impl AsRef<[u8]> + AsMut<[u8]>>,
+    ) -> io::Result<bool> {
         loop {
             match &mut self.state {
                 State::Header(header) => {
@@ -152,7 +158,7 @@ impl EncodeV2 for GzipEncoder {
                 return Ok(true);
             }
 
-            if output.has_no_spare_space() {
+            if output.unwritten().is_empty() {
                 return Ok(false);
             }
         }

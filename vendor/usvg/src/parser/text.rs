@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use kurbo::{ParamCurve, ParamCurveArclen};
-use svgtypes::{parse_font_families, FontFamily, Length, LengthUnit};
+use svgtypes::{FontFamily, Length, LengthUnit, parse_font_families};
 
 use super::svgtree::{AId, EId, FromValue, SvgNode};
-use super::{converter, style, OptionLog};
+use super::{OptionLog, converter, style};
 use crate::*;
 
 impl<'a, 'input: 'a> FromValue<'a, 'input> for TextAnchor {
@@ -140,7 +140,7 @@ pub(crate) fn convert(
         layouted: vec![],
     };
 
-    if text::convert(&mut text, &state.opt.font_resolver, &mut cache.fontdb).is_none() {
+    if text::convert(&mut text, &state.opt.font_resolver, cache).is_none() {
         return;
     }
 
@@ -408,12 +408,12 @@ fn convert_font(node: SvgNode, state: &converter::State) -> Font {
                 AId::FontFamily,
                 font_families,
                 state.opt.font_family
-            )
+            );
         })
         .unwrap_or_default();
 
     if families.is_empty() {
-        families.push(FontFamily::Named(state.opt.font_family.clone()))
+        families.push(FontFamily::Named(state.opt.font_family.clone()));
     }
 
     Font {

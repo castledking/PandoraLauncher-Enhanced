@@ -87,7 +87,7 @@ fn process() -> Result<(), String> {
 
     if has_text_nodes {
         timed(args.perf, "FontDB", || {
-            load_fonts(&args.raw_args, args.usvg.fontdb_mut())
+            load_fonts(&args.raw_args, args.usvg.fontdb_mut());
         });
     }
 
@@ -434,7 +434,7 @@ fn list_fonts(args: &CliArgs) {
     println!("monospace: {}", fontdb.family_name(&Family::Monospace));
 
     for face in fontdb.faces() {
-        if let fontdb::Source::File(ref path) = &face.source {
+        if let fontdb::Source::File(path) = &face.source {
             let families: Vec<_> = face
                 .families
                 .iter()
@@ -632,7 +632,7 @@ fn query_all_impl(parent: &usvg::Group) -> usize {
     let mut count = 0;
     for node in parent.children() {
         if node.id().is_empty() {
-            if let usvg::Node::Group(ref group) = node {
+            if let usvg::Node::Group(group) = node {
                 count += query_all_impl(group);
             }
             continue;
@@ -658,7 +658,7 @@ fn query_all_impl(parent: &usvg::Group) -> usize {
             round_len(bbox.height())
         );
 
-        if let usvg::Node::Group(ref group) = node {
+        if let usvg::Node::Group(group) = node {
             count += query_all_impl(group);
         }
     }
@@ -675,17 +675,16 @@ fn render_svg(args: &Args, tree: &usvg::Tree) -> Result<tiny_skia::Pixmap, Strin
             None => return Err(format!("SVG doesn't have '{}' ID", id)),
         };
 
-        let bbox = node
-            .abs_layer_bounding_box()
-            .ok_or_else(|| "node has zero size".to_string())?;
+        let bbox = node.abs_layer_bounding_box().ok_or("node has zero size")?;
 
         let size = args
             .fit_to
             .fit_to_size(bbox.size().to_int_size())
-            .ok_or_else(|| "target size is zero".to_string())?;
+            .ok_or("target size is zero")?;
 
-        // Unwrap is safe, because `size` is already valid.
-        let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height()).unwrap();
+        // Pixmap's width is limited by i32::MAX/4, we handle the creation error.
+        let mut pixmap =
+            tiny_skia::Pixmap::new(size.width(), size.height()).ok_or("cannot create pixmap")?;
 
         if !args.export_area_page {
             if let Some(background) = args.background {
@@ -703,10 +702,11 @@ fn render_svg(args: &Args, tree: &usvg::Tree) -> Result<tiny_skia::Pixmap, Strin
             let size = args
                 .fit_to
                 .fit_to_size(tree.size().to_int_size())
-                .ok_or_else(|| "target size is zero".to_string())?;
+                .ok_or("target size is zero")?;
 
-            // Unwrap is safe, because `size` is already valid.
-            let mut page_pixmap = tiny_skia::Pixmap::new(size.width(), size.height()).unwrap();
+            // Pixmap's width is limited by i32::MAX/4, we handle the creation error.
+            let mut page_pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
+                .ok_or("cannot create pixmap")?;
 
             if let Some(background) = args.background {
                 page_pixmap.fill(svg_to_skia_color(background));
@@ -728,10 +728,11 @@ fn render_svg(args: &Args, tree: &usvg::Tree) -> Result<tiny_skia::Pixmap, Strin
         let size = args
             .fit_to
             .fit_to_size(tree.size().to_int_size())
-            .ok_or_else(|| "target size is zero".to_string())?;
+            .ok_or("target size is zero")?;
 
-        // Unwrap is safe, because `size` is already valid.
-        let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height()).unwrap();
+        // Pixmap's width is limited by i32::MAX/4, we handle the creation error.
+        let mut pixmap =
+            tiny_skia::Pixmap::new(size.width(), size.height()).ok_or("cannot create pixmap")?;
 
         if let Some(background) = args.background {
             pixmap.fill(svg_to_skia_color(background));

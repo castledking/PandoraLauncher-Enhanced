@@ -109,7 +109,7 @@ impl<T> ops::Deref for CachePadded<T> {
     }
 }
 
-// Adapted from https://github.com/crossbeam-rs/crossbeam/blob/crossbeam-utils-0.8.21/crossbeam-utils/src/backoff.rs.
+// Adapted from https://github.com/crossbeam-rs/crossbeam/blob/crossbeam-utils-0.8.7/crossbeam-utils/src/backoff.rs.
 // Adjusted to reduce spinning.
 /// Performs exponential backoff in spin loops.
 pub(crate) struct Backoff {
@@ -144,22 +144,4 @@ impl Backoff {
             std::thread::yield_now();
         }
     }
-}
-
-#[inline]
-pub(crate) fn sc_fence() {
-    cfg_sel!({
-        #[cfg(all(
-            any(target_arch = "x86", target_arch = "x86_64"),
-            not(any(miri, portable_atomic_sanitize_thread)),
-            any(not(portable_atomic_no_asm), portable_atomic_unstable_asm),
-        ))]
-        {
-            crate::imp::x86::sc_fence();
-        }
-        #[cfg(else)]
-        {
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-        }
-    });
 }

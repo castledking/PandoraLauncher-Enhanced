@@ -23,7 +23,6 @@ impl<'diagnostic, 'config, FileId> RichDiagnostic<'diagnostic, 'config, FileId>
 where
     FileId: Copy + PartialEq,
 {
-    #[must_use]
     pub fn new(
         diagnostic: &'diagnostic Diagnostic<FileId>,
         config: &'config Config,

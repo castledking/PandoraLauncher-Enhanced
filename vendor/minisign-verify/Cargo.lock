@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "minisign-verify"
-version = "0.2.4"
+version = "0.2.5"

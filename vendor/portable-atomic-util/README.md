@@ -5,9 +5,9 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0_OR_MIT-blue?style=flat-square)](#license)
 [![msrv](https://img.shields.io/badge/msrv-1.34-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![github actions](https://img.shields.io/github/actions/workflow/status/taiki-e/portable-atomic/ci.yml?branch=main&style=flat-square&logo=github)](https://github.com/taiki-e/portable-atomic/actions)
+[![cirrus ci](https://img.shields.io/cirrus/github/taiki-e/portable-atomic/main?style=flat-square&logo=cirrusci)](https://cirrus-ci.com/github/taiki-e/portable-atomic)
 
-<!-- tidy:sync-markdown-to-rustdoc:start:src/lib.rs -->
-
+<!-- tidy:crate-doc:start -->
 Synchronization primitives built with [portable-atomic].
 
 - Provide `Arc`. (optional, requires the `std` or `alloc` feature)
@@ -65,7 +65,7 @@ RUSTFLAGS="--cfg portable_atomic_unstable_coerce_unsized" cargo ...
 
   **Note:** This cfg is unstable and outside of the normal semver guarantees and minor or patch versions of portable-atomic-util may make breaking changes to them at any time.
 
-<!-- tidy:sync-markdown-to-rustdoc:end -->
+<!-- tidy:crate-doc:end -->
 
 ## License
 

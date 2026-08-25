@@ -214,11 +214,13 @@ impl Element for PlayerModel {
             }
 
             if let Some(rendered) = &state.rendered {
+                let image_bounds = Bounds {
+                    origin: bounds.origin,
+                    size: Size::new(px(element_width), px(element_height)),
+                };
                 _ = window.paint_image(
-                    Bounds {
-                        origin: bounds.origin,
-                        size: Size::new(px(element_width), px(element_height)),
-                    },
+                    image_bounds,
+                    image_bounds,
                     Default::default(),
                     rendered.image.clone(),
                     0,

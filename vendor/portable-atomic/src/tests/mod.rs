@@ -15,7 +15,7 @@ pub(crate) mod helper;
 #[path = "../../version.rs"]
 mod version;
 
-use test_helper as _; // For critical-section test
+use test_helper as _;
 
 use super::*;
 
@@ -32,9 +32,7 @@ test_atomic_int_pub!(i32);
 test_atomic_int_pub!(u32);
 test_atomic_int_pub!(i64);
 test_atomic_int_pub!(u64);
-#[cfg(not(all(valgrind, target_arch = "powerpc64")))] // TODO(powerpc64): Hang (as of Valgrind 3.26)
 test_atomic_int_pub!(i128);
-#[cfg(not(all(valgrind, target_arch = "powerpc64")))] // TODO(powerpc64): Hang (as of Valgrind 3.26)
 test_atomic_int_pub!(u128);
 
 #[cfg(all(feature = "float", portable_atomic_unstable_f16))]
@@ -60,10 +58,9 @@ extern "C" {
     fn _atomic_u32_ffi_safety(_: AtomicU32);
     fn _atomic_i64_ffi_safety(_: AtomicI64);
     fn _atomic_u64_ffi_safety(_: AtomicU64);
-    #[rustversion::since(1.89)] // https://github.com/rust-lang/rust/pull/137306
-    fn _atomic_i128_ffi_safety(_: AtomicI128);
-    #[rustversion::since(1.89)] // https://github.com/rust-lang/rust/pull/137306
-    fn _atomic_u128_ffi_safety(_: AtomicU128);
+    // TODO: https://github.com/rust-lang/lang-team/issues/255
+    // fn _atomic_i128_ffi_safety(_: AtomicI128);
+    // fn _atomic_u128_ffi_safety(_: AtomicU128);
     #[cfg(all(feature = "float", portable_atomic_unstable_f16))]
     fn _atomic_f16_ffi_safety(_: AtomicF16);
     #[cfg(feature = "float")]
@@ -192,7 +189,7 @@ fn test_is_lock_free() {
                 any(miri, portable_atomic_sanitize_thread),
                 not(portable_atomic_atomic_intrinsics),
             )),
-            not(portable_atomic_no_asm),
+            portable_atomic_unstable_asm_experimental_arch,
             any(
                 target_feature = "quadword-atomics",
                 portable_atomic_target_feature = "quadword-atomics",
@@ -485,13 +482,13 @@ fn test_serde() {
     t!(AtomicU32, u32, U32);
     t!(AtomicI64, i64, I64);
     t!(AtomicU64, u64, U64);
-    #[cfg(not(all(valgrind, target_arch = "powerpc64")))] // TODO(powerpc64): Hang (as of Valgrind 3.26)
     t!(AtomicI128, i128, I128);
-    #[cfg(not(all(valgrind, target_arch = "powerpc64")))] // TODO(powerpc64): Hang (as of Valgrind 3.26)
     t!(AtomicU128, u128, U128);
     // TODO(f16_and_f128): Test f16 & f128 once stabilized.
     #[cfg(feature = "float")]
     t!(AtomicF32, f32, F32);
     #[cfg(feature = "float")]
+    // TODO: fixed in LLVM 18?
+    #[cfg(not(target_arch = "mips"))] // LLVM 17 (nightly-2023-08-09) bug: assertion failed at core/src/num/diy_float.rs:78:9
     t!(AtomicF64, f64, F64);
 }

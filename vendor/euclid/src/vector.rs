@@ -25,8 +25,6 @@ use core::hash::Hash;
 use core::iter::Sum;
 use core::marker::PhantomData;
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-#[cfg(feature = "malloc_size_of")]
-use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 #[cfg(feature = "mint")]
 use mint;
 use num_traits::real::Real;
@@ -59,13 +57,6 @@ impl<T: Clone, U> Clone for Vector2D<T, U> {
             y: self.y.clone(),
             _unit: PhantomData,
         }
-    }
-}
-
-#[cfg(feature = "malloc_size_of")]
-impl<T: MallocSizeOf, U> MallocSizeOf for Vector2D<T, U> {
-    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
-        self.x.size_of(ops) + self.y.size_of(ops)
     }
 }
 
@@ -724,16 +715,6 @@ impl<T: NumCast + Copy, U> Vector2D<T, U> {
         self.cast()
     }
 
-    /// Cast into an `isize` vector, truncating decimals if any.
-    ///
-    /// When casting from floating vector vectors, it is worth considering whether
-    /// to `round()`, `ceil()` or `floor()` before the cast in order to obtain
-    /// the desired conversion behavior.
-    #[inline]
-    pub fn to_isize(self) -> Vector2D<isize, U> {
-        self.cast()
-    }
-
     /// Cast into an `u32` vector, truncating decimals if any.
     ///
     /// When casting from floating vector vectors, it is worth considering whether
@@ -807,7 +788,7 @@ impl<'a, T: 'a + Add<Output = T> + Copy + Zero, U: 'a> Sum<&'a Self> for Vector2
 impl<T: Copy + Add<T, Output = T>, U> AddAssign for Vector2D<T, U> {
     #[inline]
     fn add_assign(&mut self, other: Self) {
-        *self = *self + other;
+        *self = *self + other
     }
 }
 
@@ -823,7 +804,7 @@ impl<T: Sub, U> Sub for Vector2D<T, U> {
 impl<T: Copy + Sub<T, Output = T>, U> SubAssign<Vector2D<T, U>> for Vector2D<T, U> {
     #[inline]
     fn sub_assign(&mut self, other: Self) {
-        *self = *self - other;
+        *self = *self - other
     }
 }
 
@@ -839,7 +820,7 @@ impl<T: Copy + Mul, U> Mul<T> for Vector2D<T, U> {
 impl<T: Copy + Mul<T, Output = T>, U> MulAssign<T> for Vector2D<T, U> {
     #[inline]
     fn mul_assign(&mut self, scale: T) {
-        *self = *self * scale;
+        *self = *self * scale
     }
 }
 
@@ -872,7 +853,7 @@ impl<T: Copy + Div, U> Div<T> for Vector2D<T, U> {
 impl<T: Copy + Div<T, Output = T>, U> DivAssign<T> for Vector2D<T, U> {
     #[inline]
     fn div_assign(&mut self, scale: T) {
-        *self = *self / scale;
+        *self = *self / scale
     }
 }
 
@@ -1040,13 +1021,6 @@ unsafe impl<T: Zeroable, U> Zeroable for Vector3D<T, U> {}
 
 #[cfg(feature = "bytemuck")]
 unsafe impl<T: Pod, U: 'static> Pod for Vector3D<T, U> {}
-
-#[cfg(feature = "malloc_size_of")]
-impl<T: MallocSizeOf, U> MallocSizeOf for Vector3D<T, U> {
-    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
-        self.x.size_of(ops) + self.y.size_of(ops) + self.z.size_of(ops)
-    }
-}
 
 impl<T: Eq, U> Eq for Vector3D<T, U> {}
 
@@ -1666,16 +1640,6 @@ impl<T: NumCast + Copy, U> Vector3D<T, U> {
         self.cast()
     }
 
-    /// Cast into an `isize` vector, truncating decimals if any.
-    ///
-    /// When casting from floating vector vectors, it is worth considering whether
-    /// to `round()`, `ceil()` or `floor()` before the cast in order to obtain
-    /// the desired conversion behavior.
-    #[inline]
-    pub fn to_isize(self) -> Vector3D<isize, U> {
-        self.cast()
-    }
-
     /// Cast into an `u32` vector, truncating decimals if any.
     ///
     /// When casting from floating vector vectors, it is worth considering whether
@@ -1749,7 +1713,7 @@ impl<'a, T: 'a + Add<Output = T> + Copy + Zero, U: 'a> Sum<&'a Self> for Vector3
 impl<T: Copy + Add<T, Output = T>, U> AddAssign for Vector3D<T, U> {
     #[inline]
     fn add_assign(&mut self, other: Self) {
-        *self = *self + other;
+        *self = *self + other
     }
 }
 
@@ -1765,7 +1729,7 @@ impl<T: Sub, U> Sub for Vector3D<T, U> {
 impl<T: Copy + Sub<T, Output = T>, U> SubAssign<Vector3D<T, U>> for Vector3D<T, U> {
     #[inline]
     fn sub_assign(&mut self, other: Self) {
-        *self = *self - other;
+        *self = *self - other
     }
 }
 
@@ -1781,7 +1745,7 @@ impl<T: Copy + Mul, U> Mul<T> for Vector3D<T, U> {
 impl<T: Copy + Mul<T, Output = T>, U> MulAssign<T> for Vector3D<T, U> {
     #[inline]
     fn mul_assign(&mut self, scale: T) {
-        *self = *self * scale;
+        *self = *self * scale
     }
 }
 
@@ -1815,7 +1779,7 @@ impl<T: Copy + Div, U> Div<T> for Vector3D<T, U> {
 impl<T: Copy + Div<T, Output = T>, U> DivAssign<T> for Vector3D<T, U> {
     #[inline]
     fn div_assign(&mut self, scale: T) {
-        *self = *self / scale;
+        *self = *self / scale
     }
 }
 

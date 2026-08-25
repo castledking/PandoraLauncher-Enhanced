@@ -6,36 +6,18 @@ pub fn get_imp() -> Option<Adler32Imp> {
 }
 
 #[inline]
-#[cfg(all(
-  target_feature = "simd128",
-  any(
-    target_arch = "wasm32",
-    all(feature = "nightly", target_arch = "wasm64")
-  )
-))]
+#[cfg(target_feature = "simd128")]
 fn get_imp_inner() -> Option<Adler32Imp> {
   Some(imp::update)
 }
 
 #[inline]
-#[cfg(not(all(
-  target_feature = "simd128",
-  any(
-    target_arch = "wasm32",
-    all(feature = "nightly", target_arch = "wasm64")
-  )
-)))]
+#[cfg(not(target_feature = "simd128"))]
 fn get_imp_inner() -> Option<Adler32Imp> {
   None
 }
 
-#[cfg(all(
-  target_feature = "simd128",
-  any(
-    target_arch = "wasm32",
-    all(feature = "nightly", target_arch = "wasm64")
-  )
-))]
+#[cfg(target_feature = "simd128")]
 mod imp {
   const MOD: u32 = 65521;
   const NMAX: usize = 5552;
@@ -161,7 +143,7 @@ mod imp {
 
   #[inline(always)]
   fn reduce_add(v: v128) -> u32 {
-    let arr: [u32; 4] = unsafe { core::mem::transmute(v) };
+    let arr: [u32; 4] = unsafe { std::mem::transmute(v) };
     let mut sum = 0u32;
     for val in arr {
       sum = sum.wrapping_add(val);

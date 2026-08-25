@@ -367,8 +367,7 @@ impl Uuid {
 
     /// Creates a UUID using the supplied bytes in little endian order.
     ///
-    /// Note that ordering is applied to each _field_, rather than to the bytes as a whole.
-    /// This ordering is compatible with Microsoft's mixed endian GUID format.
+    /// The individual fields encoded in the buffer will be flipped.
     ///
     /// # Examples
     ///
@@ -571,6 +570,7 @@ impl Builder {
     /// Creating a UUID using the current system timestamp:
     ///
     /// ```
+    /// # use std::convert::TryInto;
     /// use std::time::{Duration, SystemTime};
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # use uuid::{Builder, Uuid, Variant, Version, Timestamp, NoContext};

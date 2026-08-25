@@ -229,8 +229,6 @@ impl<T: VarULE + ?Sized, F: VarZeroVecFormat> VarZeroSlice<T, F> {
     }
 
     /// Obtain an owned `Vec<Box<T>>` out of this
-    ///
-    /// ✨ *Enabled with the `alloc` Cargo feature.*
     #[cfg(feature = "alloc")]
     pub fn to_vec(&self) -> alloc::vec::Vec<alloc::boxed::Box<T>> {
         self.as_components().to_vec()

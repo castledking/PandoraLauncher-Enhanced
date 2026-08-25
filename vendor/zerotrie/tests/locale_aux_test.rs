@@ -19,7 +19,6 @@ use testdata::locales_with_aux::{NUM_UNIQUE_BLOBS, STRINGS};
 use testdata::strings_to_litemap;
 
 #[test]
-#[cfg(target_pointer_width = "64")]
 fn test_combined() {
     let litemap = strings_to_litemap(STRINGS);
 
@@ -82,7 +81,6 @@ fn test_combined() {
 }
 
 #[test]
-#[cfg(target_pointer_width = "64")]
 fn test_aux_split() {
     let locales: Vec<Locale> = STRINGS.iter().map(|s| s.parse().unwrap()).collect();
 

@@ -20,7 +20,7 @@ pub fn render_inner(
     pixmap: &mut tiny_skia::PixmapMut,
 ) {
     match image_kind {
-        usvg::ImageKind::SVG(ref tree) => {
+        usvg::ImageKind::SVG(tree) => {
             render_vector(tree, transform, pixmap);
         }
         #[cfg(feature = "raster-images")]
@@ -56,21 +56,22 @@ fn render_vector(
 #[cfg(feature = "raster-images")]
 mod raster_images {
     use crate::OptionLog;
+    use std::io::Cursor;
     use usvg::ImageRendering;
 
     fn decode_raster(image: &usvg::ImageKind) -> Option<tiny_skia::Pixmap> {
         match image {
             usvg::ImageKind::SVG(_) => None,
-            usvg::ImageKind::JPEG(ref data) => {
+            usvg::ImageKind::JPEG(data) => {
                 decode_jpeg(data).log_none(|| log::warn!("Failed to decode a JPEG image."))
             }
-            usvg::ImageKind::PNG(ref data) => {
+            usvg::ImageKind::PNG(data) => {
                 decode_png(data).log_none(|| log::warn!("Failed to decode a PNG image."))
             }
-            usvg::ImageKind::GIF(ref data) => {
+            usvg::ImageKind::GIF(data) => {
                 decode_gif(data).log_none(|| log::warn!("Failed to decode a GIF image."))
             }
-            usvg::ImageKind::WEBP(ref data) => {
+            usvg::ImageKind::WEBP(data) => {
                 decode_webp(data).log_none(|| log::warn!("Failed to decode a WebP image."))
             }
         }
@@ -84,23 +85,16 @@ mod raster_images {
         use zune_jpeg::zune_core::colorspace::ColorSpace;
         use zune_jpeg::zune_core::options::DecoderOptions;
 
+        let cursor = Cursor::new(data);
         let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
-        let mut decoder = zune_jpeg::JpegDecoder::new_with_options(data, options);
+        let mut decoder = zune_jpeg::JpegDecoder::new_with_options(cursor, options);
         decoder.decode_headers().ok()?;
-        let output_cs = decoder.get_output_colorspace()?;
+        let output_cs = decoder.output_colorspace()?;
 
         let img_data = {
             let data = decoder.decode().ok()?;
             match output_cs {
                 ColorSpace::RGBA => data,
-                // `set_output_color_space` is not guaranteed to actually always set the output space
-                // to RGBA (its docs say "we do not guarantee the decoder can convert to all colorspaces").
-                // In particular, it seems like it doesn't work for luma JPEGs,
-                // so we convert them manually.
-                ColorSpace::Luma => data
-                    .into_iter()
-                    .flat_map(|p| [p, p, p, 255])
-                    .collect::<Vec<_>>(),
                 _ => return None,
             }
         };

@@ -305,6 +305,7 @@ impl InstallDialog {
         let Some(selected_file) = selected_file else {
             return modal.child(content);
         };
+        let selected_file = selected_file.file;
 
         let mut required_dependencies = selected_file
             .dependencies
@@ -321,12 +322,13 @@ impl InstallDialog {
             let mut existing_projects = FxHashSet::default();
 
             for existing_content in instance.read(cx).content.values() {
-                let existing_content = existing_content.read(cx);
-                for summary in existing_content.iter() {
-                    let ContentSource::CurseforgeProject { project_id: project } = &summary.content_source else {
-                        continue;
-                    };
-                    existing_projects.insert(project.clone());
+                if let Some(existing_content) = existing_content.read(cx) {
+                    for summary in existing_content.iter() {
+                        let ContentSource::CurseforgeProject { project_id: project } = &summary.content_source else {
+                            continue;
+                        };
+                        existing_projects.insert(project.clone());
+                    }
                 }
             }
 
@@ -421,7 +423,7 @@ impl InstallDialog {
 
                     let mut hash = [0u8; 20];
                     let Ok(_) = hex::decode_to_slice(&*sha1, &mut hash) else {
-                        let warning = format!("File {} has invalid sha1: {}", selected_file.file_name, sha1);
+                        let warning = t::instance::content::install::file_invalid_sha1(&selected_file.file_name, &sha1);
                         window.push_notification((NotificationType::Error, SharedString::new(warning)), cx);
                         return;
                     };
@@ -486,9 +488,9 @@ impl InstallDialog {
                             .w_full()
                             .gap_0p5()
                             .child(
-                                Select::new(instances)
-                                    .placeholder(t::instance::none_selected())
-                                    .title_prefix(format!("{}: ", t::instance::label())),
+                                Select::new(instances).placeholder(t::instance::none_selected())
+                                    .title_prefix(format!("{}: ", t::instance::label()))
+                                    .search_placeholder(t::common::search()),
                             )
                             .when(self.unsupported_instances > 0, |content| {
                                 content.child(t::instance::incompatible(self.unsupported_instances))
@@ -566,6 +568,7 @@ impl InstallDialog {
         Select::new(select_state)
             .disabled(self.fixed_minecraft_version.is_some())
             .title_prefix(format!("{}: ", t::instance::game_version()))
+            .search_placeholder(t::common::search())
             .into_any_element()
     }
 
@@ -679,7 +682,7 @@ impl InstallDialog {
 
             match result {
                 FrontendMetadataResult::Loading => {
-                    return SharedString::new_static("Loading files...").into_any_element();
+                    return t::instance::content::install::loading_files().into_any_element();
                 },
                 FrontendMetadataResult::Loaded(result) => {
                     let mod_versions: Vec<ModVersionItem> = result
@@ -726,13 +729,14 @@ impl InstallDialog {
                     }));
                 },
                 FrontendMetadataResult::Error(shared_string) => {
-                    return SharedString::new(format!("Error loading files: {}", shared_string)).into_any_element();
+                    return t::instance::content::install::error_loading_files(&shared_string).into_any_element();
                 },
             }
         }
 
         Select::new(self.mod_version_select_state.as_ref().unwrap())
             .title_prefix(t::instance::content::filename_prefix())
+            .search_placeholder(t::common::search())
             .into_any_element()
     }
 }
@@ -743,14 +747,20 @@ struct ModVersionItem {
     file: CurseforgeFile,
 }
 
+impl PartialEq for ModVersionItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
 impl SelectItem for ModVersionItem {
-    type Value = CurseforgeFile;
+    type Value = Self;
 
     fn title(&self) -> SharedString {
         self.name.clone()
     }
 
     fn value(&self) -> &Self::Value {
-        &self.file
+        self
     }
 }

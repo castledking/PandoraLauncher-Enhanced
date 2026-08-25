@@ -1,6 +1,8 @@
 //! Contains the sparse secondary map implementation.
 
+#[cfg(all(nightly, any(doc, feature = "unstable")))]
 use alloc::collections::TryReserveError;
+#[allow(unused_imports)] // MaybeUninit is only used on nightly at the moment.
 use core::mem::MaybeUninit;
 use std::collections::hash_map::{self, HashMap};
 use std::hash;
@@ -9,7 +11,7 @@ use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
 use super::{Key, KeyData};
-use crate::util::is_older_version;
+use crate::util::{is_older_version, UnwrapUnchecked};
 
 #[derive(Debug, Clone)]
 struct Slot<T> {
@@ -226,6 +228,8 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// sec.try_reserve(10).unwrap();
     /// assert!(sec.capacity() >= 10);
     /// ```
+    #[cfg(all(nightly, any(doc, feature = "unstable")))]
+    #[cfg_attr(all(nightly, doc), doc(cfg(feature = "unstable")))]
     pub fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
         self.slots.try_reserve(additional)
     }
@@ -245,9 +249,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// ```
     pub fn contains_key(&self, key: K) -> bool {
         let kd = key.data();
-        self.slots
-            .get(&kd.idx)
-            .map_or(false, |slot| slot.version == kd.version.get())
+        self.slots.get(&kd.idx).map_or(false, |slot| slot.version == kd.version.get())
     }
 
     /// Inserts a value into the secondary map at the given `key`. Can silently
@@ -294,13 +296,10 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
             return None;
         }
 
-        self.slots.insert(
-            kd.idx,
-            Slot {
-                version: kd.version.get(),
-                value,
-            },
-        );
+        self.slots.insert(kd.idx, Slot {
+            version: kd.version.get(),
+            value,
+        });
 
         None
     }
@@ -396,8 +395,8 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
         self.slots.clear();
     }
 
-    /// Clears the slot map, returning all key-value pairs in an arbitrary order
-    /// as an iterator. Keeps the allocated memory for reuse.
+    /// Clears the slot map, returning all key-value pairs in arbitrary order as
+    /// an iterator. Keeps the allocated memory for reuse.
     ///
     /// When the iterator is dropped all elements in the slot map are removed,
     /// even if the iterator was not fully consumed. If the iterator is not
@@ -417,7 +416,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// assert_eq!(sec.len(), 0);
     /// assert_eq!(v, vec![(k, 1)]);
     /// ```
-    pub fn drain(&mut self) -> Drain<'_, K, V> {
+    pub fn drain(&mut self) -> Drain<K, V> {
         Drain {
             inner: self.slots.drain(),
             _k: PhantomData,
@@ -468,7 +467,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// ```
     pub unsafe fn get_unchecked(&self, key: K) -> &V {
         debug_assert!(self.contains_key(key));
-        self.get(key).unwrap_unchecked()
+        self.get(key).unwrap_unchecked_()
     }
 
     /// Returns a mutable reference to the value corresponding to the key.
@@ -517,7 +516,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// ```
     pub unsafe fn get_unchecked_mut(&mut self, key: K) -> &mut V {
         debug_assert!(self.contains_key(key));
-        self.get_mut(key).unwrap_unchecked()
+        self.get_mut(key).unwrap_unchecked_()
     }
 
     /// Returns mutable references to the values corresponding to the given
@@ -542,8 +541,13 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// assert_eq!(sec[ka], "apples");
     /// assert_eq!(sec[kb], "butter");
     /// ```
+    #[cfg(has_min_const_generics)]
     pub fn get_disjoint_mut<const N: usize>(&mut self, keys: [K; N]) -> Option<[&mut V; N]> {
-        let mut ptrs: [MaybeUninit<*mut V>; N] = [(); N].map(|_| MaybeUninit::uninit());
+        // Create an uninitialized array of `MaybeUninit`. The `assume_init` is
+        // safe because the type we are claiming to have initialized here is a
+        // bunch of `MaybeUninit`s, which do not require initialization.
+        let mut ptrs: [MaybeUninit<*mut V>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+
         let mut i = 0;
         while i < N {
             let kd = keys[i].data();
@@ -605,6 +609,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// assert_eq!(sec[ka], "apples");
     /// assert_eq!(sec[kb], "butter");
     /// ```
+    #[cfg(has_min_const_generics)]
     pub unsafe fn get_disjoint_unchecked_mut<const N: usize>(
         &mut self,
         keys: [K; N],
@@ -617,7 +622,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
         core::mem::transmute_copy::<_, [&mut V; N]>(&ptrs)
     }
 
-    /// An iterator visiting all key-value pairs in an arbitrary order. The
+    /// An iterator visiting all key-value pairs in arbitrary order. The
     /// iterator element type is `(K, &'a V)`.
     ///
     /// This function must iterate over all slots, empty or not. In the face of
@@ -637,14 +642,14 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     ///     println!("key: {:?}, val: {}", k, v);
     /// }
     /// ```
-    pub fn iter(&self) -> Iter<'_, K, V> {
+    pub fn iter(&self) -> Iter<K, V> {
         Iter {
             inner: self.slots.iter(),
             _k: PhantomData,
         }
     }
 
-    /// An iterator visiting all key-value pairs in an arbitrary order, with
+    /// An iterator visiting all key-value pairs in arbitrary order, with
     /// mutable references to the values. The iterator element type is
     /// `(K, &'a mut V)`.
     ///
@@ -671,15 +676,15 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// assert_eq!(sec[k1], 20);
     /// assert_eq!(sec[k2], -30);
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
+    pub fn iter_mut(&mut self) -> IterMut<K, V> {
         IterMut {
             inner: self.slots.iter_mut(),
             _k: PhantomData,
         }
     }
 
-    /// An iterator visiting all keys in an arbitrary order. The iterator
-    /// element type is `K`.
+    /// An iterator visiting all keys in arbitrary order. The iterator element
+    /// type is `K`.
     ///
     /// This function must iterate over all slots, empty or not. In the face of
     /// many deleted elements it can be inefficient.
@@ -698,12 +703,12 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// let check: HashSet<_> = vec![k0, k1, k2].into_iter().collect();
     /// assert_eq!(keys, check);
     /// ```
-    pub fn keys(&self) -> Keys<'_, K, V> {
+    pub fn keys(&self) -> Keys<K, V> {
         Keys { inner: self.iter() }
     }
 
-    /// An iterator visiting all values in an arbitrary order. The iterator
-    /// element type is `&'a V`.
+    /// An iterator visiting all values in arbitrary order. The iterator element
+    /// type is `&'a V`.
     ///
     /// This function must iterate over all slots, empty or not. In the face of
     /// many deleted elements it can be inefficient.
@@ -722,12 +727,12 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// let check: HashSet<_> = vec![&10, &20, &30].into_iter().collect();
     /// assert_eq!(values, check);
     /// ```
-    pub fn values(&self) -> Values<'_, K, V> {
+    pub fn values(&self) -> Values<K, V> {
         Values { inner: self.iter() }
     }
 
-    /// An iterator visiting all values mutably in an arbitrary order. The
-    /// iterator element type is `&'a mut V`.
+    /// An iterator visiting all values mutably in arbitrary order. The iterator
+    /// element type is `&'a mut V`.
     ///
     /// This function must iterate over all slots, empty or not. In the face of
     /// many deleted elements it can be inefficient.
@@ -747,7 +752,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// let check: HashSet<_> = vec![30, 60, 90].into_iter().collect();
     /// assert_eq!(values, check);
     /// ```
-    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
+    pub fn values_mut(&mut self) -> ValuesMut<K, V> {
         ValuesMut {
             inner: self.iter_mut(),
         }
@@ -767,7 +772,7 @@ impl<K: Key, V, S: hash::BuildHasher> SparseSecondaryMap<K, V, S> {
     /// let v = sec.entry(k).unwrap().or_insert(10);
     /// assert_eq!(*v, 10);
     /// ```
-    pub fn entry(&mut self, key: K) -> Option<Entry<'_, K, V>> {
+    pub fn entry(&mut self, key: K) -> Option<Entry<K, V>> {
         if key.is_null() {
             return None;
         }
@@ -855,11 +860,8 @@ where
             return false;
         }
 
-        self.iter().all(|(key, value)| {
-            other
-                .get(key)
-                .map_or(false, |other_value| *value == *other_value)
-        })
+        self.iter()
+            .all(|(key, value)| other.get(key).map_or(false, |other_value| *value == *other_value))
     }
 }
 
@@ -1586,13 +1588,11 @@ mod tests {
         sec.insert(key1, 1234);
         assert_eq!(sec[key1], 1234);
         assert_eq!(sec.len(), 1);
-        let sec2 = sec
-            .iter()
-            .map(|(k, &v)| (k, v))
-            .collect::<FastSparseSecondaryMap<_, _>>();
+        let sec2 = sec.iter().map(|(k, &v)| (k, v)).collect::<FastSparseSecondaryMap<_, _>>();
         assert_eq!(sec, sec2);
     }
 
+    #[cfg(all(nightly, feature = "unstable"))]
     #[test]
     fn disjoint() {
         // Intended to be run with miri to find any potential UB.

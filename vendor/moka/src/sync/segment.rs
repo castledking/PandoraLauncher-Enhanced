@@ -16,7 +16,7 @@ use crate::{
 use std::{
     collections::hash_map::RandomState,
     fmt,
-    hash::{BuildHasher, Hash},
+    hash::{BuildHasher, Hash, Hasher},
     sync::Arc,
 };
 
@@ -757,7 +757,9 @@ where
     where
         Q: Equivalent<K> + Hash + ?Sized,
     {
-        self.build_hasher.hash_one(key)
+        let mut hasher = self.build_hasher.build_hasher();
+        key.hash(&mut hasher);
+        hasher.finish()
     }
 
     #[inline]

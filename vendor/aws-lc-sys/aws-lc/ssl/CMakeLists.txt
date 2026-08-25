@@ -52,7 +52,7 @@ target_add_awslc_include_paths(TARGET ssl SCOPE PUBLIC)
 set_target_properties(ssl PROPERTIES
     OUTPUT_NAME "${SSL_LIB_NAME}")
 
-if(PERFORM_SONAME_BUILD)
+if(SET_LIB_SONAME)
   set_target_properties(ssl PROPERTIES
       VERSION "${SOFTWARE_VERSION}"
       SOVERSION "${ABI_VERSION}")
@@ -65,20 +65,23 @@ if(BUILD_TESTING)
   # Since the integration test relies on libssl functionalities to retrieve
   # the certification chain from a host, this integration test dimension is
   # built with libssl and libcrypto.
-  add_executable(
-    ${INTEGRATION_TEST_EXEC}
+  # Skip on Generic systems (e.g., WASI) which don't have BSD sockets.
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+    add_executable(
+      ${INTEGRATION_TEST_EXEC}
 
-    ../crypto/ocsp/ocsp_integration_test.cc
-    ../tool/transport_common.cc
-    ../tool/fd.cc
+      ../crypto/ocsp/ocsp_integration_test.cc
+      ../tool/transport_common.cc
+      ../tool/fd.cc
 
-    $<TARGET_OBJECTS:crypto_test_data>
-  )
-  target_link_libraries(${INTEGRATION_TEST_EXEC}
-          boringssl_gtest_main ssl )
-  target_add_awslc_include_paths(TARGET ${INTEGRATION_TEST_EXEC} SCOPE PRIVATE)
-  add_dependencies(all_tests ${INTEGRATION_TEST_EXEC})
-  set_test_location(${INTEGRATION_TEST_EXEC})
+      $<TARGET_OBJECTS:crypto_test_data>
+    )
+    target_link_libraries(${INTEGRATION_TEST_EXEC}
+            boringssl_gtest_main ssl )
+    target_add_awslc_include_paths(TARGET ${INTEGRATION_TEST_EXEC} SCOPE PRIVATE)
+    add_dependencies(all_tests ${INTEGRATION_TEST_EXEC})
+    set_test_location(${INTEGRATION_TEST_EXEC})
+  endif()
 
   add_executable(
     ${SSL_TEST_EXEC}
@@ -112,13 +115,21 @@ if(BUILD_TESTING)
   add_subdirectory(test)
 endif()
 
-install(TARGETS ssl
-        EXPORT ssl-targets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY
-          DESTINATION ${CMAKE_INSTALL_LIBDIR}
-          NAMELINK_SKIP
-)
+if(NOT CMAKE_VERSION VERSION_LESS "3.12")
+  install(TARGETS ssl
+          EXPORT ssl-targets
+          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          LIBRARY
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            NAMELINK_COMPONENT Development
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+  install(TARGETS ssl
+          EXPORT ssl-targets
+          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 if(MSVC AND CMAKE_BUILD_TYPE_LOWER MATCHES "relwithdebinfo" AND FIPS)
   install(FILES $<TARGET_FILE_DIR:ssl>/ssl.pdb DESTINATION ${CMAKE_INSTALL_LIBDIR})
@@ -142,13 +153,3 @@ install(EXPORT ssl-targets
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/ssl/cmake/${TARGET_DIR}"
     NAMESPACE AWS::
     COMPONENT Development)
-
-if(PERFORM_SONAME_BUILD)
-  install(CODE "
-set(TGT lib${SSL_LIB_NAME}.so.${ABI_VERSION})
-set(LNK \$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libssl.so)
-message(STATUS \"Creating symlink: \${LNK} → \${TGT}\")
-execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink \${TGT} \${LNK})
-"
-    COMPONENT Development)
-endif()

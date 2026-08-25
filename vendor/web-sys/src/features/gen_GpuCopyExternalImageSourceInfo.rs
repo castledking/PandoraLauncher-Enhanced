@@ -5,7 +5,10 @@ use wasm_bindgen::prelude::*;
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 extern "C" {
-    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = GPUCopyExternalImageSourceInfo)]
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "GPUCopyExternalImageSourceInfo"
+    )]
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[doc = "The `GpuCopyExternalImageSourceInfo` dictionary."]
     #[doc = ""]
@@ -54,7 +57,7 @@ extern "C" {
     #[cfg(feature = "GpuOrigin2dDict")]
     #[doc = "Change the `origin` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `GpuOrigin2dDict`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -64,9 +67,10 @@ extern "C" {
         val: &GpuOrigin2dDict,
     );
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "ImageBitmap")]
     #[doc = "Get the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `ImageBitmap`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -76,7 +80,7 @@ extern "C" {
     #[cfg(feature = "ImageBitmap")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `ImageBitmap`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -86,7 +90,7 @@ extern "C" {
     #[cfg(feature = "ImageData")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `ImageData`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -96,7 +100,7 @@ extern "C" {
     #[cfg(feature = "HtmlImageElement")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `HtmlImageElement`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -109,7 +113,7 @@ extern "C" {
     #[cfg(feature = "HtmlVideoElement")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `HtmlVideoElement`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -122,7 +126,7 @@ extern "C" {
     #[cfg(feature = "VideoFrame")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `VideoFrame`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -132,7 +136,7 @@ extern "C" {
     #[cfg(feature = "HtmlCanvasElement")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `HtmlCanvasElement`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -145,7 +149,7 @@ extern "C" {
     #[cfg(feature = "OffscreenCanvas")]
     #[doc = "Change the `source` field of this object."]
     #[doc = ""]
-    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`*"]
+    #[doc = "*This API requires the following crate features to be activated: `GpuCopyExternalImageSourceInfo`, `OffscreenCanvas`*"]
     #[doc = ""]
     #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
     #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
@@ -261,6 +265,7 @@ impl GpuCopyExternalImageSourceInfo {
         self
     }
     #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "ImageBitmap")]
     #[deprecated = "Use `set_source()` instead."]
     pub fn source(&mut self, val: &ImageBitmap) -> &mut Self {
         self.set_source(val);

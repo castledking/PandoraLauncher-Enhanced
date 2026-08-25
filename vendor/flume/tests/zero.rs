@@ -9,10 +9,10 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use flume::{bounded, Receiver};
-use flume::{RecvError, RecvTimeoutError, TryRecvError};
-use flume::{SendError, SendTimeoutError, TrySendError};
 use crossbeam_utils::thread::scope;
+use flume::{bounded, Receiver};
+use flume::{RecvTimeoutError, TryRecvError};
+use flume::{SendError, SendTimeoutError, TrySendError};
 use rand::{thread_rng, Rng};
 
 fn ms(ms: u64) -> Duration {
@@ -38,11 +38,11 @@ fn len_empty_full() {
     let (s, r) = bounded(0);
 
     assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), true);
+    assert!(s.is_empty());
+    assert!(s.is_full());
     assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), true);
+    assert!(r.is_empty());
+    assert!(r.is_full());
 
     scope(|scope| {
         scope.spawn(|_| s.send(0).unwrap());
@@ -51,11 +51,11 @@ fn len_empty_full() {
     .unwrap();
 
     assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), true);
+    assert!(s.is_empty());
+    assert!(s.is_full());
     assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), true);
+    assert!(r.is_empty());
+    assert!(r.is_full());
 }
 
 #[test]

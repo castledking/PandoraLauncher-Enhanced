@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "rust-i18n-macro"
-version = "4.0.0"
+version = "4.2.1"
 build = false
 autolib = false
 autobins = false
@@ -43,7 +43,8 @@ features = ["span-locations"]
 version = "1.0.2"
 
 [dependencies.rust-i18n-support]
-version = "4.0.0"
+version = "4.2.1"
+features = ["codegen"]
 
 [dependencies.serde]
 version = "1"
@@ -51,9 +52,6 @@ features = ["derive"]
 
 [dependencies.serde_json]
 version = "1"
-
-[dependencies.serde_yaml]
-version = "0.9.33"
 
 [dependencies.syn]
 version = "2.0.18"

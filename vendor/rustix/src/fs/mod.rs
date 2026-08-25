@@ -1,6 +1,7 @@
 //! Filesystem operations.
 
 mod abs;
+#[cfg(not(target_os = "redox"))]
 mod at;
 mod constants;
 #[cfg(linux_kernel)]
@@ -37,6 +38,7 @@ mod ioctl;
     target_os = "espidf",
     target_os = "haiku",
     target_os = "horizon",
+    target_os = "redox",
     target_os = "vita",
     target_os = "wasi"
 )))]
@@ -50,7 +52,7 @@ mod raw_dir;
 mod seek_from;
 #[cfg(target_os = "linux")]
 mod sendfile;
-#[cfg(not(target_os = "espidf"))]
+#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
 mod special;
 #[cfg(linux_kernel)]
 mod statx;
@@ -66,6 +68,7 @@ mod sync;
 mod xattr;
 
 pub use abs::*;
+#[cfg(not(target_os = "redox"))]
 pub use at::*;
 pub use constants::*;
 #[cfg(linux_kernel)]
@@ -100,6 +103,7 @@ pub use ioctl::*;
     target_os = "espidf",
     target_os = "haiku",
     target_os = "horizon",
+    target_os = "redox",
     target_os = "vita",
     target_os = "wasi"
 )))]
@@ -113,7 +117,7 @@ pub use raw_dir::{RawDir, RawDirEntry};
 pub use seek_from::SeekFrom;
 #[cfg(target_os = "linux")]
 pub use sendfile::sendfile;
-#[cfg(not(target_os = "espidf"))]
+#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
 pub use special::*;
 #[cfg(linux_kernel)]
 pub use statx::*;

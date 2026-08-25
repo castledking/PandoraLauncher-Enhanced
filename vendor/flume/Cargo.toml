@@ -12,12 +12,18 @@
 [package]
 edition = "2018"
 name = "flume"
-version = "0.11.1"
+version = "0.12.0"
 authors = ["Joshua Barretto <joshua.s.barretto@gmail.com>"]
+build = false
 exclude = [
     "/.github",
     "/misc",
 ]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "A blazingly fast multi-producer channel"
 documentation = "https://docs.rs/flume"
 readme = "README.md"
@@ -42,24 +48,141 @@ rustdoc-args = [
     "docsrs",
 ]
 
+[features]
+async = [
+    "futures-sink",
+    "futures-core",
+]
+default = [
+    "async",
+    "select",
+    "eventual-fairness",
+]
+eventual-fairness = [
+    "select",
+    "fastrand",
+]
+select = []
+spin = []
+
+[lib]
+name = "flume"
+path = "src/lib.rs"
+
+[[example]]
+name = "async"
+path = "examples/async.rs"
+
+[[example]]
+name = "perf"
+path = "examples/perf.rs"
+
+[[example]]
+name = "select"
+path = "examples/select.rs"
+
+[[example]]
+name = "simple"
+path = "examples/simple.rs"
+
+[[test]]
+name = "after"
+path = "tests/after.rs"
+
+[[test]]
+name = "array"
+path = "tests/array.rs"
+
+[[test]]
+name = "async"
+path = "tests/async.rs"
+
+[[test]]
+name = "basic"
+path = "tests/basic.rs"
+
+[[test]]
+name = "check_same_channel"
+path = "tests/check_same_channel.rs"
+
+[[test]]
+name = "golang"
+path = "tests/golang.rs"
+
+[[test]]
+name = "iter"
+path = "tests/iter.rs"
+
+[[test]]
+name = "list"
+path = "tests/list.rs"
+
+[[test]]
+name = "method_sharing"
+path = "tests/method_sharing.rs"
+
+[[test]]
+name = "mpsc"
+path = "tests/mpsc.rs"
+
+[[test]]
+name = "never"
+path = "tests/never.rs"
+
+[[test]]
+name = "ready"
+path = "tests/ready.rs"
+
+[[test]]
+name = "same_channel"
+path = "tests/same_channel.rs"
+
+[[test]]
+name = "select"
+path = "tests/select.rs"
+
+[[test]]
+name = "select_macro"
+path = "tests/select_macro.rs"
+
+[[test]]
+name = "stream"
+path = "tests/stream.rs"
+
+[[test]]
+name = "thread_locals"
+path = "tests/thread_locals.rs"
+
+[[test]]
+name = "tick"
+path = "tests/tick.rs"
+
+[[test]]
+name = "zero"
+path = "tests/zero.rs"
+
 [[bench]]
 name = "basic"
+path = "benches/basic.rs"
 harness = false
+
+[dependencies.fastrand]
+version = "2.3"
+features = [
+    "std",
+    "js",
+]
+optional = true
 
 [dependencies.futures-core]
 version = "0.3"
 optional = true
-default_features = false
+default-features = false
 
 [dependencies.futures-sink]
 version = "0.3"
 optional = true
-default_features = false
-
-[dependencies.nanorand]
-version = "0.7"
-features = ["getrandom"]
-optional = true
+default-features = false
 
 [dependencies.spin1]
 version = "0.9.8"
@@ -103,20 +226,3 @@ features = [
 
 [dev-dependencies.waker-fn]
 version = "1.1.0"
-
-[features]
-async = [
-    "futures-sink",
-    "futures-core",
-]
-default = [
-    "async",
-    "select",
-    "eventual-fairness",
-]
-eventual-fairness = [
-    "select",
-    "nanorand",
-]
-select = []
-spin = []

@@ -8,7 +8,7 @@ use core::iter::Sum;
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::common::FloatExt;
-use crate::{Point, Size};
+use crate::{Axis, Point, Size};
 
 #[cfg(not(feature = "std"))]
 use crate::common::FloatFuncs;
@@ -58,7 +58,7 @@ impl Vec2 {
 
     /// Dot product of two vectors.
     #[inline]
-    pub fn dot(self, other: Vec2) -> f64 {
+    pub const fn dot(self, other: Vec2) -> f64 {
         self.x * other.x + self.y * other.y
     }
 
@@ -72,7 +72,7 @@ impl Vec2 {
     ///
     /// `v.cross(v) = 0.0`
     #[inline]
-    pub fn cross(self, other: Vec2) -> f64 {
+    pub const fn cross(self, other: Vec2) -> f64 {
         self.x * other.y - self.y * other.x
     }
 
@@ -113,7 +113,7 @@ impl Vec2 {
     /// assert_eq!(v.hypot2(), 25.0);
     /// ```
     #[inline]
-    pub fn hypot2(self) -> f64 {
+    pub const fn hypot2(self) -> f64 {
         self.dot(self)
     }
 
@@ -121,7 +121,7 @@ impl Vec2 {
     ///
     /// This is an alias for [`Vec2::hypot2`].
     #[inline]
-    pub fn length_squared(self) -> f64 {
+    pub const fn length_squared(self) -> f64 {
         self.hypot2()
     }
 
@@ -295,7 +295,7 @@ impl Vec2 {
     ///
     /// [finite]: f64::is_finite
     #[inline]
-    pub fn is_finite(self) -> bool {
+    pub const fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite()
     }
 
@@ -303,7 +303,7 @@ impl Vec2 {
     ///
     /// [`NaN`]: f64::is_nan
     #[inline]
-    pub fn is_nan(self) -> bool {
+    pub const fn is_nan(self) -> bool {
         self.x.is_nan() || self.y.is_nan()
     }
 
@@ -327,7 +327,7 @@ impl Vec2 {
     ///
     /// `u.cross(v) = u.turn_90().dot(v)`
     #[inline]
-    pub fn turn_90(self) -> Vec2 {
+    pub const fn turn_90(self) -> Vec2 {
         Vec2::new(-self.y, self.x)
     }
 
@@ -338,11 +338,38 @@ impl Vec2 {
     /// This operation is equivalent to multiplication when the vectors
     /// are interpreted as complex numbers. It is commutative.
     #[inline]
-    pub fn rotate_scale(self, rhs: Vec2) -> Vec2 {
+    pub const fn rotate_scale(self, rhs: Vec2) -> Vec2 {
         Vec2::new(
             self.x * rhs.x - self.y * rhs.y,
             self.x * rhs.y + self.y * rhs.x,
         )
+    }
+
+    /// Get the member matching the given axis.
+    #[inline]
+    pub const fn get_coord(self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.x,
+            Axis::Vertical => self.y,
+        }
+    }
+
+    /// Get a mutable reference to the member matching the given axis.
+    #[inline]
+    pub const fn get_coord_mut(&mut self, axis: Axis) -> &mut f64 {
+        match axis {
+            Axis::Horizontal => &mut self.x,
+            Axis::Vertical => &mut self.y,
+        }
+    }
+
+    /// Set the member matching the given axis to the given value.
+    #[inline]
+    pub const fn set_coord(&mut self, axis: Axis, value: f64) {
+        match axis {
+            Axis::Horizontal => self.x = value,
+            Axis::Vertical => self.y = value,
+        }
     }
 }
 

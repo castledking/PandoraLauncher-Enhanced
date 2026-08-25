@@ -12,7 +12,7 @@
 [package]
 rust-version = "1.70.0"
 name = "lru"
-version = "0.16.3"
+version = "0.16.4"
 authors = ["Jerome Froelich <jeromefroelic@hotmail.com>"]
 description = "A LRU cache implementation"
 homepage = "https://github.com/jeromefroe/lru-rs"

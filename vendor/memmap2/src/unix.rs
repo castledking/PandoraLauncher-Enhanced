@@ -45,7 +45,7 @@ const MAP_HUGE_SHIFT: libc::c_int = 0;
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
-    target_vendor = "apple",
+    target_os = "macos",
     target_os = "netbsd",
     target_os = "solaris",
     target_os = "illumos",
@@ -55,7 +55,7 @@ const MAP_NORESERVE: libc::c_int = libc::MAP_NORESERVE;
 #[cfg(not(any(
     target_os = "linux",
     target_os = "android",
-    target_vendor = "apple",
+    target_os = "macos",
     target_os = "netbsd",
     target_os = "solaris",
     target_os = "illumos",
@@ -426,20 +426,7 @@ impl MmapInner {
         let offset = offset as isize - alignment as isize;
         let len = len + alignment;
         unsafe {
-            let ptr = {
-                // The AIX signature of 'madvise()' differs from the POSIX
-                // specification, which expects 'void *' as the type of the
-                // 'addr' argument, whereas AIX uses 'caddr_t' (i.e., 'char *').
-                #[cfg(target_os = "aix")]
-                {
-                    self.ptr.offset(offset) as *mut u8
-                }
-                #[cfg(not(target_os = "aix"))]
-                {
-                    self.ptr.offset(offset)
-                }
-            };
-            if libc::madvise(ptr, len, advice) != 0 {
+            if libc::madvise(self.ptr.offset(offset), len, advice) != 0 {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(())

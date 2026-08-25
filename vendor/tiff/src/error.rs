@@ -5,6 +5,7 @@ use std::string;
 use quick_error::quick_error;
 
 use crate::decoder::ChunkType;
+use crate::tags::Type;
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, SampleFormat, Tag,
 };
@@ -90,6 +91,9 @@ quick_error! {
         InvalidTypeForTag {
             display("tag has invalid type")
         }
+        InvalidCountForTag(tag: Tag, len: usize) {
+            display("tag `{tag:?}` with incorrect number of elements ({len}) encountered")
+        }
         StripTileTagConflict {
             display("file should contain either (StripByteCounts and StripOffsets) or (TileByteCounts and TileOffsets), other combination was found")
         }
@@ -156,6 +160,9 @@ quick_error! {
         UnsupportedInterpretation(interpretation: PhotometricInterpretation) {
             display("unsupported photometric interpretation \"{interpretation:?}\"")
         }
+        ChromaSubsampling {
+            display("chroma subsampling of YCbCr color is unsupported")
+        }
         MisalignedTileBoundaries {
             display("tile rows are not aligned to byte boundaries")
         }
@@ -175,6 +182,12 @@ quick_error! {
         InvalidChunkIndex(index: u32) {
             display("invalid chunk index ({index}) requested")
         }
+        InvalidPlaneIndex(index: u16) {
+            display("invalid plane index ({index}) requested")
+        }
+        InvalidCodingUnit(index: u32, have: u32) {
+            display("out of bounds coding unit ({index}) requested, only {have} available")
+        }
         PredictorCompressionMismatch {
             display("requested predictor is not compatible with the requested compression")
         }
@@ -186,6 +199,21 @@ quick_error! {
         }
         InsufficientOutputBufferSize { needed: usize, provided: usize } {
             display("the borrowed output buffer is not large enough for the decoded data, needed {needed} but have {provided}")
+        }
+        InsufficientOutputRowStride { needed: usize, requested: usize } {
+            display("the provided output row stride would alias rows of decoded data, needed {needed} but have {requested}")
+        }
+        ZeroIfdPointer {
+            display("the offset 0 can not point to a valid IFD")
+        }
+        ReconfiguredAfterImageWrite {
+            display("attempted to reconfigure the encoder after image writing has started")
+        }
+        ByteOrderMismatch {
+            display("attempted to use data with a byte order that does not match the required one")
+        }
+        MismatchedEntryLength {ty: Type, found: usize } {
+            display("the length of data is not a multiple of the size of the type {ty:?}, found {found}")
         }
     }
 }

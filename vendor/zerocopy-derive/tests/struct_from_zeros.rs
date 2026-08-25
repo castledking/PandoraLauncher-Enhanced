@@ -16,13 +16,11 @@ include!("include.rs");
 // - all fields are `FromZeros`
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct Zst;
 
 util_assert_impl_all!(Zst: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct One {
     a: bool,
 }
@@ -30,7 +28,6 @@ struct One {
 util_assert_impl_all!(One: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct Two {
     a: bool,
     b: Zst,
@@ -39,7 +36,6 @@ struct Two {
 util_assert_impl_all!(Two: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct Unsized {
     a: [u8],
 }
@@ -47,7 +43,6 @@ struct Unsized {
 util_assert_impl_all!(Unsized: imp::FromZeros);
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 struct TypeParams<'a, T: ?imp::Sized, I: imp::Iterator> {
     a: I::Item,
     b: u8,
@@ -64,7 +59,6 @@ util_assert_impl_all!(TypeParams<'static, [util::AU16], imp::IntoIter<()>>: imp:
 // Deriving `FromZeros` should work if the struct has bounded parameters.
 
 #[derive(imp::FromZeros)]
-#[zerocopy(crate = "zerocopy_renamed")]
 #[repr(transparent)]
 struct WithParams<'a: 'b, 'b: 'a, T: 'a + 'b + imp::FromZeros, const N: usize>(
     [T; N],

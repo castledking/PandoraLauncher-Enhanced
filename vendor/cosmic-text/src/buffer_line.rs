@@ -1,10 +1,12 @@
+#![allow(clippy::too_many_arguments)]
+
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 use core::mem;
 
 use crate::{
-    Align, Attrs, AttrsList, Cached, FontSystem, Hinting, LayoutLine, LineEnding, ShapeLine,
-    Shaping, Wrap,
+    Align, Attrs, AttrsList, Cached, Ellipsize, FontSystem, Hinting, LayoutLine, LayoutRunIter,
+    LineEnding, ShapeLine, Shaping, Wrap,
 };
 
 /// A line (or paragraph) of text that is shaped and laid out
@@ -234,6 +236,10 @@ impl BufferLine {
         self.shape_opt.get()
     }
 
+    pub const fn needs_reshaping(&self) -> bool {
+        self.shape_opt.is_invalidated() || self.layout_opt.is_invalidated()
+    }
+
     /// Layout line, will cache results
     #[allow(clippy::missing_panics_doc)]
     pub fn layout(
@@ -242,6 +248,7 @@ impl BufferLine {
         font_size: f32,
         width_opt: Option<f32>,
         wrap: Wrap,
+        ellipsize: Ellipsize,
         match_mono_width: Option<f32>,
         tab_width: u16,
         hinting: Hinting,
@@ -258,6 +265,7 @@ impl BufferLine {
                 font_size,
                 width_opt,
                 wrap,
+                ellipsize,
                 align,
                 &mut layout,
                 match_mono_width,
@@ -271,6 +279,11 @@ impl BufferLine {
     /// Get line layout cache
     pub const fn layout_opt(&self) -> Option<&Vec<LayoutLine>> {
         self.layout_opt.get()
+    }
+
+    /// Get the visible layout runs for rendering and other tasks
+    pub fn layout_runs(&self, height_opt: Option<f32>, line_height: f32) -> LayoutRunIter<'_> {
+        LayoutRunIter::from_lines(core::slice::from_ref(self), height_opt, line_height, 0.0, 0)
     }
 
     /// Get line metadata. This will be None if [`BufferLine::set_metadata`] has not been called

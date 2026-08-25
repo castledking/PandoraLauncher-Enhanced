@@ -17,7 +17,7 @@ impl Aligned4 {
         let mut bytes = [0; 4];
         let mut i = 0;
         // The function documentation defines when panics may occur
-        #[expect(clippy::indexing_slicing)]
+        #[allow(clippy::indexing_slicing)]
         while i < N {
             bytes[i] = src[i];
             i += 1;
@@ -174,7 +174,7 @@ impl Aligned8 {
         let mut bytes = [0; 8];
         let mut i = 0;
         // The function documentation defines when panics may occur
-        #[expect(clippy::indexing_slicing)]
+        #[allow(clippy::indexing_slicing)]
         while i < N {
             bytes[i] = src[i];
             i += 1;

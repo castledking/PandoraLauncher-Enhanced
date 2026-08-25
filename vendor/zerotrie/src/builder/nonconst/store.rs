@@ -30,10 +30,6 @@ pub(crate) trait TrieBuilderStore {
     fn atbs_bitor_assign(&mut self, index: usize, bits: u8);
 
     /// Swap the adjacent ranges `self[start..mid]` and `self[mid..limit]`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the specified ranges are invalid.
     fn atbs_swap_ranges(&mut self, start: usize, mid: usize, limit: usize);
 
     /// Remove and return the first element in the store, or `None` if empty.
@@ -60,6 +56,7 @@ impl TrieBuilderStore for VecDeque<u8> {
         self.push_front(byte);
     }
     fn atbs_extend_front(&mut self, other: &[u8]) {
+        // TODO: No extend_front on VecDeque?
         self.reserve(other.len());
         for b in other.iter().rev() {
             self.push_front(*b);
@@ -75,9 +72,6 @@ impl TrieBuilderStore for VecDeque<u8> {
     fn atbs_bitor_assign(&mut self, index: usize, bits: u8) {
         self[index] |= bits;
     }
-    /// # Panics
-    /// Panics if the specified ranges are invalid.
-    #[allow(clippy::panic)] // documented
     fn atbs_swap_ranges(&mut self, mut start: usize, mut mid: usize, mut limit: usize) {
         if start > mid || mid > limit {
             panic!("Invalid args to atbs_swap_ranges(): start > mid || mid > limit");
@@ -146,7 +140,6 @@ impl NonConstLengthsStack {
 
     /// Returns a copy of the [`BranchMeta`] on the top of the stack, panicking if
     /// the stack is empty.
-    #[allow(clippy::unwrap_used)] // "panic" is in the method name
     pub fn peek_or_panic(&self) -> BranchMeta {
         *self.data.last().unwrap()
     }
@@ -164,7 +157,7 @@ impl NonConstLengthsStack {
             // Won't panic because len <= 256
             result = result.const_push_front_or_panic(match self.data.get(i) {
                 Some(x) => *x,
-                None => unreachable!("Not enough items in the ConstLengthsStack"),
+                None => panic!("Not enough items in the ConstLengthsStack"),
             });
             ix += 1;
         }

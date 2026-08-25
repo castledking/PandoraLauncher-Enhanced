@@ -707,7 +707,14 @@ impl Render for SkinRenderer {
                         let h = h_f32 as u32;
                         if w > 0 && h > 0 {
                             if let Some(render_img) = entity.read(cx).render_to_buffer(w, h) {
-                                let _ = window.paint_image(bounds, gpui::Corners::default(), render_img, 0, false);
+                                let _ = window.paint_image(
+                                    bounds,
+                                    bounds,
+                                    gpui::Corners::default(),
+                                    render_img,
+                                    0,
+                                    false,
+                                );
                             }
                         }
                     },

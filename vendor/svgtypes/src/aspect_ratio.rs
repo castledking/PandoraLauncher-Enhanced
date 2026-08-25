@@ -41,7 +41,7 @@ pub struct AspectRatio {
     pub slice: bool,
 }
 
-impl std::str::FromStr for AspectRatio {
+impl core::str::FromStr for AspectRatio {
     type Err = Error;
 
     fn from_str(text: &str) -> Result<Self, Error> {
@@ -86,7 +86,7 @@ impl std::str::FromStr for AspectRatio {
             };
         }
 
-        Ok(AspectRatio {
+        Ok(Self {
             defer,
             align,
             slice,
@@ -97,7 +97,7 @@ impl std::str::FromStr for AspectRatio {
 impl Default for AspectRatio {
     #[inline]
     fn default() -> Self {
-        AspectRatio {
+        Self {
             defer: false,
             align: Align::XMidYMid,
             slice: false,
@@ -109,7 +109,7 @@ impl Default for AspectRatio {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     macro_rules! test {
         ($name:ident, $text:expr, $result:expr) => (

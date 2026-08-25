@@ -13,14 +13,8 @@
 edition = "2021"
 rust-version = "1.56"
 name = "zeroize_derive"
-version = "1.4.3"
+version = "1.4.2"
 authors = ["The RustCrypto Project Developers"]
-build = false
-autolib = false
-autobins = false
-autoexamples = false
-autotests = false
-autobenches = false
 description = "Custom derive support for zeroize"
 readme = "README.md"
 keywords = [
@@ -44,8 +38,6 @@ resolver = "1"
 rustdoc-args = ["--document-private-items"]
 
 [lib]
-name = "zeroize_derive"
-path = "src/lib.rs"
 proc-macro = true
 
 [dependencies.proc-macro2]

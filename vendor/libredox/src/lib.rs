@@ -259,7 +259,7 @@ extern "C" {
     fn redox_get_rgid_v1() -> RawResult;
 
     fn redox_get_ens_v0() -> RawResult;
-    fn redox_get_ns_v0() -> RawResult;
+
     // This function is used to get the credentials, pid, euid, egid etc. of the process with the target pid.
     fn redox_get_proc_credentials_v1(cap_fd: usize, target_pid: usize, buf: &mut [u8])
         -> RawResult;
@@ -299,16 +299,8 @@ extern "C" {
         metadata: *const u64,
         metadata_len: usize,
     ) -> RawResult;
+
     fn redox_get_socket_token_v0(fd: usize, payload: *mut u8, payload_len: usize) -> RawResult;
-
-    fn redox_setns_v0(fd: usize) -> RawResult;
-
-    fn redox_register_scheme_to_ns_v0(
-        ns_fd: usize,
-        name_base: *const u8,
-        name_len: usize,
-        cap_fd: usize,
-    ) -> RawResult;
 }
 
 #[cfg(feature = "call")]
@@ -316,9 +308,6 @@ pub struct Fd(usize);
 
 #[cfg(feature = "call")]
 impl Fd {
-    pub fn new(raw: usize) -> Self {
-        Self(raw)
-    }
     #[inline]
     pub fn open(path: &str, flags: i32, mode: u16) -> Result<Self> {
         Ok(Self(call::open(path, flags, mode)?))
@@ -721,23 +710,5 @@ pub mod call {
     #[inline]
     pub fn get_socket_token(fd: usize, buf: &mut [u8]) -> Result<usize> {
         Error::demux(unsafe { redox_get_socket_token_v0(fd, buf.as_mut_ptr(), buf.len()) })
-    }
-
-    #[inline]
-    pub fn setns(fd: usize) -> Result<usize> {
-        Error::demux(unsafe { redox_setns_v0(fd) })
-    }
-    #[inline]
-    pub fn getns() -> Result<usize> {
-        Error::demux(unsafe { redox_get_ns_v0() })
-    }
-
-    #[inline]
-    pub fn register_scheme_to_ns(ns_fd: usize, name: impl AsRef<str>, cap_fd: usize) -> Result<()> {
-        let name = name.as_ref();
-        Error::demux(unsafe {
-            redox_register_scheme_to_ns_v0(ns_fd, name.as_ptr(), name.len(), cap_fd)
-        })
-        .map(|_| ())
     }
 }

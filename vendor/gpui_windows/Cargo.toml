@@ -40,10 +40,15 @@ path = "../gpui"
 default-features = false
 
 [target.'cfg(target_os = "windows")'.dependencies]
-etagere = "0.2"
-raw-window-handle = "0.6"
 windows-numerics = "0.2"
 windows-registry = "0.5"
+
+[target.'cfg(target_os = "windows")'.dependencies.accesskit]
+version = "0.24.0"
+features = ["enumn"]
+
+[target.'cfg(target_os = "windows")'.dependencies.accesskit_windows]
+version = "0.33.1"
 
 [target.'cfg(target_os = "windows")'.dependencies.anyhow]
 version = "1.0.86"
@@ -52,11 +57,38 @@ version = "1.0.86"
 version = "0.1.0"
 path = "../collections"
 
+[target.'cfg(target_os = "windows")'.dependencies.dunce]
+version = "1.0"
+
+[target.'cfg(target_os = "windows")'.dependencies.etagere]
+version = "0.2"
+
 [target.'cfg(target_os = "windows")'.dependencies.futures]
 version = "0.3.32"
 
+[target.'cfg(target_os = "windows")'.dependencies.gpui_util]
+path = "../gpui_util"
+
 [target.'cfg(target_os = "windows")'.dependencies.image]
 version = "0.25.1"
+features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "rayon",
+    "tga",
+    "tiff",
+    "webp",
+]
+default-features = false
 
 [target.'cfg(target_os = "windows")'.dependencies.itertools]
 version = "0.14.0"
@@ -74,6 +106,9 @@ version = "0.12.1"
 [target.'cfg(target_os = "windows")'.dependencies.rand]
 version = "0.9"
 
+[target.'cfg(target_os = "windows")'.dependencies.raw-window-handle]
+version = "0.6"
+
 [target.'cfg(target_os = "windows")'.dependencies.scap]
 version = "0.0.8-zed"
 git = "https://github.com/zed-industries/scap"
@@ -89,9 +124,6 @@ features = [
     "const_new",
 ]
 
-[target.'cfg(target_os = "windows")'.dependencies.util]
-path = "../util"
-
 [target.'cfg(target_os = "windows")'.dependencies.uuid]
 version = "1.1.2"
 features = [
@@ -104,11 +136,13 @@ features = [
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.61"
 features = [
+    "Data_Xml_Dom",
     "Foundation_Numerics",
     "Globalization_DateTimeFormatting",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
+    "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Foundation",
@@ -130,12 +164,14 @@ features = [
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_DataExchange",
     "Win32_System_IO",
+    "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",

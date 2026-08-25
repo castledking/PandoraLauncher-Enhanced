@@ -147,12 +147,12 @@
 //! }
 //! ```
 
-#![doc(html_root_url = "https://docs.rs/inventory/0.3.22")]
+#![doc(html_root_url = "https://docs.rs/inventory/0.3.21")]
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(
     clippy::doc_markdown,
-    clippy::empty_enums,
+    clippy::empty_enum,
     clippy::expl_impl_clone_on_copy,
     clippy::let_underscore_untyped,
     clippy::let_unit_value,
@@ -255,7 +255,7 @@ impl Registry {
             unsafe {
                 *new.next.get() = head.as_ref();
             }
-            let new_ptr = ptr::addr_of!(*new).cast_mut();
+            let new_ptr = new as *const Node as *mut Node;
             match self
                 .head
                 .compare_exchange(head, new_ptr, Ordering::Release, Ordering::Relaxed)
@@ -369,7 +369,7 @@ const _: () = {
         fn next(&mut self) -> Option<Self::Item> {
             let node = self.node?;
             unsafe {
-                let value_ptr = ptr::addr_of!(*node.value).cast::<T>();
+                let value_ptr = (node.value as *const dyn ErasedNode).cast::<T>();
                 self.node = *node.next.get();
                 Some(&*value_ptr)
             }
@@ -532,7 +532,6 @@ macro_rules! __do_submit {
                         target_os = "haiku",
                         target_os = "illumos",
                         target_os = "netbsd",
-                        target_os = "nto",
                         target_os = "openbsd",
                         target_os = "none",
                     )

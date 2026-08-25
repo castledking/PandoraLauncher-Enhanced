@@ -18,7 +18,8 @@ mod use_node;
 
 #[cfg(feature = "text")]
 mod text;
-
+#[cfg(feature = "text")]
+pub(crate) use converter::Cache;
 pub use image::{ImageHrefDataResolverFn, ImageHrefResolver, ImageHrefStringResolverFn};
 pub use options::Options;
 pub(crate) use svgtree::{AId, EId};
@@ -103,6 +104,42 @@ impl crate::Tree {
             let text = std::str::from_utf8(data).map_err(|_| Error::NotAnUtf8Str)?;
             Self::from_str(text, opt)
         }
+    }
+
+    /// Similar to the `from_data` method, except that it ignores all `image` elements linking to
+    /// external files, as required by the SVG specification when SVG files are loaded
+    /// for `<image href="..." />` tags.
+    pub fn from_data_nested(data: &[u8], opt: &Options) -> Result<Self, Error> {
+        let nested_opt = Options {
+            resources_dir: None,
+            dpi: opt.dpi,
+            font_size: opt.font_size,
+            languages: opt.languages.clone(),
+            shape_rendering: opt.shape_rendering,
+            text_rendering: opt.text_rendering,
+            image_rendering: opt.image_rendering,
+            default_size: opt.default_size,
+            image_href_resolver: ImageHrefResolver {
+                resolve_data: Box::new(|a, b, c| (opt.image_href_resolver.resolve_data)(a, b, c)),
+                // External images should be ignored.
+                resolve_string: Box::new(|_, _| None),
+            },
+            // In the referenced SVG, we start with the unmodified user-provided
+            // fontdb, not the one from the cache.
+            #[cfg(feature = "text")]
+            fontdb: opt.fontdb.clone(),
+            // Can't clone the resolver, so we create a new one that forwards to it.
+            #[cfg(feature = "text")]
+            font_resolver: crate::FontResolver {
+                select_font: Box::new(|font, db| (opt.font_resolver.select_font)(font, db)),
+                select_fallback: Box::new(|c, used_fonts, db| {
+                    (opt.font_resolver.select_fallback)(c, used_fonts, db)
+                }),
+            },
+            ..Options::default()
+        };
+
+        Self::from_data(data, &nested_opt)
     }
 
     /// Parses `Tree` from an SVG string.

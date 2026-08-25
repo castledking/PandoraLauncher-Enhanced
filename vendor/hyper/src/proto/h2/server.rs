@@ -19,8 +19,9 @@ use crate::common::time::Time;
 use crate::ext::Protocol;
 use crate::headers;
 use crate::proto::h2::ping::Recorder;
+use crate::proto::h2::{H2Upgraded, UpgradedSendStream};
 use crate::proto::Dispatched;
-use crate::rt::bounds::{Http2ServerConnExec, Http2UpgradedExec};
+use crate::rt::bounds::Http2ServerConnExec;
 use crate::rt::{Read, Write};
 use crate::service::HttpService;
 
@@ -307,7 +308,6 @@ where
                             connect_parts,
                             respond,
                             self.date_header,
-                            exec.clone(),
                         );
 
                         exec.execute_h2stream(fut);
@@ -357,7 +357,7 @@ where
 
 pin_project! {
     #[allow(missing_debug_implementations)]
-    pub struct H2Stream<F, B, E>
+    pub struct H2Stream<F, B>
     where
         B: Body,
     {
@@ -365,7 +365,6 @@ pin_project! {
         #[pin]
         state: H2StreamState<F, B>,
         date_header: bool,
-        exec: E,
     }
 }
 
@@ -393,7 +392,7 @@ struct ConnectParts {
     recv_stream: RecvStream,
 }
 
-impl<F, B, E> H2Stream<F, B, E>
+impl<F, B> H2Stream<F, B>
 where
     B: Body,
 {
@@ -402,13 +401,11 @@ where
         connect_parts: Option<ConnectParts>,
         respond: SendResponse<SendBuf<B::Data>>,
         date_header: bool,
-        exec: E,
-    ) -> H2Stream<F, B, E> {
+    ) -> H2Stream<F, B> {
         H2Stream {
             reply: respond,
             state: H2StreamState::Service { fut, connect_parts },
             date_header,
-            exec,
         }
     }
 }
@@ -426,17 +423,16 @@ macro_rules! reply {
     }};
 }
 
-impl<F, B, Ex, E> H2Stream<F, B, Ex>
+impl<F, B, E> H2Stream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>>,
     B: Body,
     B::Data: 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    Ex: Http2UpgradedExec<B::Data>,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
-    fn poll2(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
-        let mut me = self.as_mut().project();
+    fn poll2(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
+        let mut me = self.project();
         loop {
             let next = match me.state.as_mut().project() {
                 H2StreamStateProj::Service {
@@ -492,15 +488,15 @@ where
                                 warn!("successful response to CONNECT request disallows content-length header");
                             }
                             let send_stream = reply!(me, res, false);
-                            let (h2_up, up_task) = super::upgrade::pair(
-                                send_stream,
-                                connect_parts.recv_stream,
-                                connect_parts.ping,
-                            );
-                            connect_parts
-                                .pending
-                                .fulfill(Upgraded::new(h2_up, Bytes::new()));
-                            self.exec.execute_upgrade(up_task);
+                            connect_parts.pending.fulfill(Upgraded::new(
+                                H2Upgraded {
+                                    ping: connect_parts.ping,
+                                    recv_stream: connect_parts.recv_stream,
+                                    send_stream: unsafe { UpgradedSendStream::new(send_stream) },
+                                    buf: Bytes::new(),
+                                },
+                                Bytes::new(),
+                            ));
                             return Poll::Ready(Ok(()));
                         }
                     }
@@ -529,13 +525,12 @@ where
     }
 }
 
-impl<F, B, Ex, E> Future for H2Stream<F, B, Ex>
+impl<F, B, E> Future for H2Stream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>>,
     B: Body,
     B::Data: 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    Ex: Http2UpgradedExec<B::Data>,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
     type Output = ();

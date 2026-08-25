@@ -18,7 +18,7 @@ Work in progress
 
 ### Discord Server
 
-https://pandora.moulberry.com/discord
+https://discord.com/invite/pCKdCX6nYr
 
 ### Where can I suggest a feature/report a bug?
 

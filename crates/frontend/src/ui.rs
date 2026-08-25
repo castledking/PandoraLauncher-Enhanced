@@ -601,7 +601,7 @@ impl Render for LauncherUI {
                     open_bug_report_url(window, cx);
                 }
             });
-        let discord_invite = option_env!("DISCORD_INVITE").unwrap_or("https://pandora.moulberry.com/discord");
+        let discord_invite = option_env!("DISCORD_INVITE").unwrap_or("https://discord.com/invite/pCKdCX6nYr");
         let discord_button = div()
             .id("discord-button")
             .p_2()
@@ -699,29 +699,33 @@ fn open_bug_report_url(window: &mut Window, cx: &mut App) {
     );
 
     use std::fmt::Write;
-    _ = writeln!(&mut body, "Version: {:?}", option_env!("PANDORA_RELEASE_VERSION"));
-    _ = writeln!(&mut body, "Distributor: {:?}", option_env!("PANDORA_DISTRIBUTION"));
+    _ = writeln!(&mut body, "Version: {}", option_env!("PANDORA_RELEASE_VERSION").unwrap_or("unknown"));
+    _ = writeln!(&mut body, "Distributor: {}", option_env!("PANDORA_DISTRIBUTION").unwrap_or("unknown"));
     _ = writeln!(&mut body, "OS: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
 
     if cfg!(target_os = "linux") {
         if let Ok(os_release) = std::fs::read_to_string("/etc/os-release") {
             for line in os_release.lines() {
-                let line = line.trim_ascii();
+                let line = line.trim_ascii().trim_matches('"');
                 if let Some(name) = line.strip_prefix("NAME=") {
-                    _ = writeln!(&mut body, "OS Name: {}", name);
+                    _ = writeln!(&mut body, "OS Name: {}", name.trim_matches('"'));
                 } else if let Some(version) = line.strip_prefix("VERSION=") {
-                    _ = writeln!(&mut body, "OS Version: {}", version);
+                    _ = writeln!(&mut body, "OS Version: {}", version.trim_matches('"'));
                 }
             }
         }
 
-        _ = writeln!(&mut body, "Desktop: {:?}", std::env::var_os("XDG_CURRENT_DESKTOP"));
+        _ = writeln!(
+            &mut body,
+            "Desktop: {}",
+            std::env::var_os("XDG_CURRENT_DESKTOP").unwrap_or_default().to_string_lossy()
+        );
 
         if let Some(snap_name) = std::env::var_os("SNAP_NAME") {
-            _ = writeln!(&mut body, "Snap: {:?}", snap_name);
+            _ = writeln!(&mut body, "Snap: {}", snap_name.to_string_lossy());
         }
         if let Some(snap_name) = std::env::var_os("FLATPAK_ID") {
-            _ = writeln!(&mut body, "Flatpak ID: {:?}", snap_name);
+            _ = writeln!(&mut body, "Flatpak ID: {}", snap_name.to_string_lossy());
         }
         if std::env::var_os("APPIMAGE").is_some() {
             body.push_str("AppImage: true\n");

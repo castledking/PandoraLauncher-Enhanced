@@ -639,28 +639,37 @@ impl BackendState {
             MessageToBackend::CreateInstanceFromFile { file, modal_action } => {
                 let summary = self.mod_metadata_manager.get_path(&file);
 
-                // right now only .mrpack importing is used
-                let ContentType::ModrinthModpack { dependencies, .. } = &summary.extra else {
-                    modal_action.set_finished_with_error("Not a .mrpack file".into());
-                    return;
+                // Supports Modrinth (.mrpack) and CurseForge (exported .zip) modpacks.
+                let (minecraft_version, loader) = match &summary.extra {
+                    ContentType::ModrinthModpack { dependencies, .. } => {
+                        let mut minecraft_version = None;
+                        let mut loader = Loader::Vanilla;
+                        for (key, value) in dependencies {
+                            match &**key {
+                                "forge" => loader = Loader::Forge,
+                                "neoforge" => loader = Loader::NeoForge,
+                                "fabric-loader" => loader = Loader::Fabric,
+                                "minecraft" => minecraft_version = Some(value.clone()),
+                                _ => {},
+                            }
+                        }
+                        (minecraft_version, loader)
+                    },
+                    ContentType::CurseforgeModpack { minecraft, .. } => {
+                        (minecraft.version.clone(), minecraft.get_loader().unwrap_or(Loader::Vanilla))
+                    },
+                    _ => {
+                        modal_action.set_finished_with_error(
+                            "Not a supported modpack file (.mrpack or CurseForge .zip)".into(),
+                        );
+                        return;
+                    },
                 };
 
                 let Some(name) = summary.name.clone() else {
                     modal_action.set_finished_with_error("Unable to determine name from modpack".into());
                     return;
                 };
-
-                let mut minecraft_version = None;
-                let mut loader = Loader::Vanilla;
-                for (key, value) in dependencies {
-                    match &**key {
-                        "forge" => loader = Loader::Forge,
-                        "neoforge" => loader = Loader::NeoForge,
-                        "fabric-loader" => loader = Loader::Fabric,
-                        "minecraft" => minecraft_version = Some(value.clone()),
-                        _ => {},
-                    }
-                }
 
                 let Some(minecraft_version) = minecraft_version else {
                     modal_action.set_finished_with_error("Unable to determine minecraft version from modpack".into());

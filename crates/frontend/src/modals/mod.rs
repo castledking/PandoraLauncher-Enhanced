@@ -9,6 +9,7 @@ pub mod generic;
 pub mod modrinth_install;
 pub mod rename_group;
 pub mod rename_instance;
+pub mod select_group;
 pub mod select_icon;
 pub mod settings;
 pub mod unzip_modpack;

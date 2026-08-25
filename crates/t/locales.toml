@@ -1563,6 +1563,12 @@ hu = "Példány másolása"
 
 [instance.group.new]
 en = "New group"
+[instance.group.select]
+en = "Select group"
+[instance.group.new_placeholder]
+en = "New group name..."
+[instance.group.instances_count]
+en = "(${count: usize} instances)"
 [instance.group.rename]
 en = "Rename"
 [instance.group.delete]
@@ -3848,6 +3854,11 @@ de = "Modrinth Pack (.mrpack) importieren"
 hu = "Modrinth csomag importálása (.mrpack)"
 ru = "Импорт сборки Modrinth (.mrpack)"
 fr = "Importer un pack Modrinth (.mrpack)"
+[import.from.exported]
+en = "Import from Exported File (.mrpack / .zip)"
+[import.from.exported.select]
+en = "Select exported modpack (Modrinth .mrpack or CurseForge .zip)"
+
 [import.from.modrinth.select]
 en = "Select Modrinth Pack"
 pl = "Wybierz paczkę Modrinth"

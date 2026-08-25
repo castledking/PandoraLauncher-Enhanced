@@ -19,7 +19,11 @@ use crate::{
         named_dropdown::{NamedDropdown, NamedDropdownItem},
         responsive_grid::ResponsiveGrid,
     },
-    entity::{DataEntities, instance::InstanceEntries, metadata::FrontendMetadata},
+    entity::{
+        DataEntities,
+        instance::{InstanceAddedEvent, InstanceEntries},
+        metadata::FrontendMetadata,
+    },
     icon::PandoraIcon,
     interface_config::{InstanceGroup, InstancesViewMode, InterfaceConfig},
     modals,
@@ -59,6 +63,7 @@ pub struct InstancesPage {
 
     groups: Vec<InstanceGroup>,
     assignments: HashMap<InstanceID, u64>,
+    pending_assignment: Option<u64>,
 
     backend_handle: BackendHandle,
 }
@@ -86,6 +91,15 @@ impl InstancesPage {
         })
         .detach();
 
+        cx.subscribe::<_, InstanceAddedEvent>(&data.instances, |this, _, event, cx| {
+            if let Some(group) = this.pending_assignment.take() {
+                this.assignments.insert(event.instance.id, group);
+                this.sync_groups_to_config(cx);
+            }
+            cx.notify();
+        })
+        .detach();
+
         let config = InterfaceConfig::get(cx);
         Self {
             instance_table,
@@ -95,6 +109,7 @@ impl InstancesPage {
             data: data.clone(),
             groups: config.instance_groups.clone(),
             assignments: config.instance_group_assignments.clone(),
+            pending_assignment: None,
             backend_handle: data.backend_handle.clone(),
         }
     }
@@ -252,7 +267,9 @@ impl InstancesPage {
         if let Some(id) = id {
             header
                 .context_menu(move |menu, _, _| {
-                    menu.item(rename_menu_item(&this, id))
+                    menu.item(create_instance_menu_item(&this, id))
+                        .separator()
+                        .item(rename_menu_item(&this, id))
                         .separator()
                         .item(new_group_menu_item(&this, index - 1, t::instance::group::new_above()))
                         .item(new_group_menu_item(&this, index, t::instance::group::new_below()))
@@ -308,6 +325,7 @@ impl InstancesPage {
                 id: entry.id,
                 name: entry.name.clone(),
             };
+
             InstanceList::render_card(entry, index, &self.data, cx)
                 .id(("instance-card", index))
                 .cursor_grab()
@@ -362,10 +380,13 @@ impl Page for InstancesPage {
             .icon(PandoraIcon::Plus)
             .label(t::instance::create())
             .on_click(cx.listener(|this, _, window, cx| {
+                let entity = cx.entity();
                 crate::modals::create_instance::open_create_instance(
                     this.metadata.clone(),
                     this.instances.clone(),
                     this.backend_handle.clone(),
+                    None,
+                    group_selection_handler(entity),
                     window,
                     cx,
                 );
@@ -399,6 +420,47 @@ impl Render for InstancesPage {
             InstancesViewMode::List => DataTable::new(&self.instance_table).bordered(false).into_any_element(),
         }
     }
+}
+
+fn group_selection_handler(
+    this: Entity<InstancesPage>,
+) -> impl Fn(modals::select_group::GroupSelection, &mut Window, &mut App) {
+    move |selection, _, cx| {
+        this.update(cx, |page, cx| match selection {
+            modals::select_group::GroupSelection::Existing(group) => {
+                page.pending_assignment = group.id;
+            },
+            modals::select_group::GroupSelection::New(name) => {
+                page.new_group(name, None, cx);
+                page.pending_assignment = page.groups.last().map(|g| g.id);
+            },
+        });
+    }
+}
+
+fn create_instance_menu_item(this: &Entity<InstancesPage>, group_id: u64) -> gpui_component::menu::PopupMenuItem {
+    let this = this.clone();
+    gpui_component::menu::PopupMenuItem::new(t::instance::create()).on_click(move |_, window, cx| {
+        let (metadata, instances, backend_handle, group_name) = {
+            let page = this.read(cx);
+            let group_name = page.groups.iter().find(|g| g.id == group_id).map(|g| g.name.clone()).unwrap_or_default();
+            (page.metadata.clone(), page.instances.clone(), page.backend_handle.clone(), group_name)
+        };
+        let preselected = modals::select_group::SelectedGroup {
+            id: Some(group_id),
+            name: group_name.into(),
+        };
+        this.update(cx, |page, _| page.pending_assignment = Some(group_id));
+        modals::create_instance::open_create_instance(
+            metadata,
+            instances,
+            backend_handle,
+            Some(preselected),
+            group_selection_handler(this.clone()),
+            window,
+            cx,
+        );
+    })
 }
 
 fn rename_menu_item(this: &Entity<InstancesPage>, id: u64) -> gpui_component::menu::PopupMenuItem {

@@ -134,13 +134,13 @@ impl Render for ImportPage {
                         )
                     })
                 })
-                .child(Button::new("mrpack").label(t::import::from::modrinth()).w_full().on_click(cx.listener(
+                .child(Button::new("mrpack").label(t::import::from::exported()).w_full().on_click(cx.listener(
                     |page, _, window, cx| {
                         let receiver = cx.prompt_for_paths(PathPromptOptions {
                             files: true,
                             directories: false,
                             multiple: false,
-                            prompt: Some(t::import::from::modrinth::select().into()),
+                            prompt: Some(t::import::from::exported::select().into()),
                         });
                         let page_entity = cx.entity();
                         page._open_file_task = window.spawn(cx, async move |cx| {

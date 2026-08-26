@@ -2056,7 +2056,8 @@ impl BackendState {
                         let status = response.status();
                         let body = response.text().await.unwrap_or_default();
                         log::error!("Session join failed with status {status}: {body}");
-                        self.send.send_error(format!("Failed to authenticate for OptiFine cape editor ({status})"));
+                        self.send
+                            .send_error(format!("Failed to authenticate for OptiFine cape editor ({status})"));
                     },
                     Err(err) => {
                         log::error!("Error while making session join request: {:?}", err);

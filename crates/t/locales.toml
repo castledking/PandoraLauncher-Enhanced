@@ -3705,6 +3705,8 @@ de = "Wähle einen Account aus, um Skins anzuschauen oder zu bearbeiten"
 hu = "Válassz egy fiókot a kinézetek megnézéséhez/szerkesztéséhez"
 ru = "Выберите учётную запись для просмотра/изменения скинов"
 fr = "Sélectionnez un compte pour afficher/modifier les skins"
+[skins.optifine_editor]
+en = "OptiFine Cape Editor"
 [skins.player_model.classic]
 en = "Classic"
 ru = "Classic"

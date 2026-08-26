@@ -418,6 +418,17 @@ impl Render for SkinsPage {
                                                 cx.notify();
                                             })),
                                     )
+                                    .child(
+                                        Button::new("optifine-cape-editor")
+                                            .label(t::skins::optifine_editor())
+                                            .small()
+                                            .compact()
+                                            .on_click(cx.listener(move |page, _, _, cx| {
+                                                page.data
+                                                    .backend_handle
+                                                    .send(MessageToBackend::OpenOptifineCapeEditor { account: uuid });
+                                            })),
+                                    )
                                 }),
                         )
                     } else {
@@ -536,6 +547,17 @@ impl Render for SkinsPage {
                                                         page.optifine_cape_in_preview = true;
                                                     }
                                                     cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("optifine-cape-editor")
+                                                .label(t::skins::optifine_editor())
+                                                .small()
+                                                .compact()
+                                                .on_click(cx.listener(move |page, _, _, cx| {
+                                                    page.data.backend_handle.send(
+                                                        MessageToBackend::OpenOptifineCapeEditor { account: uuid },
+                                                    );
                                                 })),
                                         )
                                     }),

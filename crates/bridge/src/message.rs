@@ -328,6 +328,9 @@ pub enum MessageToBackend {
         account: Uuid,
         cape: Option<Uuid>,
     },
+    OpenOptifineCapeEditor {
+        account: Uuid,
+    },
     RequestSkinLibrary,
     RemoveFromSkinLibrary {
         skin: UniqueBytes,
@@ -415,6 +418,9 @@ pub enum MessageToFrontend {
         update: UpdatePrompt,
     },
     OpenOrFocusMainWindow,
+    OpenUrl {
+        url: Arc<str>,
+    },
 }
 
 #[derive(Debug, Default)]

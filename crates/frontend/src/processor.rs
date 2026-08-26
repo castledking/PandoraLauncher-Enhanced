@@ -255,6 +255,9 @@ impl Processor {
                 self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.process_messages_waiting_for_window(cx);
             },
+            MessageToFrontend::OpenUrl { url } => {
+                cx.open_url(&url);
+            },
         }
     }
 }

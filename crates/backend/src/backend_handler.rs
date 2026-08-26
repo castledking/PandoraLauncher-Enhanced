@@ -20,6 +20,7 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use futures::TryFutureExt;
+use rand::RngCore;
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{
     auxiliary::AuxiliaryContentMeta,
@@ -2008,6 +2009,56 @@ impl BackendState {
                     self.cached_minecraft_profiles
                         .write()
                         .insert(account, CachedMinecraftProfile::new(profile));
+                }
+            },
+            MessageToBackend::OpenOptifineCapeEditor { account } => {
+                let Some((profile, access_token)) = self.noninteractive_login_flow(account).await else {
+                    self.send.send_error("Unable to get access token");
+                    return;
+                };
+
+                #[derive(Serialize)]
+                struct SessionJoinRequest {
+                    #[serde(rename = "accessToken")]
+                    access_token: String,
+                    uuid: String,
+                    #[serde(rename = "serverId")]
+                    server_id: String,
+                }
+
+                let mut server_id_bytes = [0u8; 16];
+                rand::thread_rng().fill_bytes(&mut server_id_bytes);
+                let server_id: String = server_id_bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+
+                let response = self
+                    .http_client
+                    .post("https://sessionserver.mojang.com/session/minecraft/join")
+                    .json(&SessionJoinRequest {
+                        access_token: access_token.secret().to_owned(),
+                        uuid: profile.id.simple().to_string(),
+                        server_id: server_id.clone(),
+                    })
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(response) if response.status() == reqwest::StatusCode::NO_CONTENT => {
+                        let url = format!(
+                            "https://optifine.net/capeChange?u={}&n={}&s={}",
+                            profile.id.simple(),
+                            profile.name,
+                            server_id
+                        );
+                        let _ = self.send.send(bridge::message::MessageToFrontend::OpenUrl { url: url.into() });
+                    },
+                    Ok(response) => {
+                        log::error!("Session join failed with status {}", response.status());
+                        self.send.send_error("Failed to authenticate for OptiFine cape editor");
+                    },
+                    Err(err) => {
+                        log::error!("Error while making session join request: {:?}", err);
+                        self.send.send_error("Failed to authenticate for OptiFine cape editor");
+                    },
                 }
             },
             MessageToBackend::RequestSkinLibrary => {

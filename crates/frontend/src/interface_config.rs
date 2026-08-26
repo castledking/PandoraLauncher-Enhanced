@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap, io::Write, path::Path, sync::Arc, time::Duration};
+use std::{cmp::Ordering, io::Write, path::Path, sync::Arc, time::Duration};
 
 use bridge::instance::InstanceID;
 
@@ -94,7 +94,7 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_groups: Vec<InstanceGroup>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub instance_group_assignments: HashMap<InstanceID, u64>,
+    pub instance_group_assignments: Vec<(InstanceID, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

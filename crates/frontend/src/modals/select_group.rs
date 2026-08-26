@@ -68,7 +68,7 @@ pub fn open_select_group(
         list = list.child(ungrouped_entry);
 
         for group in &groups {
-            let count = assignments.values().filter(|assigned| **assigned == group.id).count();
+            let count = assignments.iter().filter(|(_, assigned)| *assigned == group.id).count();
             let selected = current.as_ref().is_some_and(|g| g.id == Some(group.id));
             let entry = h_flex()
                 .id(("group-entry", group.id))

@@ -108,7 +108,7 @@ impl InstancesPage {
             instances: data.instances.clone(),
             data: data.clone(),
             groups: config.instance_groups.clone(),
-            assignments: config.instance_group_assignments.clone(),
+            assignments: config.instance_group_assignments.iter().copied().collect(),
             pending_assignment: None,
             backend_handle: data.backend_handle.clone(),
         }
@@ -117,7 +117,8 @@ impl InstancesPage {
     fn sync_groups_to_config(&self, cx: &mut App) {
         let config = InterfaceConfig::get_mut(cx);
         config.instance_groups = self.groups.clone();
-        config.instance_group_assignments = self.assignments.clone();
+        config.instance_group_assignments =
+            self.assignments.iter().map(|(instance, group)| (*instance, *group)).collect();
     }
 
     fn new_group(&mut self, name: String, at: Option<usize>, cx: &mut Context<Self>) {

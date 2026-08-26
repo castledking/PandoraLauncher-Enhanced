@@ -6,7 +6,7 @@ default-members = ["crates/pandora_launcher"]
 
 [workspace.package]
 edition = "2024"
-version = "3.0.9"
+version = "3.0.10"
 
 [profile.release]
 debug = "limited"

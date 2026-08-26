@@ -266,7 +266,20 @@ async fn install_update_inner(
             let new_filename = replace_os_str(filename, &format!("-{}", &update.old_version), "");
             let new_appimage = appimage.with_file_name(new_filename);
 
-            replace_exe(appimage, new_appimage, &bytes, dirs)?;
+            let canonical_old = try_canonicalize(&appimage);
+            replace_exe(appimage.clone(), new_appimage.clone(), &bytes, dirs)?;
+
+            // If the update moved the AppImage to a new path, remove desktop entries that
+            // still point at the old path, otherwise AppImageLauncher integration leaves
+            // ghost launchers behind (e.g. duplicates in rofi)
+            if new_appimage != appimage {
+                remove_stale_desktop_entries(&appimage);
+                if let Some(canonical_old) = canonical_old {
+                    if canonical_old != new_appimage {
+                        remove_stale_desktop_entries(&canonical_old);
+                    }
+                }
+            }
         },
         UpdateInstallType::Executable => {
             let Ok(current_exe) = std::env::current_exe() else {
@@ -314,6 +327,39 @@ async fn install_update_inner(
     send.send_success("Pandora update successful. Restart to apply changes");
 
     Ok(())
+}
+
+fn remove_stale_desktop_entries(old_path: &Path) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(PathBuf::from(home).join(".local/share/applications")) else {
+        return;
+    };
+
+    let old_path = old_path.to_string_lossy();
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("appimagekit_") || !name.ends_with(".desktop") {
+            continue;
+        }
+
+        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+
+        let points_at_old = content.lines().any(|line| {
+            line.strip_prefix("Exec=")
+                .is_some_and(|exec| exec.trim().trim_matches('"').trim_end_matches(" %U").trim_matches('"') == old_path)
+        });
+
+        if points_at_old {
+            log::info!("Removing stale desktop entry: {}", name);
+            _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn add_new_extension(path: &Path) -> PathBuf {

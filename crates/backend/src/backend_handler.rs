@@ -2021,7 +2021,8 @@ impl BackendState {
                 struct SessionJoinRequest {
                     #[serde(rename = "accessToken")]
                     access_token: String,
-                    uuid: String,
+                    #[serde(rename = "selectedProfile")]
+                    selected_profile: String,
                     #[serde(rename = "serverId")]
                     server_id: String,
                 }
@@ -2035,7 +2036,7 @@ impl BackendState {
                     .post("https://sessionserver.mojang.com/session/minecraft/join")
                     .json(&SessionJoinRequest {
                         access_token: access_token.secret().to_owned(),
-                        uuid: profile.id.simple().to_string(),
+                        selected_profile: profile.id.to_string(),
                         server_id: server_id.clone(),
                     })
                     .send()
@@ -2052,8 +2053,10 @@ impl BackendState {
                         let _ = self.send.send(bridge::message::MessageToFrontend::OpenUrl { url: url.into() });
                     },
                     Ok(response) => {
-                        log::error!("Session join failed with status {}", response.status());
-                        self.send.send_error("Failed to authenticate for OptiFine cape editor");
+                        let status = response.status();
+                        let body = response.text().await.unwrap_or_default();
+                        log::error!("Session join failed with status {status}: {body}");
+                        self.send.send_error(format!("Failed to authenticate for OptiFine cape editor ({status})"));
                     },
                     Err(err) => {
                         log::error!("Error while making session join request: {:?}", err);

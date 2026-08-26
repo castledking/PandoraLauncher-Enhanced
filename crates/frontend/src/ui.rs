@@ -655,7 +655,9 @@ impl Render for LauncherUI {
             .justify_center()
             .text_size(rems(0.9375))
             .child(Icon::new(PandoraIcon::Pandora).size_8().min_w_8().min_h_8())
-            .child(t::common::app_name());
+            .child(
+                v_flex().items_start().child(t::common::app_name()).child(enhanced_label()),
+            );
         let footer_buttons = h_flex()
             .child(settings_button)
             .child(bug_report_button)
@@ -681,6 +683,35 @@ impl Render for LauncherUI {
 
         ResizePanel::new(&self.sidebar_state, sidebar, self.page.clone().render(&self, window, cx))
     }
+}
+
+fn enhanced_label() -> impl IntoElement {
+    const TOP: u32 = 0xf3f5f8;
+    const BOTTOM: u32 = 0xa9b0bc;
+
+    let text = |color: u32| {
+        div()
+            .text_size(px(9.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(color))
+            .child("ENHANCED")
+    };
+
+    div()
+        .relative()
+        .ml(px(1.0))
+        .mt(px(-8.0))
+        .child(text(BOTTOM))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h(px(5.0))
+                .overflow_hidden()
+                .child(text(TOP)),
+        )
 }
 
 fn open_bug_report_url(window: &mut Window, cx: &mut App) {

@@ -34,7 +34,7 @@ impl RenderOnce for MenuGroup {
             .text_color(cx.theme().sidebar_foreground.opacity(0.7))
             .child(self.title);
 
-        v_flex().gap_1().child(title).children(self.children)
+        v_flex().gap_0p5().overflow_x_hidden().child(title).children(self.children)
     }
 }
 
@@ -70,8 +70,10 @@ impl RenderOnce for MenuGroupItem {
         let mut item = div()
             .id(self.title.clone())
             .px_2()
-            .py_0p5()
+            .py_px()
             .text_sm()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
             .child(self.title)
             .rounded(cx.theme().radius)
             .when_some(self.on_click, |this, on_click| {

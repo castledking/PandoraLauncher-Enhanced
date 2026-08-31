@@ -13,6 +13,7 @@ use schema::{minecraft_profile::SkinVariant, unique_bytes::UniqueBytes};
 use crate::{
     component::player_model::{self, PlayerModel, PlayerModelState},
     icon::PandoraIcon,
+    interface_config::InterfaceConfig,
 };
 
 pub struct PlayerModelWidget {
@@ -253,7 +254,18 @@ impl Render for PlayerModelWidget {
                             }
                             widget.last_drag = Some(event.event.position);
                         }
-                    })),
+                    }))
+                    .on_scroll_wheel(cx.listener({
+                        |widget, event: &ScrollWheelEvent, _, cx| {
+                            App::notify(cx, widget.player_model_state.entity_id());
+                            let delta = match event.delta {
+                                ScrollDelta::Pixels(pixels) => pixels.y.as_f32().signum() as i32,
+                                ScrollDelta::Lines(lines) => lines.y.signum() as i32,
+                            };
+                            let config = InterfaceConfig::get_mut(cx);
+                            config.player_model_zoom = (config.player_model_zoom + delta * 5).clamp(50, 400);
+                        }
+                    }))
             )
             .child(
                 v_flex()

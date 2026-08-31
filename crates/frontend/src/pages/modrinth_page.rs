@@ -104,6 +104,7 @@ pub struct ModrinthSearchPage {
     search_state: Entity<InputState>,
     _search_input_subscription: Subscription,
     _delayed_clear_task: Task<()>,
+    _meta_reload_task: Task<()>,
     filter_loaders: EnumSet<Loader>,
     filter_categories: BTreeSet<&'static str>,
     sort_option: ModrinthSearchIndex,
@@ -335,6 +336,7 @@ impl ModrinthSearchPage {
             search_state,
             _search_input_subscription,
             _delayed_clear_task: Task::ready(()),
+            _meta_reload_task: Task::ready(()),
             filter_loaders: Default::default(),
             filter_categories: Default::default(),
             sort_option: ModrinthSearchIndex::default(),
@@ -456,6 +458,7 @@ impl ModrinthSearchPage {
         }
         self.pending_reload = false;
         self.search_error = None;
+        self._meta_reload_task = Task::ready(());
 
         let query = if self.last_search.is_empty() {
             None
@@ -550,9 +553,20 @@ impl ModrinthSearchPage {
                             page.loading = None;
                             cx.notify();
                         },
-                        FrontendMetadataResult::Error(shared_string) => {
+                        FrontendMetadataResult::Error(shared_string, alive) => {
                             page.search_error = Some(shared_string);
                             page.loading = None;
+
+                            if let Some(alive) = alive {
+                                page._meta_reload_task = cx.spawn(async move |page, cx| {
+                                    alive.await_notification().await;
+                                    let _ = page.update(cx, |page, cx| {
+                                        page.load_more(cx);
+                                        cx.notify();
+                                    });
+                                });
+                            }
+
                             cx.notify();
                         },
                     }
@@ -565,8 +579,18 @@ impl ModrinthSearchPage {
             FrontendMetadataResult::Loaded(result) => {
                 self.apply_search_data(result);
             },
-            FrontendMetadataResult::Error(shared_string) => {
+            FrontendMetadataResult::Error(shared_string, alive) => {
                 self.search_error = Some(shared_string);
+                self.loading = None;
+
+                if let Some(alive) = alive {
+                    self._meta_reload_task = cx.spawn(async move |page, cx| {
+                        alive.await_notification().await;
+                        let _ = page.update(cx, |page, cx| {
+                            page.load_more(cx);
+                        });
+                    });
+                }
             },
         }
     }
@@ -707,14 +731,14 @@ impl ModrinthSearchPage {
                         actions.insert(2, ModAction::UpdateCheck);
                     }
 
-                    render_mod_action_dropdown(
+render_mod_action_dropdown(
                         (*dropdown_id).clone().into(),
                         actions,
                         Rc::new(move |action, window, cx| match action {
                             ModAction::Reinstall => {
                                 if project_type != ModrinthProjectType::Other {
                                     crate::modals::modrinth_install::open(
-                                        name.as_str(),
+                                        name.clone(),
                                         project_id.clone(),
                                         project_type,
                                         install_for.clone(),
@@ -803,7 +827,7 @@ impl ModrinthSearchPage {
 
                                 if project_type != ModrinthProjectType::Other {
                                     primary_action.perform(
-                                        name.as_str(),
+                                        name.clone(),
                                         &project_id,
                                         project_type,
                                         install_for,
@@ -934,9 +958,9 @@ impl PrimaryAction {
         }
     }
 
-    pub fn perform(
+pub fn perform(
         &self,
-        name: &str,
+        name: SharedString,
         project_id: &Arc<str>,
         project_type: ModrinthProjectType,
         install_for: Option<InstanceID>,

@@ -8,6 +8,7 @@ use std::{
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
     instance::{ContentFolder, ContentSummary, ContentType, ModpackFileSource},
+    manual_download::ManualCurseforgeDownload,
     modal_action::{ModalAction, ProgressTrackerFinishType},
     safe_path::SafePath,
 };
@@ -649,6 +650,7 @@ impl BackendState {
                         mod_id: project_id,
                         game_version: content.minecraft_version.into(),
                         mod_loader_type,
+                        release_types: None,
                         page_size: Some(1),
                     }))
                     .await;
@@ -666,6 +668,7 @@ impl BackendState {
                             mod_id: project_id,
                             game_version: content.minecraft_version.into(),
                             mod_loader_type: None,
+                            release_types: None,
                             page_size: Some(1),
                         }))
                         .await;
@@ -684,6 +687,7 @@ impl BackendState {
                             mod_id: project_id,
                             game_version: None,
                             mod_loader_type: None,
+                            release_types: None,
                             page_size: Some(1),
                         }))
                         .await;
@@ -1109,6 +1113,7 @@ impl BackendState {
         };
 
         let mut tasks = Vec::new();
+        let mut manual_downloads: Vec<ManualCurseforgeDownload> = Vec::new();
 
         if let Some(files) = files {
             for file in files.iter() {
@@ -1158,7 +1163,7 @@ impl BackendState {
                 .await;
 
             if let Ok(files) = files_result {
-                let mut tasks = Vec::new();
+                let mut curseforge_tasks = Vec::new();
                 // Associate each resolved file with its CurseForge project so the modpack's
                 // mods show as known projects (and can be updated) instead of "unknown".
                 let mut curseforge_sources: Vec<([u8; 20], ContentSource)> = Vec::new();
@@ -1201,32 +1206,46 @@ impl BackendState {
                         extension: path.extension().map(OsString::from),
                     };
 
-                    let Some(download_url) = &file.download_url else {
-                        continue;
-                    };
-
                     let meta = ModrinthDownloadMeta {
                         reason: ContentInstallReason::Modpack,
                         game_version: download_meta.game_version,
                         loader: download_meta.loader,
                     };
-                    tasks.push(self.download_file_into_library_inner(
-                        modal_action,
-                        name,
-                        &download_url,
-                        hash,
-                        file.file_length as usize,
-                        meta,
-                    ));
+                    if let Some(download_url) = &file.download_url {
+                        curseforge_tasks.push(self.download_file_into_library_inner(
+                            modal_action,
+                            name,
+                            &download_url,
+                            hash,
+                            file.file_length as usize,
+                            meta,
+                        ));
+                    } else {
+                        let (project_name, slug) = self.curseforge_project_name_and_slug(file.mod_id).await;
+                        manual_downloads.push(ManualCurseforgeDownload {
+                            project_id: file.mod_id,
+                            file_id: file.id,
+                            name: project_name,
+                            filename: file.file_name.clone(),
+                            sha1: hash,
+                            size: file.file_length,
+                            page_url: format!("https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{}", file.id).into(),
+                        });
+                    }
                 }
 
                 if !curseforge_sources.is_empty() {
                     self.mod_metadata_manager.set_content_sources(curseforge_sources.into_iter());
                 }
+                _ = futures::future::try_join_all(curseforge_tasks).await;
             }
         }
 
         _ = futures::future::try_join_all(tasks).await;
+        if !manual_downloads.is_empty() {
+            self.create_manual_curseforge_download_session(manual_downloads).await
+                .map_err(|error| ContentInstallError::IoError(std::io::Error::other(error.to_string())))?;
+        }
         result.2 = self.mod_metadata_manager.get_path(&result.0);
 
         Ok(result)

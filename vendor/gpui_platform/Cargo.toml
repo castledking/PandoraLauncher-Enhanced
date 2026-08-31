@@ -24,6 +24,10 @@ readme = false
 license = "Apache-2.0"
 
 [features]
+bench-support = [
+    "gpui/bench-support",
+    "gpui_macos/bench-support",
+]
 default = []
 font-kit = ["gpui_macos/font-kit"]
 runtime_shaders = ["gpui_macos/runtime_shaders"]
@@ -36,6 +40,7 @@ screen-capture = [
 test-support = [
     "gpui/test-support",
     "gpui_macos/test-support",
+    "gpui_windows/test-support",
 ]
 wayland = ["gpui_linux/wayland"]
 x11 = ["gpui_linux/x11"]

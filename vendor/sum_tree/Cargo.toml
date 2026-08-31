@@ -24,7 +24,7 @@ description = "A sum tree data structure, a concurrency-friendly B-tree"
 readme = false
 license = "Apache-2.0"
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]
 
 [features]
@@ -61,7 +61,7 @@ version = "0.1.40"
 path = "../ztracing"
 
 [dev-dependencies.ctor]
-version = "1.0.6"
+version = "1.0.12"
 
 [dev-dependencies.proptest]
 git = "https://github.com/proptest-rs/proptest"

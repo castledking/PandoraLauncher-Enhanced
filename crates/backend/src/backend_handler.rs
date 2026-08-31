@@ -25,7 +25,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{
     auxiliary::AuxiliaryContentMeta,
     content::{ContentInstallReason, ContentSource},
-    curseforge::{CurseforgeGetModFilesRequest, CurseforgeModLoaderType},
+    curseforge::CurseforgeGetModFilesRequest,
     loader::Loader,
     minecraft_profile::{MinecraftProfileResponse, SkinVariant},
     modrinth::ModrinthLoader,
@@ -50,10 +50,11 @@ use crate::{
     log_reader,
     metadata::{
         items::{
-            AssetsIndexMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem,
-            FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem,
-            MinecraftVersionMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem,
-            ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem,
+            AssetsIndexMetadataItem, CurseforgeChangelogMetadataItem, CurseforgeGetModFilesMetadataItem,
+            CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem,
+            MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthChangelogMetadataItem,
+            ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem,
+            ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem,
             MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem,
             VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters,
         },
@@ -110,6 +111,10 @@ impl BackendState {
                                 meta.fetch_with_keepalive(&ModrinthProjectMetadataItem(project), force_reload).await;
                             (result.map(MetadataResult::ModrinthProjectResult), handle)
                         },
+                        bridge::meta::MetadataRequest::ModrinthChangelog(ref request) => {
+                            let (result, handle) = meta.fetch_with_keepalive(&ModrinthChangelogMetadataItem(request), force_reload).await;
+                            (result.map(MetadataResult::ModrinthChangelogResult), handle)
+                        },
                         bridge::meta::MetadataRequest::CurseforgeSearch(ref search) => {
                             let (result, handle) =
                                 meta.fetch_with_keepalive(&CurseforgeSearchMetadataItem(search), force_reload).await;
@@ -120,6 +125,10 @@ impl BackendState {
                                 .fetch_with_keepalive(&CurseforgeGetModFilesMetadataItem(request), force_reload)
                                 .await;
                             (result.map(MetadataResult::CurseforgeGetModFilesResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeChangelog(ref request) => {
+                            let (result, handle) = meta.fetch_with_keepalive(&CurseforgeChangelogMetadataItem(request), force_reload).await;
+                            (result.map(MetadataResult::CurseforgeChangelogResult), handle)
                         },
                     };
                     let result = result.map_err(|err| format!("{}", err).into());
@@ -212,10 +221,14 @@ impl BackendState {
                     });
                 }
             },
-            MessageToBackend::SetInstanceDisableFileSyncing {
-                id,
-                disable_file_syncing,
-            } => {
+MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.update_channel = update_channel;
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceDisableFileSyncing { id, disable_file_syncing } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
                         configuration.disable_file_syncing = disable_file_syncing;
@@ -470,7 +483,6 @@ impl BackendState {
                 child_filename,
                 disabled_default,
                 enabled,
-                delete,
             } => {
                 let mut instance_state = self.instance_state.write();
                 if let Some(instance) = instance_state.instances.get_mut(id)
@@ -496,45 +508,11 @@ impl BackendState {
                         None
                     };
 
-                    // Deleting a modpack child must also remove its already-extracted file(s) from
-                    // disk — the resourcepacks/shaderpacks folders aren't rebuilt on launch the way
-                    // mods are, so otherwise a deleted resource pack/shader would linger.
-                    let mut extracted_removals: Vec<std::path::PathBuf> = Vec::new();
-                    if delete && let Some(files) = instance_mod.content_summary.extra.modpack_files() {
-                        for file in files.iter() {
-                            if file.path.as_str() != &*child_filename {
-                                continue;
-                            }
-                            let Some(relative) = file.path() else {
-                                continue;
-                            };
-                            let full = relative.to_path(&instance.dot_minecraft_path);
-                            if folder == ContentFolder::Mods
-                                && let Some(backup) = instance.frozen_mods_backup_path(&full)
-                            {
-                                extracted_removals.push(backup);
-                            }
-                            extracted_removals.push(full);
-                        }
-                    }
-
                     let mut aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).unwrap_or_default();
 
                     let mut changed = false;
 
-                    if delete {
-                        if let Some(child_id) = child_id {
-                            changed |= aux.disabled_children.disabled_ids.remove(&child_id);
-                            changed |= aux.disabled_children.enabled_ids.remove(&child_id);
-                        }
-                        if let Some(child_name) = child_name {
-                            changed |= aux.disabled_children.disabled_names.remove(&child_name);
-                            changed |= aux.disabled_children.enabled_names.remove(&child_name);
-                        }
-                        changed |= aux.disabled_children.disabled_filenames.remove(&child_filename);
-                        changed |= aux.disabled_children.enabled_filenames.remove(&child_filename);
-                        changed |= aux.disabled_children.deleted_filenames.insert(child_filename);
-                    } else if disabled_default {
+                    if disabled_default {
                         if enabled {
                             if let Some(child_id) = child_id {
                                 changed |= aux.disabled_children.enabled_ids.insert(child_id);
@@ -592,10 +570,6 @@ impl BackendState {
                         }
                     }
 
-                    for path in &extracted_removals {
-                        let _ = std::fs::remove_file(path);
-                    }
-
                     self.send.send(MessageToFrontend::Refresh);
                 }
             },
@@ -617,13 +591,26 @@ impl BackendState {
                     (summary, configuration.loader, configuration.minecraft_version)
                 };
 
-                self.download_modpack_children(&summary, loader, minecraft_version, &modal_action).await;
-
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let mut changes = FolderChanges::no_changes();
-                    changes.dirty_path(summary.path);
-                    instance.mark_content_dirty(self, ContentFolder::Mods, changes, true);
-                }
+                let this = self.clone();
+                tokio::spawn(async move {
+                    this.download_modpack_children(&summary, loader, minecraft_version, &modal_action).await;
+                    if let Some(instance) = this.instance_state.write().instances.get_mut(id) {
+                        let mut changes = FolderChanges::no_changes();
+                        changes.dirty_path(summary.path);
+                        instance.mark_content_dirty(&this, ContentFolder::Mods, changes, true);
+                    }
+                    modal_action.set_finished();
+                    this.send.send(MessageToFrontend::Refresh);
+                });
+            },
+            MessageToBackend::StartManualCurseforgeDownloads { request } => {
+                self.start_manual_curseforge_downloads(request).await;
+            },
+            MessageToBackend::CheckManualCurseforgeDownloads { session_id } => {
+                self.check_manual_curseforge_downloads(session_id).await;
+            },
+            MessageToBackend::CancelManualCurseforgeDownloads { session_id } => {
+                self.cancel_manual_curseforge_downloads(session_id).await;
             },
             MessageToBackend::DownloadAllMetadata => {
                 self.download_all_metadata().await;
@@ -761,13 +748,10 @@ impl BackendState {
                     self.send.send_warning("Cannot modify mods folder while instance is running");
                 }
             },
-            MessageToBackend::UpdateCheck {
-                instance: id,
-                modal_action,
-            } => {
-                let (loader, version) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            MessageToBackend::UpdateCheck { instance: id, modal_action } => {
+                let (loader, version, update_channel) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     let configuration = instance.configuration.get();
-                    (configuration.loader, configuration.minecraft_version)
+                    (configuration.loader, configuration.minecraft_version, configuration.update_channel)
                 } else {
                     self.send.send_error("Can't update instance, unknown id");
                     modal_action.set_finished_with_error("Can't update instance, unknown id".into());
@@ -783,8 +767,8 @@ impl BackendState {
                     content.extend_from_slice(&*summaries);
                 }
 
-                let modrinth_loader = loader.as_modrinth_loader();
-                if modrinth_loader == ModrinthLoader::Unknown {
+                let instance_modrinth_loader = loader.as_modrinth_loader();
+                if instance_modrinth_loader == ModrinthLoader::Unknown {
                     modal_action.set_finished_with_error("Unable to update instance, unsupported loader".into());
                     return;
                 }
@@ -793,44 +777,6 @@ impl BackendState {
                 tracker.set_total(content.len());
 
                 let semaphore = Semaphore::new(8);
-
-                let mod_params = &VersionUpdateParameters {
-                    loaders: [modrinth_loader].into(),
-                    game_versions: [version].into(),
-                };
-
-                let fabric_mod_params = &VersionUpdateParameters {
-                    loaders: [ModrinthLoader::Fabric].into(),
-                    game_versions: [version].into(),
-                };
-
-                let forge_mod_params = &VersionUpdateParameters {
-                    loaders: [ModrinthLoader::Forge].into(),
-                    game_versions: [version].into(),
-                };
-
-                let neoforge_mod_params = &VersionUpdateParameters {
-                    loaders: [ModrinthLoader::NeoForge].into(),
-                    game_versions: [version].into(),
-                };
-
-                let resourcepack_params = &VersionUpdateParameters {
-                    loaders: [ModrinthLoader::Minecraft].into(),
-                    game_versions: [version].into(),
-                };
-
-                let shaderpack_params = &VersionUpdateParameters {
-                    loaders: [ModrinthLoader::Iris, ModrinthLoader::Optifine, ModrinthLoader::Canvas].into(),
-                    game_versions: [version].into(),
-                };
-
-                let modrinth_modpack_params = &VersionV3UpdateParameters {
-                    loaders: ["mrpack".into()].into(),
-                    loader_fields: VersionV3LoaderFields {
-                        mrpack_loaders: [modrinth_loader].into(),
-                        game_versions: [version].into(),
-                    },
-                };
 
                 let meta = self.meta.clone();
 
@@ -857,50 +803,45 @@ impl BackendState {
                                 },
                                 ContentSource::ModrinthUnknown | ContentSource::ModrinthProject { .. } => {
                                     let permit = semaphore.acquire().await.unwrap();
-                                    let result = match summary.content_summary.extra {
-                                        ContentType::Fabric => {
-                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: fabric_mod_params.clone()
-                                            }).await
-                                        },
-                                        ContentType::Forge | ContentType::LegacyForge => {
-                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: forge_mod_params.clone()
-                                            }).await
-                                        },
-                                        ContentType::NeoForge => {
-                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: neoforge_mod_params.clone()
-                                            }).await
-                                        },
-                                        ContentType::JavaModule | ContentType::CurseforgeModpack { .. } | ContentType::Unknown => {
-                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: mod_params.clone()
-                                            }).await
-                                        },
-                                        ContentType::ModrinthModpack { .. } => {
-                                            meta.fetch(&ModrinthV3VersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: modrinth_modpack_params.clone()
-                                            }).await
-                                        },
-                                        ContentType::ResourcePack => {
-                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: resourcepack_params.clone()
-                                            }).await
-                                        },
-                                        ContentType::ShaderPack => {
-                                            meta.fetch(&ModrinthVersionUpdateMetadataItem {
-                                                sha1: hex::encode(summary.content_summary.hash).into(),
-                                                params: shaderpack_params.clone()
-                                            }).await
-                                        },
-                                    };
+
+                                    let sha1: Arc<str> = hex::encode(summary.content_summary.hash).into();
+                                    let result = async {
+                                        for &version_types in update_channel.modrinth_version_types_with_fallback().iter() {
+                                            let fetch_result = match &summary.content_summary.extra {
+                                                ContentType::ModrinthModpack { .. } => {
+                                                    meta.fetch(&ModrinthV3VersionUpdateMetadataItem {
+                                                        sha1: sha1.clone(),
+                                                        params: VersionV3UpdateParameters {
+                                                            loaders: ["mrpack".into()].into(),
+                                                            loader_fields: VersionV3LoaderFields {
+                                                                mrpack_loaders: [instance_modrinth_loader].into(),
+                                                                game_versions: [version].into(),
+                                                            },
+                                                            version_types,
+                                                        },
+                                                    }).await
+                                                },
+                                                extra => {
+                                                    let loaders = extra.modrinth_loaders(instance_modrinth_loader);
+                                                    meta.fetch(&ModrinthVersionUpdateMetadataItem {
+                                                        sha1: sha1.clone(),
+                                                        params: VersionUpdateParameters {
+                                                            loaders,
+                                                            game_versions: [version].into(),
+                                                            version_types,
+                                                        }
+                                                    }).await
+                                                },
+                                            };
+
+                                            if !matches!(fetch_result, Err(MetaLoadError::NonOK(404))) {
+                                                return fetch_result;
+                                            }
+                                        }
+
+                                        Err(MetaLoadError::NonOK(404))
+                                    }.await;
+
                                     drop(permit);
 
                                     tracker.add_count(1);
@@ -943,25 +884,31 @@ impl BackendState {
                                 ContentSource::CurseforgeProject { project_id } => {
                                     let permit = semaphore.acquire().await.unwrap();
 
-                                    let mod_loader_type = match summary.content_summary.extra {
-                                        ContentType::Fabric => {
-                                            Some(CurseforgeModLoaderType::Fabric as u32)
-                                        },
-                                        ContentType::Forge | ContentType::LegacyForge => {
-                                            Some(CurseforgeModLoaderType::Forge as u32)
-                                        },
-                                        ContentType::NeoForge => {
-                                            Some(CurseforgeModLoaderType::NeoForge as u32)
-                                        },
-                                        _ => None
-                                    };
+                                    let mod_loader_type = summary.content_summary.extra.curseforge_loader().map(|loader| loader as u32);
 
-                                    let result = self.meta.fetch(&CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
-                                        mod_id: project_id,
-                                        game_version: Some(version),
-                                        mod_loader_type,
-                                        page_size: Some(1)
-                                    })).await;
+                                    let result = async {
+                                        for &release_types in update_channel.curseforge_release_types_with_fallback().iter() {
+                                            let fetch_result = meta.fetch(&CurseforgeGetModFilesMetadataItem(
+                                                &CurseforgeGetModFilesRequest {
+                                                    mod_id: project_id,
+                                                    game_version: Some(version),
+                                                    mod_loader_type,
+                                                    release_types: Some(release_types),
+                                                    page_size: Some(1)
+                                                }
+                                            )).await;
+
+                                            if match &fetch_result {
+                                                Err(MetaLoadError::NonOK(404)) => false,
+                                                Ok(files) => !files.data.is_empty(),
+                                                Err(_) => true,
+                                            } {
+                                                return fetch_result;
+                                            }
+                                        }
+
+                                        Err(MetaLoadError::NonOK(404))
+                                    }.await;
 
                                     drop(permit);
 
@@ -1697,16 +1644,6 @@ impl BackendState {
                     account_info.accounts.move_index(from_index, to_index);
                 });
             },
-            MessageToBackend::SetOpenGameOutputAfterLaunching { value } => {
-                self.config.write().modify(|config| {
-                    config.dont_open_game_output_when_launching = !value;
-                });
-            },
-            MessageToBackend::SetAllowModifyWhileRunning { value } => {
-                self.config.write().modify(|config| {
-                    config.allow_modify_while_running = value;
-                });
-            },
             MessageToBackend::SetProxyConfiguration { config, password } => {
                 self.config.write().modify(|backend_config| {
                     backend_config.proxy = config;
@@ -1766,11 +1703,7 @@ impl BackendState {
                         return;
                     };
 
-                    #[cfg(unix)]
-                    let is_real_folder = !instance_root.is_symlink();
-                    #[cfg(windows)]
-                    let is_real_folder =
-                        !instance_root.is_symlink() && !junction::exists(&instance_root).unwrap_or(false);
+let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes junction points
 
                     if is_real_folder && let Some(name) = path.to_str() {
                         self.rename_instance(id, name).await;

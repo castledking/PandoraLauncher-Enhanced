@@ -297,24 +297,24 @@ impl InstanceSubpageType {
         cx: &mut App,
     ) -> Option<InstanceSubpage> {
         Some(match self {
-            InstanceSubpageType::Quickplay => {
-                InstanceSubpage::Quickplay(cx.new(|cx| InstanceQuickplaySubpage::new(instance, data, window, cx)))
-            },
-            InstanceSubpageType::Logs => {
-                InstanceSubpage::Logs(cx.new(|cx| InstanceLogsSubpage::new(instance, backend_handle, window, cx)))
-            },
-            InstanceSubpageType::Mods => InstanceSubpage::Mods(
-                cx.new(|cx| InstanceContentSubpage::new(instance, ContentType::Mods, backend_handle, window, cx)),
-            ),
-            InstanceSubpageType::ResourcePacks => InstanceSubpage::ResourcePacks(cx.new(|cx| {
-                InstanceContentSubpage::new(instance, ContentType::ResourcePacks, backend_handle, window, cx)
+InstanceSubpageType::Quickplay => InstanceSubpage::Quickplay(cx.new(|cx| {
+                InstanceQuickplaySubpage::new(instance, data, window, cx)
             })),
-            InstanceSubpageType::Shaders => InstanceSubpage::Shaders(
-                cx.new(|cx| InstanceContentSubpage::new(instance, ContentType::Shaders, backend_handle, window, cx)),
-            ),
-            InstanceSubpageType::Settings => InstanceSubpage::Settings(
-                cx.new(|cx| InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)),
-            ),
+            InstanceSubpageType::Logs => InstanceSubpage::Logs(cx.new(|cx| {
+                InstanceLogsSubpage::new(instance, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::Mods => InstanceSubpage::Mods(cx.new(|cx| {
+                InstanceContentSubpage::new(instance, ContentType::Mods, data, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::ResourcePacks => InstanceSubpage::ResourcePacks(cx.new(|cx| {
+                InstanceContentSubpage::new(instance, ContentType::ResourcePacks, data, backend_handle, window, cx)
+            })),
+InstanceSubpageType::Shaders => InstanceSubpage::Shaders(cx.new(|cx| {
+                InstanceContentSubpage::new(instance, ContentType::Shaders, data, backend_handle, window, cx)
+            })),
+            InstanceSubpageType::Settings => InstanceSubpage::Settings(cx.new(|cx| {
+                InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)
+            })),
             InstanceSubpageType::LiveGameOutput => {
                 if let Some(game_output) = instance.read(cx).live_game_output.clone() {
                     InstanceSubpage::LiveGameOutput(game_output)

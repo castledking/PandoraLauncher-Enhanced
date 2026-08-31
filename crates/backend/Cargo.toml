@@ -67,5 +67,5 @@ mslnk.workspace = true
 windows.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libseccomp.workspace = true
+udev.workspace = true
 libc.workspace = true

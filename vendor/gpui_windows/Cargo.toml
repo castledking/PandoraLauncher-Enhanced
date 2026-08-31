@@ -23,6 +23,9 @@ autobenches = false
 readme = false
 license = "Apache-2.0"
 
+[package.metadata.cargo-shear]
+ignored = ["scap"]
+
 [features]
 default = ["gpui/default"]
 screen-capture = [

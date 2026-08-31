@@ -27,6 +27,8 @@ use schema::{
     loader::Loader,
     modrinth::ModrinthProjectType,
 };
+use parking_lot::Mutex;
+use rustc_hash::FxHashSet;
 use ustr::Ustr;
 
 use crate::{
@@ -34,7 +36,7 @@ use crate::{
         content_list::ContentListDelegate,
         named_dropdown::{NamedDropdown, NamedDropdownItem},
     },
-    entity::instance::{ContentStates, InstanceEntry},
+    entity::{DataEntities, instance::{ContentStates, InstanceEntry}},
     interface_config::{InstanceContentSortKey, InterfaceConfig, PreferredAddContentSource},
     root,
     ui::PageType,
@@ -49,6 +51,7 @@ pub struct InstanceContentSubpage {
     backend_handle: BackendHandle,
     content_states: ContentStates,
     content_list: Entity<ListState<ContentListDelegate>>,
+    updating: Arc<Mutex<FxHashSet<u64>>>,
     content: Entity<Option<Arc<[InstanceContentSummary]>>>,
     mods_content: Option<Entity<Option<Arc<[InstanceContentSummary]>>>>,
     sort_dropdown: Entity<SelectState<NamedDropdown<InstanceContentSortKey>>>,
@@ -180,6 +183,7 @@ impl InstanceContentSubpage {
     pub fn new(
         instance: &Entity<InstanceEntry>,
         content_type: ContentType,
+        data: &DataEntities,
         backend_handle: BackendHandle,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
@@ -205,15 +209,8 @@ impl InstanceContentSubpage {
             sort_key = valid_sort_modes[0];
         }
 
-        let mut content_list_delegate = ContentListDelegate::new(
-            instance_id,
-            content_folder,
-            backend_handle.clone(),
-            instance_loader,
-            instance_version,
-            sort_key,
-            enabled_first,
-        );
+let updating = Arc::new(Mutex::new(FxHashSet::default()));
+        let mut content_list_delegate = ContentListDelegate::new(instance_id, content_folder, data, instance_loader, instance_version, sort_key, enabled_first, updating.clone());
 
         let (needs_update_check, update_count) = if let Some(new_content) = content.read(cx) {
             content_list_delegate.set_content(&combined_content_of(&content, mods_content.as_ref(), cx));
@@ -309,6 +306,7 @@ impl InstanceContentSubpage {
             backend_handle,
             content_states,
             content_list,
+            updating,
             content,
             mods_content,
             sort_dropdown,
@@ -381,81 +379,75 @@ impl Render for InstanceContentSubpage {
             .mb_1()
             .ml_1()
             .child(div().text_lg().child(self.content_type.title()))
-            .child(
-                Button::new("update_check")
-                    .label(t::instance::content::update::check::label(false))
+            .child(Button::new("update_check").label(t::instance::content::update::check::label(false)).success().compact().small().on_click({
+                let backend_handle = self.backend_handle.clone();
+                let instance_id = self.instance;
+                move |_, window, cx| {
+                    crate::root::start_update_check(instance_id, &backend_handle, window, cx);
+                }
+            }))
+            .child(DropdownButton::new("addcontent")
+                .success()
+                .small()
+                .button(match source {
+                    PreferredAddContentSource::Modrinth => {
+                        Button::new("addmr")
+                            .compact()
+                            .label(t::instance::content::install::from_modrinth())
+                            .on_click(cx.listener(InstanceContentSubpage::add_from_modrinth))
+                    },
+                    PreferredAddContentSource::CurseForge => {
+                        Button::new("addcf")
+                            .compact()
+                            .label(t::instance::content::install::from_curseforge())
+                            .on_click(cx.listener(InstanceContentSubpage::add_from_curseforge))
+                    },
+                    PreferredAddContentSource::File => {
+                        Button::new("addfile")
+                            .compact()
+                            .label(t::instance::content::install::from_file())
+                            .on_click(cx.listener(InstanceContentSubpage::add_from_file))
+                    },
+                })
+                .dropdown_menu(move |this, window, _| {
+                    let mr = PopupMenuItem::new(t::instance::content::install::from_modrinth())
+                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_modrinth));
+                    let cf = PopupMenuItem::new(t::instance::content::install::from_curseforge())
+                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_curseforge));
+                    let file = PopupMenuItem::new(t::instance::content::install::from_file())
+                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_file));
+
+this.item(mr).item(cf).item(file)
+                }))
+            .when(!self.needs_update_check && self.update_count > 0, |this| {
+                this.child(Button::new("update_all")
+                    .label(match self.content_type {
+                        ContentType::Mods => t::instance::content::update_all_mods(self.update_count),
+                        ContentType::ResourcePacks => t::instance::content::update_all_resourcepacks(self.update_count),
+                        ContentType::Shaders => t::instance::content::update_all_shaders(self.update_count),
+                    })
                     .success()
                     .compact()
                     .small()
                     .on_click({
-                        let backend_handle = self.backend_handle.clone();
-                        let instance_id = self.instance;
-                        move |_, window, cx| {
-                            crate::root::start_update_check(instance_id, &backend_handle, window, cx);
-                        }
-                    }),
-            )
-            .child(
-                DropdownButton::new("addcontent")
-                    .success()
-                    .compact()
-                    .small()
-                    .button(match source {
-                        PreferredAddContentSource::Modrinth => Button::new("addmr")
-                            .label(t::instance::content::install::from_modrinth())
-                            .on_click(cx.listener(InstanceContentSubpage::add_from_modrinth)),
-                        PreferredAddContentSource::CurseForge => Button::new("addcf")
-                            .label(t::instance::content::install::from_curseforge())
-                            .on_click(cx.listener(InstanceContentSubpage::add_from_curseforge)),
-                        PreferredAddContentSource::File => Button::new("addfile")
-                            .label(t::instance::content::install::from_file())
-                            .on_click(cx.listener(InstanceContentSubpage::add_from_file)),
-                    })
-                    .dropdown_menu(move |this, window, _| {
-                        let mr = PopupMenuItem::new(t::instance::content::install::from_modrinth())
-                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_modrinth));
-                        let cf = PopupMenuItem::new(t::instance::content::install::from_curseforge())
-                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_curseforge));
-                        let file = PopupMenuItem::new(t::instance::content::install::from_file())
-                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_file));
+                        cx.listener(move |page, _, window, cx| {
+                            if let Some(content) = page.content.read(cx).clone() {
+                                let hashes: Vec<u64> = content.iter()
+                                    .filter(|summary| summary.update.can_update(page.instance_loader, page.instance_version.as_str()))
+                                    .map(|summary| summary.filename_hash)
+                                    .collect();
 
-                        this.item(mr).item(cf).item(file)
-                    }),
-            )
-            .when(!self.needs_update_check && self.update_count > 0, |this| {
-                this.child(
-                    Button::new("update_all")
-                        .label(match self.content_type {
-                            ContentType::Mods => t::instance::content::update_all_mods(self.update_count),
-                            ContentType::ResourcePacks => {
-                                t::instance::content::update_all_resourcepacks(self.update_count)
-                            },
-                            ContentType::Shaders => t::instance::content::update_all_shaders(self.update_count),
-                        })
-                        .success()
-                        .compact()
-                        .small()
-                        .on_click({
-                            cx.listener(move |page, _, window, cx| {
-                                if let Some(content) = page.content.read(cx).clone() {
-                                    for summary in content.iter() {
-                                        if summary
-                                            .update
-                                            .can_update(page.instance_loader, page.instance_version.as_str())
-                                        {
-                                            crate::root::update_single_mod(
-                                                page.instance,
-                                                summary.id,
-                                                &page.backend_handle,
-                                                window,
-                                                cx,
-                                            );
-                                        }
+                                page.updating.lock().extend(hashes.iter());
+                                page.content_list.update(cx, |_, cx| cx.notify());
+
+                                for summary in content.iter() {
+                                    if summary.update.can_update(page.instance_loader, page.instance_version.as_str()) {
+                                        crate::root::update_single_mod(page.instance, summary.id, &page.backend_handle, window, cx);
                                     }
                                 }
-                            })
-                        }),
-                )
+                            }
+                        })
+                    }))
             });
 
         let filter_bar_controls = h_flex()

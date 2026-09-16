@@ -352,6 +352,11 @@ impl BackendState {
             self.send.clone(),
         ));
 
+        // AppImageLauncher integrates the AppImage again after we replace it during an update, and
+        // it does so asynchronously, so the duplicate entries it leaves behind can only be cleaned
+        // up on the next start
+        tokio::task::spawn_blocking(|| crate::update::cleanup_appimage_desktop_entries(None));
+
         // Pre-fetch version manifest
         self.meta.preload(MinecraftVersionManifestMetadataItem);
 

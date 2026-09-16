@@ -130,6 +130,8 @@ pub async fn import_from_other_launcher(
                 modal_action.set_finished_with_error(
                     "Sqlite error while importing from modrinth, see logs for more info".into(),
                 );
+            } else {
+                modal_action.set_finished();
             }
         },
         OtherLauncher::ATLauncher => {

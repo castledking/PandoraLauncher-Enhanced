@@ -5,7 +5,13 @@ use serde::{Deserialize, Serialize};
 use ustr::Ustr;
 use uuid::Uuid;
 
-use crate::{curseforge::CurseforgeReleaseType, fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment}, loader::Loader, modrinth::ModrinthVersionType};
+use crate::{
+    curseforge::CurseforgeReleaseType,
+    fabric_loader_manifest::FabricLoaderManifest,
+    forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment},
+    loader::Loader,
+    modrinth::ModrinthVersionType,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InstanceConfiguration {
@@ -15,7 +21,11 @@ pub struct InstanceConfiguration {
     pub preferred_loader_version: Option<Ustr>,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub update_channel: UpdateChannel,
-    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_none"
+    )]
     pub preferred_account: Option<Uuid>,
     #[serde(
         default,
@@ -186,17 +196,39 @@ pub enum UpdateChannel {
 impl UpdateChannel {
     pub fn modrinth_version_types_with_fallback(self) -> &'static [&'static [ModrinthVersionType]] {
         match self {
-            Self::Release => &[&[ModrinthVersionType::Release], &[ModrinthVersionType::Beta], &[ModrinthVersionType::Alpha]],
-            Self::Beta => &[&[ModrinthVersionType::Release, ModrinthVersionType::Beta], &[ModrinthVersionType::Alpha]],
-            Self::Alpha => &[&[ModrinthVersionType::Release, ModrinthVersionType::Beta, ModrinthVersionType::Alpha]],
+            Self::Release => &[
+                &[ModrinthVersionType::Release],
+                &[ModrinthVersionType::Beta],
+                &[ModrinthVersionType::Alpha],
+            ],
+            Self::Beta => &[
+                &[ModrinthVersionType::Release, ModrinthVersionType::Beta],
+                &[ModrinthVersionType::Alpha],
+            ],
+            Self::Alpha => &[&[
+                ModrinthVersionType::Release,
+                ModrinthVersionType::Beta,
+                ModrinthVersionType::Alpha,
+            ]],
         }
     }
 
     pub fn curseforge_release_types_with_fallback(self) -> &'static [&'static [CurseforgeReleaseType]] {
         match self {
-            Self::Release => &[&[CurseforgeReleaseType::Release], &[CurseforgeReleaseType::Beta], &[CurseforgeReleaseType::Alpha]],
-            Self::Beta => &[&[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta], &[CurseforgeReleaseType::Alpha]],
-            Self::Alpha => &[&[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta, CurseforgeReleaseType::Alpha]],
+            Self::Release => &[
+                &[CurseforgeReleaseType::Release],
+                &[CurseforgeReleaseType::Beta],
+                &[CurseforgeReleaseType::Alpha],
+            ],
+            Self::Beta => &[
+                &[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta],
+                &[CurseforgeReleaseType::Alpha],
+            ],
+            Self::Alpha => &[&[
+                CurseforgeReleaseType::Release,
+                CurseforgeReleaseType::Beta,
+                CurseforgeReleaseType::Alpha,
+            ]],
         }
     }
 }

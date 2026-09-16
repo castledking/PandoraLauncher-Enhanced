@@ -54,14 +54,16 @@ pub fn unique_name<'a>(parent: &Path, original_name: &'a str, is_dir: bool) -> C
     Cow::Owned(format!("{stem} ({}){ext}", Uuid::new_v4()))
 }
 
-pub(crate) fn check_sha1_hash(path: &Path, expected_hash: [u8; 20]) -> std::io::Result<bool> {
+pub(crate) fn get_sha1_hash(path: &Path) -> std::io::Result<[u8; 20]> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha1::new();
     let _ = std::io::copy(&mut file, &mut hasher)?;
+    Ok(hasher.finalize().try_into().expect("expected sha1 hash to be 20 bytes"))
+}
 
-    let actual_hash = hasher.finalize();
-
-    Ok(expected_hash == *actual_hash)
+pub(crate) fn check_sha1_hash(path: &Path, expected_hash: [u8; 20]) -> std::io::Result<bool> {
+    let actual_hash = get_sha1_hash(path)?;
+    Ok(expected_hash == actual_hash)
 }
 
 #[derive(Debug, thiserror::Error)]

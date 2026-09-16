@@ -22,7 +22,7 @@ use bridge::{
     instance::{
         ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath, ModpackFileSource,
     },
-    manual_download::{ManualCurseforgeDownload, ManualCurseforgeDownloadRequest, ManualCurseforgeDownloadStart},
+    manual_download::ManualCurseforgeDownload,
     message::{EmbeddedOrRaw, MessageToFrontend},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
@@ -30,80 +30,127 @@ use bridge::{
 };
 use image::ImageFormat;
 use indexmap::IndexSet;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use reqwest::{StatusCode, redirect::Policy};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use schema::{
     auxiliary::AuxiliaryContentMeta,
     backend_config::{BackendConfig, ProxyConfig, SyncTargets},
     content::{ContentInstallReason, ContentSource},
-    curseforge::{
-        CachedCurseforgeFileInfo, CurseforgeGetFilesRequest, CurseforgeProject, CURSEFORGE_API_KEY,
-    },
+    curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest},
     instance::InstanceConfiguration,
     loader::Loader,
     minecraft_profile::MinecraftProfileResponse,
 };
 use strum::IntoEnumIterator;
-use tokio::sync::{Mutex, Notify, OnceCell, Semaphore, mpsc::Receiver};
+use tokio::sync::{OnceCell, Semaphore, mpsc::Receiver};
 use ustr::Ustr;
 use uuid::Uuid;
 
 use crate::{
     account::{BackendAccountInfo, MinecraftLoginInfo},
+    curseforge_manual_download::ManualCurseforgeDownloadSession,
     directories::LauncherDirectories,
     id_slab::IdSlab,
     instance::Instance,
     launch::Launcher,
-    lockfile::Lockfile,
-metadata::{
-            items::{
-                CurseforgeGetFilesMetadataItem, MinecraftVersionManifestMetadataItem,
-            },
-            manager::MetadataManager,
-        },
+    metadata::{
+        items::{CurseforgeGetFilesMetadataItem, CurseforgeProjectItem, MinecraftVersionManifestMetadataItem},
+        manager::MetadataManager,
+    },
     mod_metadata::ModMetadataManager,
     persistent::Persistent,
     server_list_pinger::ServerListPinger,
     skin_manager::SkinManager,
 };
 
-fn build_http_clients(
-    user_agent: &str,
-    proxy_config: &ProxyConfig,
-    proxy_password: Option<&str>,
-) -> (reqwest::Client, reqwest::Client) {
-    let proxy_url = proxy_config.to_url(proxy_password);
+#[derive(Clone)]
+pub struct HttpClientProvider {
+    client: Arc<RwLock<reqwest::Client>>,
+    redirecting: Arc<RwLock<reqwest::Client>>,
+}
 
-    let mut http_builder = reqwest::ClientBuilder::new()
-        .connect_timeout(Duration::from_secs(15))
-        .read_timeout(Duration::from_secs(15))
-        .redirect(Policy::none())
-        .use_rustls_tls()
-        .user_agent(user_agent);
+impl HttpClientProvider {
+    pub fn create(user_agent: &str, proxy_config: &ProxyConfig, proxy_password: Option<&str>) -> Self {
+        let (client, redirecting) = Self::build(user_agent, proxy_config, proxy_password);
 
-    let mut redirecting_builder = reqwest::ClientBuilder::new().use_rustls_tls().user_agent(user_agent);
-
-    if let Some(proxy_url) = &proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
-            let proxy = proxy.no_proxy(reqwest::NoProxy::from_env());
-            http_builder = http_builder.proxy(proxy.clone());
-            redirecting_builder = redirecting_builder.proxy(proxy);
-            log::info!(
-                "Proxy configured: {}://{}:{}",
-                proxy_config.protocol.scheme(),
-                proxy_config.host,
-                proxy_config.port
-            );
-        } else {
-            log::warn!("Failed to parse proxy URL, proceeding without proxy");
+        Self {
+            client: Arc::new(RwLock::new(client)),
+            redirecting: Arc::new(RwLock::new(redirecting)),
         }
     }
 
-    let http_client = http_builder.build().expect("Failed to build HTTP client");
-    let redirecting_http_client = redirecting_builder.build().expect("Failed to build redirecting HTTP client");
+    pub fn update(&self, user_agent: &str, proxy_config: &ProxyConfig, proxy_password: Option<&str>) {
+        let (client, redirecting) = Self::build(user_agent, proxy_config, proxy_password);
 
-    (http_client, redirecting_http_client)
+        *self.client.write() = client;
+        *self.redirecting.write() = redirecting;
+    }
+
+    pub fn build(
+        user_agent: &str,
+        proxy_config: &ProxyConfig,
+        proxy_password: Option<&str>,
+    ) -> (reqwest::Client, reqwest::Client) {
+        let proxy_url = proxy_config.to_url(proxy_password);
+
+        let base = || {
+            reqwest::ClientBuilder::new()
+                .connect_timeout(Duration::from_secs(15))
+                .read_timeout(Duration::from_secs(15))
+                .use_rustls_tls()
+                .user_agent(user_agent)
+        };
+
+        const MAX_REDIRECT_COUNT: usize = 5;
+
+        let mut redirecting_builder = (base)().redirect(Policy::limited(MAX_REDIRECT_COUNT));
+        let mut http_builder = (base)().redirect(Policy::custom(|attempt| {
+            if attempt.previous().len() > MAX_REDIRECT_COUNT {
+                return attempt.error("Too many redirects");
+            }
+
+            if let Some(last) = attempt.previous().last() {
+                let from = attempt.url().host_str().unwrap_or(attempt.url().as_str());
+                let to = last.host_str().unwrap_or(last.as_str());
+                if from != to {
+                    let error_message = format!("Cross-origin redirect not allowed ({} to {})", from, to);
+                    return attempt.error(error_message);
+                }
+            }
+
+            attempt.follow()
+        }));
+
+        if let Some(proxy_url) = &proxy_url {
+            if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
+                let proxy = proxy.no_proxy(reqwest::NoProxy::from_env());
+                http_builder = http_builder.proxy(proxy.clone());
+                redirecting_builder = redirecting_builder.proxy(proxy);
+                log::info!(
+                    "Proxy configured: {}://{}:{}",
+                    proxy_config.protocol.scheme(),
+                    proxy_config.host,
+                    proxy_config.port
+                );
+            } else {
+                log::warn!("Failed to parse proxy URL, proceeding without proxy");
+            }
+        }
+
+        let http_client = http_builder.build().expect("Failed to build HTTP client");
+        let redirecting_http_client = redirecting_builder.build().expect("Failed to build redirecting HTTP client");
+
+        (http_client, redirecting_http_client)
+    }
+
+    pub fn client(&self) -> reqwest::Client {
+        self.client.read().clone()
+    }
+
+    pub fn redirecting(&self) -> reqwest::Client {
+        self.redirecting.read().clone()
+    }
 }
 
 pub fn start(
@@ -114,19 +161,14 @@ pub fn start(
     recv: BackendReceiver,
     quit_handler: QuitCoordinator,
 ) {
-    let user_agent = if let Some(version) = option_env!("PANDORA_RELEASE_VERSION") {
-        format!("PandoraLauncher/{version} (https://github.com/Moulberry/PandoraLauncher)")
-    } else {
-        "PandoraLauncher/dev (https://github.com/Moulberry/PandoraLauncher)".to_string()
-    };
-
     let directories = Arc::new(LauncherDirectories::new(launcher_dir));
+    let secret_storage = Arc::new(OnceCell::new());
 
     let mut config: Persistent<BackendConfig> = Persistent::load(directories.config_json.clone());
     let proxy_config = config.get().proxy.clone();
     let proxy_password: Option<String> = if proxy_config.enabled && proxy_config.auth_enabled {
         runtime.block_on(async {
-            match PlatformSecretStorage::new().await {
+            match secret_storage.get_or_init(PlatformSecretStorage::new).await {
                 Ok(storage) => match storage.read_proxy_password().await {
                     Ok(password) => password,
                     Err(e) => {
@@ -144,10 +186,10 @@ pub fn start(
         None
     };
 
-    let (http_client, redirecting_http_client) =
-        build_http_clients(&user_agent, &proxy_config, proxy_password.as_deref());
+    let http_client_provider =
+        HttpClientProvider::create(&*schema::USER_AGENT, &proxy_config, proxy_password.as_deref());
 
-    let meta = Arc::new(MetadataManager::new(http_client.clone(), directories.metadata_dir.clone()));
+    let meta = Arc::new(MetadataManager::new(http_client_provider.clone(), directories.metadata_dir.clone()));
 
     let (watcher_tx, watcher_rx) = tokio::sync::mpsc::channel::<notify_debouncer_full::DebounceEventResult>(64);
     let watcher = notify_debouncer_full::new_debouncer(Duration::from_millis(100), None, move |event| {
@@ -181,8 +223,7 @@ pub fn start(
     let state = BackendState {
         self_handle,
         send: send.clone(),
-        http_client,
-        redirecting_http_client,
+        http_client_provider,
         meta: Arc::clone(&meta),
         instance_state: Arc::new(RwLock::new(state_instances)),
         file_watching: Arc::new(RwLock::new(state_file_watching)),
@@ -190,8 +231,8 @@ pub fn start(
         launcher: Launcher::new(meta, directories, send),
         mod_metadata_manager: Arc::new(mod_metadata_manager),
         account_info: Arc::new(RwLock::new(account_info)),
-        config: Arc::new(RwLock::new(config)),
-        secret_storage: Arc::new(OnceCell::new()),
+        config: Arc::new(Mutex::new(config)),
+        secret_storage,
         login_semaphore: Arc::new(Semaphore::new(1)),
         cached_minecraft_profiles: Default::default(),
         skin_manager: Default::default(),
@@ -199,7 +240,7 @@ pub fn start(
         quit_coordinator: quit_handler,
         should_quit: AtomicBool::new(false),
         content_install_semaphore: Semaphore::new(8),
-        manual_curseforge_downloads: Default::default(),
+        manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
     log::debug!("Doing initial backend load");
@@ -236,6 +277,9 @@ pub enum WatchTarget {
         folder: ContentFolder,
     },
     SkinLibraryDir,
+    ManualCurseForgeDownloadDirectory {
+        session_id: usize,
+    },
 }
 
 pub struct BackendStateInstances {
@@ -254,8 +298,7 @@ pub struct BackendStateFileWatching {
 pub struct BackendState {
     pub self_handle: BackendHandle,
     pub send: FrontendHandle,
-    pub http_client: reqwest::Client,
-    pub redirecting_http_client: reqwest::Client,
+    pub http_client_provider: HttpClientProvider,
     pub meta: Arc<MetadataManager>,
     pub instance_state: Arc<RwLock<BackendStateInstances>>,
     pub file_watching: Arc<RwLock<BackendStateFileWatching>>,
@@ -263,7 +306,7 @@ pub struct BackendState {
     pub launcher: Launcher,
     pub mod_metadata_manager: Arc<ModMetadataManager>,
     pub account_info: Arc<RwLock<Persistent<BackendAccountInfo>>>,
-    pub config: Arc<RwLock<Persistent<BackendConfig>>>,
+    pub config: Arc<Mutex<Persistent<BackendConfig>>>,
     pub secret_storage: Arc<OnceCell<Result<PlatformSecretStorage, SecretStorageError>>>,
     pub login_semaphore: Arc<Semaphore>,
     pub cached_minecraft_profiles: Arc<RwLock<FxHashMap<Uuid, CachedMinecraftProfile>>>,
@@ -272,213 +315,7 @@ pub struct BackendState {
     pub quit_coordinator: QuitCoordinator,
     pub should_quit: AtomicBool,
     pub content_install_semaphore: Semaphore,
-    pub manual_curseforge_downloads: Mutex<HashMap<Uuid, Arc<ManualCurseforgeDownloadSession>>>,
-}
-
-pub struct ManualCurseforgeDownloadSession {
-    files: Arc<[ManualCurseforgeDownload]>,
-    completed_paths: Mutex<HashMap<[u8; 20], PathBuf>>,
-    done: Notify,
-    rescan: Notify,
-    progress: tokio::sync::mpsc::UnboundedSender<[u8; 20]>,
-    cancelled: AtomicBool,
-}
-
-impl ManualCurseforgeDownloadSession {
-    async fn wait(&self) -> Result<Vec<PathBuf>, Arc<str>> {
-        loop {
-            if self.cancelled.load(Ordering::Acquire) {
-                return Err("Manual CurseForge downloads cancelled".into());
-            }
-            let completed = self.completed_paths.lock().await;
-            if self.files.iter().all(|file| completed.contains_key(&file.sha1)) {
-                return Ok(self.files.iter().map(|file| completed[&file.sha1].clone()).collect());
-            }
-            drop(completed);
-            self.done.notified().await;
-        }
-    }
-}
-
-async fn cache_manual_curseforge_download(
-    content_library_dir: &Path,
-    file: &ManualCurseforgeDownload,
-    source: &Path,
-) -> std::io::Result<PathBuf> {
-    let extension = Path::new(&*file.filename).extension();
-    let destination = crate::fs::create_content_library_path_osstrext(content_library_dir, file.sha1, extension);
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
-    let _lock = Lockfile::create(destination.with_added_extension("lock").into()).await?;
-    let destination_valid = {
-        let destination = destination.clone();
-        let hash = file.sha1;
-        tokio::task::spawn_blocking(move || crate::fs::check_sha1_hash(&destination, hash).unwrap_or(false))
-            .await
-            .unwrap_or(false)
-    };
-    if destination_valid {
-        if source != destination {
-            tokio::fs::remove_file(source).await?;
-        }
-        return Ok(destination);
-    }
-
-    let mut temporary = destination.clone();
-    temporary.set_extension(format!("{}.manual-download", Uuid::new_v4()));
-    let moved_source = match tokio::fs::rename(source, &temporary).await {
-        Ok(()) => true,
-        Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {
-            if let Err(err) = tokio::fs::copy(source, &temporary).await {
-                _ = tokio::fs::remove_file(&temporary).await;
-                return Err(err);
-            }
-            false
-        },
-        Err(err) => return Err(err),
-    };
-
-    let temporary_valid = {
-        let temporary = temporary.clone();
-        let hash = file.sha1;
-        tokio::task::spawn_blocking(move || crate::fs::check_sha1_hash(&temporary, hash).unwrap_or(false))
-            .await
-            .unwrap_or(false)
-    };
-    if !temporary_valid {
-        if moved_source {
-            _ = tokio::fs::rename(&temporary, source).await;
-        } else {
-            _ = tokio::fs::remove_file(&temporary).await;
-        }
-        return Err(std::io::Error::other("Cached manual CurseForge download failed SHA-1 verification"));
-    }
-
-    match tokio::fs::remove_file(&destination).await {
-        Ok(()) => {},
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {},
-        Err(err) => {
-            if moved_source {
-                _ = tokio::fs::rename(&temporary, source).await;
-            } else {
-                _ = tokio::fs::remove_file(&temporary).await;
-            }
-            return Err(err);
-        },
-    }
-    if let Err(err) = tokio::fs::rename(&temporary, &destination).await {
-        if moved_source {
-            _ = tokio::fs::rename(&temporary, source).await;
-        } else {
-            _ = tokio::fs::remove_file(&temporary).await;
-        }
-        return Err(err);
-    }
-    if !moved_source {
-        tokio::fs::remove_file(source).await?;
-    }
-
-    Ok(destination)
-}
-
-#[cfg(test)]
-mod manual_curseforge_download_tests {
-    use super::*;
-    use sha1::{Digest, Sha1};
-
-    fn download(hash: [u8; 20], filename: &str, size: u64) -> ManualCurseforgeDownload {
-        ManualCurseforgeDownload {
-            project_id: 1,
-            file_id: 2,
-            name: "Test project".into(),
-            filename: Arc::from(filename),
-            sha1: hash,
-            size,
-            page_url: "https://example.com".into(),
-        }
-    }
-
-    #[tokio::test]
-    async fn duplicate_hashes_complete_from_one_cached_path() {
-        let hash = [7; 20];
-        let file = download(hash, "test.jar", 4);
-        let path = PathBuf::from("cached.jar");
-        let (progress, _) = tokio::sync::mpsc::unbounded_channel();
-        let session = ManualCurseforgeDownloadSession {
-            files: vec![file.clone(), file].into(),
-            completed_paths: Mutex::new(HashMap::from([(hash, path.clone())])),
-            done: Notify::new(),
-            rescan: Notify::new(),
-            progress,
-            cancelled: AtomicBool::new(false),
-        };
-
-        let paths = tokio::time::timeout(Duration::from_millis(100), session.wait()).await.unwrap().unwrap();
-        assert_eq!(paths, vec![path.clone(), path]);
-    }
-
-    #[tokio::test]
-    async fn cancellation_before_wait_is_not_lost() {
-        let (progress, _) = tokio::sync::mpsc::unbounded_channel();
-        let session = ManualCurseforgeDownloadSession {
-            files: vec![download([3; 20], "test.jar", 4)].into(),
-            completed_paths: Default::default(),
-            done: Notify::new(),
-            rescan: Notify::new(),
-            progress,
-            cancelled: AtomicBool::new(true),
-        };
-        session.done.notify_one();
-
-        let result = tokio::time::timeout(Duration::from_millis(100), session.wait()).await.unwrap();
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn corrupt_cache_entry_is_replaced_using_expected_extension() {
-        let test_dir = std::env::temp_dir().join(format!("pandora-manual-download-test-{}", Uuid::new_v4()));
-        let content_library = test_dir.join("library");
-        let source = test_dir.join("browser-name.download");
-        let bytes = b"verified contents";
-        tokio::fs::create_dir_all(&test_dir).await.unwrap();
-        tokio::fs::write(&source, bytes).await.unwrap();
-        let hash: [u8; 20] = Sha1::digest(bytes).into();
-        let file = download(hash, "expected-name.jar", bytes.len() as u64);
-        let destination = crate::fs::create_content_library_path(&content_library, hash, Some("jar"));
-        tokio::fs::create_dir_all(destination.parent().unwrap()).await.unwrap();
-        tokio::fs::write(&destination, b"corrupt").await.unwrap();
-
-        let cached = cache_manual_curseforge_download(&content_library, &file, &source).await.unwrap();
-
-        assert_eq!(cached, destination);
-        assert_eq!(cached.extension(), Some(OsStr::new("jar")));
-        assert_eq!(tokio::fs::read(cached).await.unwrap(), bytes);
-        assert!(!source.exists());
-        std::fs::remove_dir_all(test_dir).unwrap();
-    }
-
-    #[tokio::test]
-    async fn valid_cache_entry_consumes_redundant_source_file() {
-        let test_dir = std::env::temp_dir().join(format!("pandora-manual-download-test-{}", Uuid::new_v4()));
-        let content_library = test_dir.join("library");
-        let source = test_dir.join("downloaded.jar");
-        let bytes = b"already cached";
-        let hash: [u8; 20] = Sha1::digest(bytes).into();
-        let file = download(hash, "expected-name.jar", bytes.len() as u64);
-        let destination = crate::fs::create_content_library_path(&content_library, hash, Some("jar"));
-        tokio::fs::create_dir_all(destination.parent().unwrap()).await.unwrap();
-        tokio::fs::write(&destination, bytes).await.unwrap();
-        tokio::fs::write(&source, bytes).await.unwrap();
-
-        let cached = cache_manual_curseforge_download(&content_library, &file, &source).await.unwrap();
-
-        assert_eq!(cached, destination);
-        assert_eq!(tokio::fs::read(cached).await.unwrap(), bytes);
-        assert!(!source.exists());
-        std::fs::remove_dir_all(test_dir).unwrap();
-    }
+    pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
 pub struct CachedMinecraftProfile {
@@ -503,123 +340,20 @@ impl CachedMinecraftProfile {
 }
 
 impl BackendState {
-    pub async fn create_manual_curseforge_download_session(
-        &self,
-        files: Vec<ManualCurseforgeDownload>,
-    ) -> Result<Vec<PathBuf>, Arc<str>> {
-        let session_id = Uuid::new_v4();
-        let files: Arc<[ManualCurseforgeDownload]> = files.into();
-        let (progress_send, progress) = tokio::sync::mpsc::unbounded_channel();
-        let session = Arc::new(ManualCurseforgeDownloadSession {
-            files: files.clone(),
-            completed_paths: Default::default(),
-            done: Notify::new(),
-            rescan: Notify::new(),
-            progress: progress_send,
-            cancelled: AtomicBool::new(false),
-        });
-        let (completion_send, completion) = tokio::sync::oneshot::channel();
-        self.manual_curseforge_downloads.lock().await.insert(session_id, session.clone());
-        self.send.send(MessageToFrontend::ManualCurseforgeDownloadsRequired {
-            request: ManualCurseforgeDownloadRequest { session_id, files, progress, completion },
-        });
-
-        let result = session.wait().await;
-
-        if let Ok(paths) = &result {
-            for path in paths {
-                self.mod_metadata_manager.get_path(path);
-            }
-        }
-        self.manual_curseforge_downloads.lock().await.remove(&session_id);
-        _ = completion_send.send(());
-        result
-    }
-
-    pub async fn start_manual_curseforge_downloads(self: &Arc<Self>, start: ManualCurseforgeDownloadStart) {
-        let Some(session) = self.manual_curseforge_downloads.lock().await.get(&start.session_id).cloned() else {
-            return;
-        };
-        let this = self.clone();
-        tokio::spawn(async move {
-            loop {
-                if session.cancelled.load(Ordering::Acquire) {
-                    session.done.notify_one();
-                    break;
-                }
-                let mut entries = match tokio::fs::read_dir(&start.directory).await {
-                    Ok(entries) => entries,
-                    Err(err) => {
-                        log::warn!("Unable to read manual download directory {:?}: {err}", start.directory);
-                        session.cancelled.store(true, Ordering::Release);
-                        session.done.notify_one();
-                        break;
-                    }
-                };
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    if session.cancelled.load(Ordering::Acquire) { break; }
-                    let path = entry.path();
-                    let temporary = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e, "crdownload" | "part" | "tmp"));
-                    if temporary || !path.is_file() { continue; }
-                    for file in session.files.iter() {
-                        if session.completed_paths.lock().await.contains_key(&file.sha1) { continue; }
-                        let source = path.clone();
-                        let hash = file.sha1;
-                        let size = file.size;
-                        let valid = tokio::task::spawn_blocking(move || {
-                            std::fs::metadata(&source).map(|meta| meta.len() == size).unwrap_or(false)
-                                && crate::fs::check_sha1_hash(&source, hash).unwrap_or(false)
-                        }).await.unwrap_or(false);
-                        if valid {
-                            let destination = match cache_manual_curseforge_download(&this.directories.content_library_dir, file, &path).await {
-                                Ok(destination) => destination,
-                                Err(err) => {
-                                    log::warn!("Unable to cache manually downloaded CurseForge file {:?}: {err}", path);
-                                    continue;
-                                },
-                            };
-                            session.completed_paths.lock().await.insert(hash, destination);
-                            _ = session.progress.send(hash);
-                            session.done.notify_one();
-                        }
-                    }
-                }
-                let completed = session.completed_paths.lock().await;
-                if session.files.iter().all(|file| completed.contains_key(&file.sha1)) {
-                    drop(completed);
-                    session.done.notify_one();
-                    break;
-                }
-                drop(completed);
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(750)) => {},
-                    _ = session.rescan.notified() => {},
-                }
-            }
-        });
-    }
-
-    pub async fn check_manual_curseforge_downloads(&self, session_id: Uuid) {
-        if let Some(session) = self.manual_curseforge_downloads.lock().await.get(&session_id) {
-            session.rescan.notify_one();
-        }
-    }
-
-    pub async fn cancel_manual_curseforge_downloads(&self, session_id: Uuid) {
-        if let Some(session) = self.manual_curseforge_downloads.lock().await.get(&session_id) {
-            session.cancelled.store(true, Ordering::Release);
-            session.done.notify_one();
-            session.rescan.notify_one();
-        }
+    pub async fn create_manual_curseforge_download_session(&self, files: Vec<ManualCurseforgeDownload>) {
+        self.manual_curseforge_downloads.start(files, self).await;
     }
 
     async fn start(self, recv: BackendReceiver, watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
         log::info!("Starting backend");
 
-        tokio::task::spawn(crate::update::check_for_updates(self.redirecting_http_client.clone(), self.send.clone()));
+        tokio::task::spawn(crate::update::check_for_updates(
+            self.http_client_provider.redirecting(),
+            self.send.clone(),
+        ));
 
         // Pre-fetch version manifest
-        self.meta.preload(&MinecraftVersionManifestMetadataItem);
+        self.meta.preload(MinecraftVersionManifestMetadataItem);
 
         Arc::new(self).handle(recv, watcher_rx).await;
     }
@@ -786,7 +520,15 @@ impl BackendState {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         tokio::pin!(interval);
 
+        #[cfg(unix)]
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
+
         loop {
+            #[cfg(unix)]
+            let signal_recv = signal.recv();
+            #[cfg(not(unix))]
+            let signal_recv = std::future::pending::<Option<()>>();
+
             tokio::select! {
                 message = backend_recv.recv() => {
                     if let Some(message) = message {
@@ -803,6 +545,9 @@ impl BackendState {
                         log::info!("Backend filesystem has shut down");
                         break;
                     }
+                },
+                _ = signal_recv => {
+                    self.check_child_processes();
                 },
                 _ = interval.tick() => {
                     self.handle_tick();
@@ -824,7 +569,10 @@ impl BackendState {
     fn handle_tick(&self) {
         self.meta.expire();
         self.mod_metadata_manager.write_changes();
+        self.check_child_processes();
+    }
 
+    fn check_child_processes(&self) {
         let mut any_process_alive = false;
 
         let mut instance_state = self.instance_state.write();
@@ -891,6 +639,31 @@ impl BackendState {
         self.quit_coordinator.set_can_quit(!any_process_alive);
     }
 
+    pub async fn update_http_clients(&self) {
+        let proxy_config = self.config.lock().get().proxy.clone();
+        let proxy_password: Option<String> = if proxy_config.enabled && proxy_config.auth_enabled {
+            match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                Ok(storage) => match storage.read_proxy_password().await {
+                    Ok(password) => password,
+                    Err(e) => {
+                        log::warn!("Failed to read proxy password from keyring: {:?}", e);
+                        None
+                    },
+                },
+                Err(e) => {
+                    log::warn!("Failed to initialize secret storage: {:?}", e);
+                    None
+                },
+            }
+        } else {
+            None
+        };
+
+        self.http_client_provider
+            .update(&*schema::USER_AGENT, &proxy_config, proxy_password.as_deref());
+        self.meta.clear();
+    }
+
     pub async fn login(
         &self,
         credentials: &mut AccountCredentials,
@@ -899,7 +672,7 @@ impl BackendState {
     ) -> Result<(MinecraftProfileResponse, MinecraftAccessToken), LoginError> {
         log::info!("Starting login");
 
-        let mut authenticator = Authenticator::new(self.http_client.clone());
+        let mut authenticator = Authenticator::new(self.http_client_provider.client());
 
         if let Some(login_tracker) = login_tracker {
             login_tracker.set_total(AUTH_STAGE_COUNT as usize + 1);
@@ -1099,7 +872,7 @@ impl BackendState {
             crate::syncing::apply_to_instance(&SyncTargets::default(), &self.directories, path, &mut instances);
         } else {
             crate::syncing::apply_to_instance(
-                &self.config.write().get().sync_targets,
+                &self.config.lock().get().sync_targets,
                 &self.directories,
                 path,
                 &mut instances,
@@ -1534,7 +1307,6 @@ impl BackendState {
         modal_action: &ModalAction,
     ) -> bool {
         let mut curseforge_file_ids = Vec::new();
-        let mut manual_downloads = Vec::new();
 
         let (files, fallback_source) =
             if let ContentType::ModrinthModpack { files, .. } = &summary.content_summary.extra {
@@ -1553,6 +1325,7 @@ impl BackendState {
             };
 
         let mut content_install_files = Vec::new();
+        let mut manual_downloads = Vec::new();
         let mut content_sources_to_set: Vec<([u8; 20], ContentSource)> = Vec::new();
 
         let modrinth_source_for_url = |url: &str| -> Option<ContentSource> {
@@ -1605,13 +1378,16 @@ impl BackendState {
 
             let files_result = self
                 .meta
-                .fetch(&CurseforgeGetFilesMetadataItem(&CurseforgeGetFilesRequest {
+                .fetch(CurseforgeGetFilesMetadataItem(&CurseforgeGetFilesRequest {
                     file_ids: curseforge_file_ids,
                 }))
                 .await;
 
             tracker.set_count(1);
             tracker.set_finished(ProgressTrackerFinishType::from_err(files_result.is_err()));
+
+            let mut manual_download_files = Vec::new();
+            let mut manual_download_tasks = Vec::new();
 
             if let Ok(files) = files_result {
                 for file in files.data.iter() {
@@ -1655,38 +1431,25 @@ impl BackendState {
                             reason: ContentInstallReason::Modpack,
                         });
                     } else {
-                        let (name, slug) = self.curseforge_project_name_and_slug(file.mod_id).await;
-                        manual_downloads.push(ManualCurseforgeDownload {
+                        manual_download_files.push((file.clone(), hash));
+                        manual_download_tasks.push(self.meta.fetch(CurseforgeProjectItem {
                             project_id: file.mod_id,
-                            file_id: file.id,
-                            name,
-                            filename: file.file_name.clone(),
-                            sha1: hash,
-                            size: file.file_length,
-                            page_url: format!("https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{}", file.id).into(),
-                        });
+                        }));
                     }
                 }
             }
-        }
 
-if !manual_downloads.is_empty() {
-            let paths = match self.create_manual_curseforge_download_session(manual_downloads.clone()).await {
-                Ok(paths) => paths,
-                Err(error) => {
-                    modal_action.set_finished_with_error(error);
-                    return false;
-                },
-            };
-            for (manual, path) in manual_downloads.into_iter().zip(paths) {
-                let Some(filename) = SafePath::new(&manual.filename) else { continue; };
-                content_install_files.push(ContentInstallFile {
-                    replace_old: None,
-                    path: ContentInstallPath::ModpackFilePath(ModpackFilePath::Filename(filename)),
-                    download: ContentDownload::File { path },
-                    content_source: ContentSource::CurseforgeProject { project_id: manual.project_id },
-                    reason: ContentInstallReason::Modpack,
-                });
+            if !manual_download_tasks.is_empty() {
+                let curseforge_projects = futures::future::join_all(manual_download_tasks).await;
+
+                let zipped = curseforge_projects.into_iter().zip(manual_download_files.into_iter());
+                for (project, (file, hash)) in zipped {
+                    let Ok(project) = project else {
+                        continue;
+                    };
+
+                    manual_downloads.push(ManualCurseforgeDownload::new(&file, &project, hash));
+                }
             }
         }
 
@@ -1698,26 +1461,51 @@ if !manual_downloads.is_empty() {
                 files: content_install_files.into(),
             };
 
-            self.install_content(content_install, modal_action.clone()).await;
+            if !manual_downloads.is_empty() {
+                // Unstall content & show manual downloads
+                let tracker = modal_action.push_tracker("Waiting for manual downloads".into());
+                tracker.add_total(1);
+                _ = futures::join! {
+                    self.install_content(content_install, modal_action.clone()),
+                    async move {
+                        self.create_manual_curseforge_download_session(manual_downloads.clone()).await;
+                        tracker.add_count(1);
+                        tracker.set_finished(ProgressTrackerFinishType::Normal);
+                    },
+                };
+            } else {
+                // Install content
+                self.install_content(content_install, modal_action.clone()).await;
+            }
+            true
+        } else if !manual_downloads.is_empty() {
+            // Show manual downloads
+            let tracker = modal_action.push_tracker("Waiting for manual downloads".into());
+            tracker.add_total(1);
+            self.create_manual_curseforge_download_session(manual_downloads.clone()).await;
+            tracker.add_count(1);
+            tracker.set_finished(ProgressTrackerFinishType::Normal);
+
             true
         } else {
             false
         }
     }
 
-    pub(crate) async fn curseforge_project_name_and_slug(&self, project_id: u32) -> (Arc<str>, Arc<str>) {
-        let fallback: Arc<str> = format!("project-{project_id}").into();
-        let response = self.http_client.get(format!("https://api.curseforge.com/v1/mods/{project_id}"))
-            .header("x-api-key", CURSEFORGE_API_KEY).send().await;
-        let Ok(response) = response else { return (fallback.clone(), fallback); };
-        let Ok(body) = response.json::<serde_json::Value>().await else { return (fallback.clone(), fallback); };
-        let Some(data) = body.get("data") else { return (fallback.clone(), fallback); };
-        let Ok(project) = serde_json::from_value::<CurseforgeProject>(data.clone()) else { return (fallback.clone(), fallback); };
-        (project.name, project.slug)
-    }
-
-    pub async fn create_instance_sanitized(&self, name: &str, version: &str, loader: Loader, icon: Option<EmbeddedOrRaw>) -> Option<PathBuf> {
-        let mut name = sanitize_filename::sanitize_with_options(name, sanitize_filename::Options { windows: true, ..Default::default() });
+    pub async fn create_instance_sanitized(
+        &self,
+        name: &str,
+        version: &str,
+        loader: Loader,
+        icon: Option<EmbeddedOrRaw>,
+    ) -> Option<PathBuf> {
+        let mut name = sanitize_filename::sanitize_with_options(
+            name,
+            sanitize_filename::Options {
+                windows: true,
+                ..Default::default()
+            },
+        );
 
         if self.instance_state.read().instances.iter().any(|i| i.name == name) {
             let original_name = name.clone();
@@ -1802,7 +1590,6 @@ if !manual_downloads.is_empty() {
                 .send_warning(format!("Unable to rename instance, name must not be a path: {}", name));
             return;
         }
-
         if !sanitize_filename::is_sanitized_with_options(
             &*name,
             sanitize_filename::OptionsForCheck {

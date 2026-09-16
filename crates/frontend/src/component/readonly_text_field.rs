@@ -465,7 +465,8 @@ impl ReadonlyTextField {
                         let real_pivot = active_drag.real_pivot.min(Pixels::ZERO);
                         let new_max_offset =
                             (item_state.total_line_count * line_height - scroll_state.bounds.size.height).max(px(1.0));
-                        let old_max_offset = (active_drag.start_content_height - scroll_state.bounds.size.height).max(px(1.0));
+                        let old_max_offset =
+                            (active_drag.start_content_height - scroll_state.bounds.size.height).max(px(1.0));
 
                         if offset < drag_pivot {
                             effective_offset = (offset - drag_pivot) / (-old_max_offset - drag_pivot)
@@ -538,7 +539,8 @@ impl ReadonlyTextField {
                         -(remainder_lines * line_height) + line_remainder + line_height - top_offset_for_inset;
 
                     if scroll_state.active_drag.is_some() {
-                        let mut remaining_lines = ((scroll_state.bounds.size.height - render_offset) / line_height) as usize + 1;
+                        let mut remaining_lines =
+                            ((scroll_state.bounds.size.height - render_offset) / line_height) as usize + 1;
                         let mut changed = false;
                         for item in item_state.items[item_index..].iter_mut() {
                             if item.skip {

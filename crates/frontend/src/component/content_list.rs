@@ -256,47 +256,51 @@ impl ContentListDelegate {
             bridge::instance::ContentUpdateStatus::Unknown | bridge::instance::ContentUpdateStatus::ManualInstall => {
                 if summary.content_source == ContentSource::Manual {
                     Some(
-                        Button::new(("update", element_id)).warning().icon(PandoraIcon::FileQuestionMark)
-                            .tooltip(t::instance::content::change_version::installed_manually())
+                        Button::new(("update", element_id))
+                            .warning()
+                            .icon(PandoraIcon::FileQuestionMark)
+                            .tooltip(t::instance::content::change_version::installed_manually()),
                     )
                 } else {
                     Some(
-                        Button::new(("update", element_id)).icon(PandoraIcon::ArrowLeftRight)
+                        Button::new(("update", element_id))
+                            .icon(PandoraIcon::ArrowLeftRight)
                             .loading(is_loading)
                             .tooltip(t::instance::content::change_version::button(source_name))
-                            .on_click(open_change_version.clone())
+                            .on_click(open_change_version.clone()),
                     )
                 }
             },
-            bridge::instance::ContentUpdateStatus::ErrorNotFound => {
-                Some(
-                    Button::new(("update", element_id)).danger().icon(PandoraIcon::TriangleAlert)
-                        .loading(is_loading)
-                        .tooltip(t::instance::content::change_version::no_compatible_versions())
-                        .on_click(open_change_version.clone())
-                )
-            },
-            bridge::instance::ContentUpdateStatus::ErrorInvalidHash => {
-                Some(
-                    Button::new(("update", element_id)).danger().icon(PandoraIcon::TriangleAlert)
-                        .loading(is_loading)
-                        .tooltip(t::instance::content::update::check::invalid_hash_error())
-                        .on_click(open_change_version.clone())
-                )
-            },
-            bridge::instance::ContentUpdateStatus::AlreadyUpToDate => {
-                Some(
-                    Button::new(("update", element_id)).icon(PandoraIcon::ArrowLeftRight)
-                        .loading(is_loading)
-                        .tooltip(t::instance::content::change_version::up_to_date())
-                        .on_click(open_change_version.clone())
-                )
-            },
+            bridge::instance::ContentUpdateStatus::ErrorNotFound => Some(
+                Button::new(("update", element_id))
+                    .danger()
+                    .icon(PandoraIcon::TriangleAlert)
+                    .loading(is_loading)
+                    .tooltip(t::instance::content::change_version::no_compatible_versions())
+                    .on_click(open_change_version.clone()),
+            ),
+            bridge::instance::ContentUpdateStatus::ErrorInvalidHash => Some(
+                Button::new(("update", element_id))
+                    .danger()
+                    .icon(PandoraIcon::TriangleAlert)
+                    .loading(is_loading)
+                    .tooltip(t::instance::content::update::check::invalid_hash_error())
+                    .on_click(open_change_version.clone()),
+            ),
+            bridge::instance::ContentUpdateStatus::AlreadyUpToDate => Some(
+                Button::new(("update", element_id))
+                    .icon(PandoraIcon::ArrowLeftRight)
+                    .loading(is_loading)
+                    .tooltip(t::instance::content::change_version::up_to_date())
+                    .on_click(open_change_version.clone()),
+            ),
             bridge::instance::ContentUpdateStatus::Modrinth | bridge::instance::ContentUpdateStatus::Curseforge => {
                 let updating = self.updating.clone();
                 let backend_handle = self.backend_handle.clone();
                 Some(
-                    Button::new(("update", element_id)).success().icon(PandoraIcon::Download)
+                    Button::new(("update", element_id))
+                        .success()
+                        .icon(PandoraIcon::Download)
                         .loading(is_loading)
                         .tooltip(t::instance::content::change_version::update_available(source_name))
                         .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
@@ -307,23 +311,39 @@ impl ContentListDelegate {
                                 return;
                             }
 
-                            let mut updating = updating.lock();
                             let delegate = this.delegate_mut();
                             if delegate.is_selected(element_id) {
                                 for summary in &delegate.content {
-                                    if delegate.is_selected(summary.filename_hash) && summary.update.can_update(delegate.for_loader, delegate.for_version.as_str()) {
-                                        updating.insert(summary.filename_hash);
-                                        crate::root::update_single_mod(id, summary.id, &backend_handle, window, cx);
+                                    if delegate.is_selected(summary.filename_hash)
+                                        && summary.update.can_update(delegate.for_loader, delegate.for_version.as_str())
+                                    {
+                                        crate::root::update_single_mod(
+                                            id,
+                                            summary.id,
+                                            summary.filename_hash,
+                                            &updating,
+                                            &backend_handle,
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 }
                                 delegate.selected.clear();
                                 delegate.selected_range.clear();
                                 delegate.last_clicked_non_range = None;
                             } else {
-                                updating.insert(element_id);
-                                crate::root::update_single_mod(id, content_id, &backend_handle, window, cx);
+                                crate::root::update_single_mod(
+                                    id,
+                                    content_id,
+                                    element_id,
+                                    &updating,
+                                    &backend_handle,
+                                    window,
+                                    cx,
+                                );
                             }
-                        }))
+                            cx.notify();
+                        })),
                 )
             },
         };

@@ -12,8 +12,8 @@ use bridge::{
     instance::{ContentFolder, ContentSummary, ContentType, InstanceContentID, InstanceID},
     keep_alive::KeepAlive,
     message::{
-        AccountCapesResult, AccountSkinResult, BackendConfigWithPassword, EmbeddedOrRaw, GameOutputMsg, LogFiles,
-        MessageToBackend, MessageToFrontend, QuickPlayLaunch,
+        AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, LogFiles, MessageToBackend,
+        MessageToFrontend, QuickPlayLaunch,
     },
     meta::MetadataResult,
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTrackerFinishType},
@@ -74,33 +74,33 @@ impl BackendState {
                     let (result, keep_alive_handle) = match request {
                         bridge::meta::MetadataRequest::MinecraftVersionManifest => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&MinecraftVersionManifestMetadataItem, force_reload).await;
+                                meta.fetch_with_keepalive(MinecraftVersionManifestMetadataItem, force_reload).await;
                             (result.map(MetadataResult::MinecraftVersionManifest), handle)
                         },
                         bridge::meta::MetadataRequest::FabricLoaderManifest => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&FabricLoaderManifestMetadataItem, force_reload).await;
+                                meta.fetch_with_keepalive(FabricLoaderManifestMetadataItem, force_reload).await;
                             (result.map(MetadataResult::FabricLoaderManifest), handle)
                         },
                         bridge::meta::MetadataRequest::ForgeMavenManifest => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&ForgeInstallerMavenMetadataItem, force_reload).await;
+                                meta.fetch_with_keepalive(ForgeInstallerMavenMetadataItem, force_reload).await;
                             (result.map(MetadataResult::ForgeMavenManifest), handle)
                         },
                         bridge::meta::MetadataRequest::NeoforgeMavenManifest => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&NeoforgeInstallerMavenMetadataItem, force_reload).await;
+                                meta.fetch_with_keepalive(NeoforgeInstallerMavenMetadataItem, force_reload).await;
                             (result.map(MetadataResult::NeoforgeMavenManifest), handle)
                         },
                         bridge::meta::MetadataRequest::ModrinthSearch(ref search) => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&ModrinthSearchMetadataItem(search), force_reload).await;
+                                meta.fetch_with_keepalive(ModrinthSearchMetadataItem(search), force_reload).await;
                             (result.map(MetadataResult::ModrinthSearchResult), handle)
                         },
                         bridge::meta::MetadataRequest::ModrinthProjectVersions(ref project_versions) => {
                             let (result, handle) = meta
                                 .fetch_with_keepalive(
-                                    &ModrinthProjectVersionsMetadataItem(project_versions),
+                                    ModrinthProjectVersionsMetadataItem(project_versions),
                                     force_reload,
                                 )
                                 .await;
@@ -108,26 +108,28 @@ impl BackendState {
                         },
                         bridge::meta::MetadataRequest::ModrinthProject(ref project) => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&ModrinthProjectMetadataItem(project), force_reload).await;
+                                meta.fetch_with_keepalive(ModrinthProjectMetadataItem(project), force_reload).await;
                             (result.map(MetadataResult::ModrinthProjectResult), handle)
                         },
                         bridge::meta::MetadataRequest::ModrinthChangelog(ref request) => {
-                            let (result, handle) = meta.fetch_with_keepalive(&ModrinthChangelogMetadataItem(request), force_reload).await;
+                            let (result, handle) =
+                                meta.fetch_with_keepalive(ModrinthChangelogMetadataItem(request), force_reload).await;
                             (result.map(MetadataResult::ModrinthChangelogResult), handle)
                         },
                         bridge::meta::MetadataRequest::CurseforgeSearch(ref search) => {
                             let (result, handle) =
-                                meta.fetch_with_keepalive(&CurseforgeSearchMetadataItem(search), force_reload).await;
+                                meta.fetch_with_keepalive(CurseforgeSearchMetadataItem(search), force_reload).await;
                             (result.map(MetadataResult::CurseforgeSearchResult), handle)
                         },
                         bridge::meta::MetadataRequest::CurseforgeGetModFiles(ref request) => {
                             let (result, handle) = meta
-                                .fetch_with_keepalive(&CurseforgeGetModFilesMetadataItem(request), force_reload)
+                                .fetch_with_keepalive(CurseforgeGetModFilesMetadataItem(request), force_reload)
                                 .await;
                             (result.map(MetadataResult::CurseforgeGetModFilesResult), handle)
                         },
                         bridge::meta::MetadataRequest::CurseforgeChangelog(ref request) => {
-                            let (result, handle) = meta.fetch_with_keepalive(&CurseforgeChangelogMetadataItem(request), force_reload).await;
+                            let (result, handle) =
+                                meta.fetch_with_keepalive(CurseforgeChangelogMetadataItem(request), force_reload).await;
                             (result.map(MetadataResult::CurseforgeChangelogResult), handle)
                         },
                     };
@@ -221,14 +223,17 @@ impl BackendState {
                     });
                 }
             },
-MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
+            MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
                         configuration.update_channel = update_channel;
                     });
                 }
             },
-            MessageToBackend::SetInstanceDisableFileSyncing { id, disable_file_syncing } => {
+            MessageToBackend::SetInstanceDisableFileSyncing {
+                id,
+                disable_file_syncing,
+            } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
                         configuration.disable_file_syncing = disable_file_syncing;
@@ -425,7 +430,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
 
                         if folder == ContentFolder::Mods
                             && !instance.processes.is_empty()
-                            && !self.config.write().get().allow_modify_while_running
+                            && !self.config.lock().get().allow_modify_while_running
                         {
                             cannot_modify_while_running = true;
                             continue;
@@ -494,7 +499,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
 
                     if folder == ContentFolder::Mods
                         && !instance.processes.is_empty()
-                        && !self.config.write().get().allow_modify_while_running
+                        && !self.config.lock().get().allow_modify_while_running
                     {
                         self.send.send_warning("Cannot modify mods folder while instance is running");
                         return;
@@ -603,15 +608,6 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                     this.send.send(MessageToFrontend::Refresh);
                 });
             },
-            MessageToBackend::StartManualCurseforgeDownloads { request } => {
-                self.start_manual_curseforge_downloads(request).await;
-            },
-            MessageToBackend::CheckManualCurseforgeDownloads { session_id } => {
-                self.check_manual_curseforge_downloads(session_id).await;
-            },
-            MessageToBackend::CancelManualCurseforgeDownloads { session_id } => {
-                self.cancel_manual_curseforge_downloads(session_id).await;
-            },
             MessageToBackend::DownloadAllMetadata => {
                 self.download_all_metadata().await;
             },
@@ -706,7 +702,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
 
                     if folder == ContentFolder::Mods
                         && !instance.processes.is_empty()
-                        && !self.config.write().get().allow_modify_while_running
+                        && !self.config.lock().get().allow_modify_while_running
                     {
                         cannot_modify_while_running = true;
                         continue;
@@ -748,15 +744,19 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                     self.send.send_warning("Cannot modify mods folder while instance is running");
                 }
             },
-            MessageToBackend::UpdateCheck { instance: id, modal_action } => {
-                let (loader, version, update_channel) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let configuration = instance.configuration.get();
-                    (configuration.loader, configuration.minecraft_version, configuration.update_channel)
-                } else {
-                    self.send.send_error("Can't update instance, unknown id");
-                    modal_action.set_finished_with_error("Can't update instance, unknown id".into());
-                    return;
-                };
+            MessageToBackend::UpdateCheck {
+                instance: id,
+                modal_action,
+            } => {
+                let (loader, version, update_channel) =
+                    if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                        let configuration = instance.configuration.get();
+                        (configuration.loader, configuration.minecraft_version, configuration.update_channel)
+                    } else {
+                        self.send.send_error("Can't update instance, unknown id");
+                        modal_action.set_finished_with_error("Can't update instance, unknown id".into());
+                        return;
+                    };
 
                 let mut content = Vec::new();
                 for folder in ContentFolder::iter() {
@@ -809,7 +809,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                                         for &version_types in update_channel.modrinth_version_types_with_fallback().iter() {
                                             let fetch_result = match &summary.content_summary.extra {
                                                 ContentType::ModrinthModpack { .. } => {
-                                                    meta.fetch(&ModrinthV3VersionUpdateMetadataItem {
+                                                    meta.fetch(ModrinthV3VersionUpdateMetadataItem {
                                                         sha1: sha1.clone(),
                                                         params: VersionV3UpdateParameters {
                                                             loaders: ["mrpack".into()].into(),
@@ -823,7 +823,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                                                 },
                                                 extra => {
                                                     let loaders = extra.modrinth_loaders(instance_modrinth_loader);
-                                                    meta.fetch(&ModrinthVersionUpdateMetadataItem {
+                                                    meta.fetch(ModrinthVersionUpdateMetadataItem {
                                                         sha1: sha1.clone(),
                                                         params: VersionUpdateParameters {
                                                             loaders,
@@ -888,7 +888,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
 
                                     let result = async {
                                         for &release_types in update_channel.curseforge_release_types_with_fallback().iter() {
-                                            let fetch_result = meta.fetch(&CurseforgeGetModFilesMetadataItem(
+                                            let fetch_result = meta.fetch(CurseforgeGetModFilesMetadataItem(
                                                 &CurseforgeGetModFilesRequest {
                                                     mod_id: project_id,
                                                     game_version: Some(version),
@@ -1360,7 +1360,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
             },
             MessageToBackend::GetSyncState { channel } => {
                 let result = crate::syncing::get_sync_state(
-                    &self.config.write().get().sync_targets,
+                    &self.config.lock().get().sync_targets,
                     &mut *self.instance_state.write(),
                     &self.directories,
                 );
@@ -1375,7 +1375,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                 }
             },
             MessageToBackend::SetSyncing { target, is_file, value } => {
-                let mut write = self.config.write();
+                let mut write = self.config.lock();
 
                 let result = if value {
                     crate::syncing::enable_all(&target, is_file, &mut *self.instance_state.write(), &self.directories)
@@ -1412,29 +1412,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                 });
             },
             MessageToBackend::GetBackendConfiguration { channel } => {
-                let configuration = self.config.write().get().clone();
-                let proxy_password = if configuration.proxy.enabled && configuration.proxy.auth_enabled {
-                    match PlatformSecretStorage::new().await {
-                        Ok(storage) => match storage.read_proxy_password().await {
-                            Ok(password) => password,
-                            Err(e) => {
-                                log::warn!("Failed to read proxy password from keyring: {:?}", e);
-                                None
-                            },
-                        },
-                        Err(e) => {
-                            log::warn!("Failed to create secret storage: {:?}", e);
-                            None
-                        },
-                    }
-                } else {
-                    None
-                };
-
-                _ = channel.send(BackendConfigWithPassword {
-                    config: configuration,
-                    proxy_password,
-                });
+                _ = channel.send(self.config.lock().get().clone());
             },
             MessageToBackend::CleanupOldLogFiles { instance: id } => {
                 let mut deleted = 0;
@@ -1524,7 +1502,8 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                 }
 
                 let result = self
-                    .http_client
+                    .http_client_provider
+                    .client()
                     .post("https://api.mclo.gs/1/log")
                     .form(&[("content", &*replaced)])
                     .send()
@@ -1644,33 +1623,35 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                     account_info.accounts.move_index(from_index, to_index);
                 });
             },
-            MessageToBackend::SetProxyConfiguration { config, password } => {
-                self.config.write().modify(|backend_config| {
+            MessageToBackend::SetProxyConfiguration { config } => {
+                self.config.lock().modify(|backend_config| {
                     backend_config.proxy = config;
                 });
 
-                // system keyring (store or delete)
-                if let Some(password) = password {
-                    match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
-                        Ok(storage) => {
-                            if password.is_empty() {
-                                if let Err(e) = storage.delete_proxy_password().await {
-                                    log::warn!("Failed to delete proxy password from keyring: {:?}", e);
-                                }
-                            } else if let Err(e) = storage.write_proxy_password(&password).await {
-                                log::warn!("Failed to write proxy password to keyring: {:?}", e);
-                                self.send.send_error("Failed to save proxy password to system keyring");
+                self.update_http_clients().await;
+            },
+            MessageToBackend::SetProxyPassword { password } => {
+                match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                    Ok(storage) => {
+                        if password.is_empty() {
+                            if let Err(e) = storage.delete_proxy_password().await {
+                                log::warn!("Failed to delete proxy password from keyring: {:?}", e);
+                                return;
                             }
-                        },
-                        Err(e) => {
-                            log::warn!("Failed to initialize secret storage: {:?}", e);
-                            self.send.send_error("Failed to access system keyring for proxy password");
-                        },
-                    }
+                        } else if let Err(e) = storage.write_proxy_password(&password).await {
+                            log::warn!("Failed to write proxy password to keyring: {:?}", e);
+                            self.send.send_error("Failed to save proxy password to system keyring");
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("Failed to initialize secret storage: {:?}", e);
+                        self.send.send_error("Failed to access system keyring for proxy password");
+                        return;
+                    },
                 }
 
-                // Notify user that restart is required for proxy changes to take effect
-                self.send.send_info("Proxy settings saved. Restart the launcher to apply changes.");
+                self.update_http_clients().await;
             },
             MessageToBackend::CreateInstanceShortcut { id, path } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
@@ -1703,7 +1684,7 @@ MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
                         return;
                     };
 
-let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes junction points
+                    let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes junction points
 
                     if is_real_folder && let Some(name) = path.to_str() {
                         self.rename_instance(id, name).await;
@@ -1791,7 +1772,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
             },
             MessageToBackend::InstallUpdate { update, modal_action } => {
                 tokio::task::spawn(crate::update::install_update(
-                    self.redirecting_http_client.clone(),
+                    self.http_client_provider.redirecting(),
                     self.directories.clone(),
                     self.send.clone(),
                     update,
@@ -1843,7 +1824,8 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
                 );
 
                 let response = self
-                    .http_client
+                    .http_client_provider
+                    .client()
                     .post("https://api.minecraftservices.com/minecraft/profile/skins")
                     .multipart(form)
                     .bearer_auth(access_token.secret())
@@ -1904,11 +1886,13 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
                         cape_id: Uuid,
                     }
 
-                    self.http_client
+                    self.http_client_provider
+                        .client()
                         .put("https://api.minecraftservices.com/minecraft/profile/capes/active")
                         .json(&PutActiveCape { cape_id: cape })
                 } else {
-                    self.http_client
+                    self.http_client_provider
+                        .client()
                         .delete("https://api.minecraftservices.com/minecraft/profile/capes/active")
                 };
 
@@ -1965,7 +1949,8 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
                 let server_id: String = server_id_bytes.iter().map(|byte| format!("{byte:02x}")).collect();
 
                 let response = self
-                    .http_client
+                    .http_client_provider
+                    .client()
                     .post("https://sessionserver.mojang.com/session/minecraft/join")
                     .json(&SessionJoinRequest {
                         access_token: access_token.secret().to_owned(),
@@ -2018,7 +2003,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
 
                         let filename = url.path_segments().and_then(|s| s.last()).unwrap_or("skin.png").to_owned();
 
-                        let response = self.redirecting_http_client.get(url).send().await;
+                        let response = self.http_client_provider.redirecting().get(url).send().await;
 
                         let response = match response {
                             Ok(response) => response,
@@ -2096,7 +2081,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
             },
             MessageToBackend::CopyPlayerSkin { username } => {
                 let lookup_url = format!("https://api.mojang.com/minecraft/profile/lookup/name/{}", username);
-                let response = match self.http_client.get(&lookup_url).send().await {
+                let response = match self.http_client_provider.client().get(&lookup_url).send().await {
                     Ok(r) => r,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to request Mojang API: {:?}", err);
@@ -2140,7 +2125,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
                 };
 
                 let session_url = format!("https://sessionserver.mojang.com/session/minecraft/profile/{}", uuid);
-                let response = match self.http_client.get(&session_url).send().await {
+                let response = match self.http_client_provider.client().get(&session_url).send().await {
                     Ok(r) => r,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to request session server: {:?}", err);
@@ -2182,7 +2167,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
 
                 let filename = format!("{}.png", username);
 
-                let response = match self.redirecting_http_client.get(url).send().await {
+                let response = match self.http_client_provider.redirecting().get(url).send().await {
                     Ok(r) => r,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to request skin texture: {:?}", err);
@@ -2309,7 +2294,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
         let result = self
             .launcher
             .launch(
-                &self.redirecting_http_client,
+                &self.http_client_provider.redirecting(),
                 dot_minecraft,
                 configuration,
                 quick_play,
@@ -2580,12 +2565,12 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
     }
 
     pub async fn download_all_metadata(&self) {
-        let Ok(versions) = self.meta.fetch(&MinecraftVersionManifestMetadataItem).await else {
+        let Ok(versions) = self.meta.fetch(MinecraftVersionManifestMetadataItem).await else {
             panic!("Unable to get Minecraft version manifest");
         };
 
         for link in &versions.versions {
-            let Ok(version_info) = self.meta.fetch(&MinecraftVersionMetadataItem(link)).await else {
+            let Ok(version_info) = self.meta.fetch(MinecraftVersionMetadataItem(link)).await else {
                 panic!("Unable to get load version: {:?}", link.id);
             };
 
@@ -2593,7 +2578,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
 
             let Ok(_) = self
                 .meta
-                .fetch(&AssetsIndexMetadataItem {
+                .fetch(AssetsIndexMetadataItem {
                     url: version_info.asset_index.url,
                     cache: self.directories.assets_index_dir.join(format!("{}.json", &asset_index)).into(),
                     hash: version_info.asset_index.sha1,
@@ -2627,7 +2612,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
             }
         }
 
-        let Ok(runtimes) = self.meta.fetch(&MojangJavaRuntimesMetadataItem).await else {
+        let Ok(runtimes) = self.meta.fetch(MojangJavaRuntimesMetadataItem).await else {
             panic!("Unable to get java runtimes manifest");
         };
 
@@ -2647,7 +2632,7 @@ let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes ju
                 for runtime_component in components {
                     let Ok(manifest) = self
                         .meta
-                        .fetch(&MojangJavaRuntimeComponentMetadataItem {
+                        .fetch(MojangJavaRuntimeComponentMetadataItem {
                             url: runtime_component.manifest.url,
                             cache: runtime_component_dir.join("manifest.json").into(),
                             hash: runtime_component.manifest.sha1,

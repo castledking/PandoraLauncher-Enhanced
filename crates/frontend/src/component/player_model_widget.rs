@@ -265,7 +265,7 @@ impl Render for PlayerModelWidget {
                             let config = InterfaceConfig::get_mut(cx);
                             config.player_model_zoom = (config.player_model_zoom + delta * 5).clamp(50, 400);
                         }
-                    }))
+                    })),
             )
             .child(
                 v_flex()

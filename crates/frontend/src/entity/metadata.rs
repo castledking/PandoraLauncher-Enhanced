@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::{Arc, atomic::AtomicBool}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use bridge::{
     handle::BackendHandle,
@@ -11,9 +14,7 @@ use schema::{
     curseforge::{CurseforgeChangelogResult, CurseforgeGetModFilesResult, CurseforgeSearchResult},
     fabric_loader_manifest::FabricLoaderManifest,
     forge::{ForgeMavenManifest, NeoforgeMavenManifest},
-    modrinth::{
-        ModrinthChangelogResult, ModrinthProjectResult, ModrinthProjectVersionsResult, ModrinthSearchResult,
-    },
+    modrinth::{ModrinthChangelogResult, ModrinthProjectResult, ModrinthProjectVersionsResult, ModrinthSearchResult},
     version_manifest::MinecraftVersionManifest,
 };
 
@@ -23,7 +24,7 @@ pub enum FrontendMetadataState {
     Loaded {
         result: Result<MetadataResult, Arc<str>>,
         alive: Option<KeepAliveNotifySignalHandle>,
-        can_send_reload: AtomicBool
+        can_send_reload: AtomicBool,
     },
 }
 
@@ -90,7 +91,12 @@ impl FrontendMetadata {
         entity.update(cx, |this, cx| {
             if let Some(existing) = this.data.get(&request) {
                 let mut is_reloading_error = false;
-                if let FrontendMetadataState::Loaded { result, alive, can_send_reload } = existing.read(cx) {
+                if let FrontendMetadataState::Loaded {
+                    result,
+                    alive,
+                    can_send_reload,
+                } = existing.read(cx)
+                {
                     if alive.as_ref().map(|k| !k.is_alive()).unwrap_or(false)
                         && can_send_reload.swap(false, std::sync::atomic::Ordering::Relaxed)
                     {
@@ -128,7 +134,11 @@ impl FrontendMetadata {
         cx: &mut App,
     ) {
         entity.update(cx, |this, cx| {
-            let loaded = FrontendMetadataState::Loaded { result, alive, can_send_reload: AtomicBool::new(true) };
+            let loaded = FrontendMetadataState::Loaded {
+                result,
+                alive,
+                can_send_reload: AtomicBool::new(true),
+            };
             if let Some(existing) = this.data.get(&request) {
                 existing.update(cx, |value, cx| {
                     *value = loaded;
@@ -151,12 +161,10 @@ macro_rules! define_as_metadata_result {
             fn result(&self) -> FrontendMetadataResult<'_, $t> {
                 match self {
                     FrontendMetadataState::Loading => FrontendMetadataResult::Loading,
-                    FrontendMetadataState::Loaded { result, alive, .. } => {
-                        match result {
-                            Ok(MetadataResult::$t(result)) => FrontendMetadataResult::Loaded(&*result),
-                            Ok(_) => FrontendMetadataResult::Error(t::system::metadata_error().into(), alive.clone()),
-                            Err(error) => FrontendMetadataResult::Error(SharedString::new(error.clone()), alive.clone()),
-                        }
+                    FrontendMetadataState::Loaded { result, alive, .. } => match result {
+                        Ok(MetadataResult::$t(result)) => FrontendMetadataResult::Loaded(&*result),
+                        Ok(_) => FrontendMetadataResult::Error(t::system::metadata_error().into(), alive.clone()),
+                        Err(error) => FrontendMetadataResult::Error(SharedString::new(error.clone()), alive.clone()),
                     },
                 }
             }

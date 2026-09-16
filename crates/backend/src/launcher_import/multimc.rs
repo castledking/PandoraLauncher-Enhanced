@@ -275,6 +275,7 @@ pub async fn import_from_multimc(
 ) {
     import_accounts_from_multimc(backend, &import_job, &modal_action).await;
     import_instances_from_multimc(backend, &import_job, &modal_action);
+    modal_action.set_finished();
 }
 
 async fn import_accounts_from_multimc(

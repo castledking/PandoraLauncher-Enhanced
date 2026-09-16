@@ -15,11 +15,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     component::{
+        generic_title_bar::TitleBarState,
+        main_title_bar::MainTitleBar,
         menu::{MenuGroup, MenuGroupItem},
         page_path::PagePath,
         resize_panel::{ResizePanel, ResizePanelState},
         shrinking_text::ShrinkingText,
-        title_bar::{TitleBar, TitleBarState},
     },
     entity::{
         DataEntities,
@@ -30,7 +31,6 @@ use crate::{
     },
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
-    modals,
     pages::{
         curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage,
         instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage,
@@ -145,7 +145,7 @@ impl LauncherPage {
 
         let config = InterfaceConfig::get(cx);
         let page_path = PagePath::new(ui.data.clone(), config.main_page.clone(), config.page_path.clone());
-        let title_bar = TitleBar {
+        let title_bar = MainTitleBar {
             page_path,
             controls,
             update: ui.update.clone(),
@@ -585,8 +585,7 @@ impl Render for LauncherUI {
             .on_click({
                 let data = self.data.clone();
                 move |_, window, cx| {
-                    let build = modals::settings::build_settings_sheet(&data, window, cx);
-                    window.open_sheet_at(gpui_component::Placement::Left, cx, build);
+                    crate::settings::open_settings_window(window, &data, cx);
                 }
             });
         let bug_report_button = div()

@@ -8,7 +8,13 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-Disableable, IndexPath, Sizable, WindowExt, button::{Button, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputState, NumberInput, Textarea, TextareaState}, select::{Select, SelectEvent, SelectState}, v_flex,
+    Disableable, IndexPath, Sizable, WindowExt,
+    button::{Button, ButtonVariants},
+    checkbox::Checkbox,
+    h_flex,
+    input::{Input, InputState, NumberInput, Textarea, TextareaState},
+    select::{Select, SelectEvent, SelectState},
+    v_flex,
 };
 
 use crate::{labelled, modals::generic};

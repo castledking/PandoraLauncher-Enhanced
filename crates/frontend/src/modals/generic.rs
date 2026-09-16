@@ -151,25 +151,25 @@ impl ModalRoot {
 
                 let progress = v_flex().gap_2().children(progress_entries);
 
-if is_finishing {
-                if self.modal_action.has_requested_cancel() {
-                    window.remove_window();
+                if is_finishing {
+                    if self.modal_action.has_requested_cancel() {
+                        window.remove_window();
+                    }
+                    let dismiss = Button::new("ok")
+                        .with_variant(ButtonVariant::Secondary)
+                        .label(t::common::ok())
+                        .on_action(move |&crate::Confirm, window, _| window.remove_window())
+                        .on_click(|_, window, _| window.remove_window());
+                    (progress.into_any_element(), dismiss.into_any_element(), true, modal_opacity)
+                } else {
+                    let cancel = self.modal_action.request_cancel.clone();
+                    let cancel = Button::new("cancel")
+                        .disabled(self.modal_action.has_requested_cancel())
+                        .label(t::common::cancel())
+                        .on_click(move |_, _, _| cancel.cancel());
+                    (progress.into_any_element(), cancel.into_any_element(), false, modal_opacity)
                 }
-                let dismiss = Button::new("ok")
-                    .with_variant(ButtonVariant::Secondary)
-                    .label(t::common::ok())
-                    .on_action(move |&crate::Confirm, window, _| window.remove_window())
-                    .on_click(|_, window, _| window.remove_window());
-                (progress.into_any_element(), dismiss.into_any_element(), true, modal_opacity)
-            } else {
-                let cancel = self.modal_action.request_cancel.clone();
-                let cancel = Button::new("cancel")
-                    .disabled(self.modal_action.has_requested_cancel())
-                    .label(t::common::cancel())
-                    .on_click(move |_, _, _| cancel.cancel());
-                (progress.into_any_element(), cancel.into_any_element(), false, modal_opacity)
-            }
-        };
+            };
 
         let cancel = self.modal_action.request_cancel.clone();
         v_flex()
@@ -206,8 +206,8 @@ if is_finishing {
             })
             .on_mouse_down(MouseButton::Left, {
                 let should_move = self.should_move.clone();
-                move |_, _, _| {
-                    should_move.store(true, Ordering::Relaxed);
+                move |_, window, _| {
+                    should_move.store(!window.default_prevented(), Ordering::Relaxed);
                 }
             })
             .on_mouse_up(MouseButton::Left, {
@@ -385,42 +385,44 @@ pub fn show_modal(
     modal_action: ModalAction,
 ) {
     let min_size = Size::new(px(448.0), px(96.0));
-let (bounds, display_id) = if let Some(display) = window.display(cx) {
+    let (bounds, display_id) = if let Some(display) = window.display(cx) {
         (display.bounds(), Some(display.id()))
     } else {
         (window.bounds(), None)
     };
-    _ = cx.open_window(WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds {
-            origin: bounds.center() - min_size.center(),
-            size: min_size
-        })),
-        display_id,
-        titlebar: None,
-        focus: true,
-        show: true,
-        kind: WindowKind::Floating,
-        is_movable: true,
-        window_background: WindowBackgroundAppearance::Transparent,
-        app_owns_titlebar_drag: true,
-        is_resizable: false,
-        is_minimizable: false,
-        app_id: Some("PandoraLauncher".into()),
-        window_decorations: Some(WindowDecorations::Client),
-        ..Default::default()
-    }, move |window, cx| {
-        let notify = modal_action.get_notify();
-        let task = window.spawn(cx, async move |cx| {
-            loop {
-                notify.notified().await;
-                let res = cx.update_window(cx.window_handle(), |_, window, _| {
-                    window.refresh();
-                });
-                if res.is_err() {
-                    break;
+    _ = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: bounds.center() - min_size.center(),
+                size: min_size,
+            })),
+            display_id,
+            titlebar: None,
+            focus: true,
+            show: true,
+            kind: WindowKind::Floating,
+            is_movable: true,
+            window_background: WindowBackgroundAppearance::Transparent,
+            app_owns_titlebar_drag: true,
+            is_resizable: false,
+            is_minimizable: false,
+            app_id: Some("PandoraLauncher".into()),
+            window_decorations: Some(WindowDecorations::Client),
+            ..Default::default()
+        },
+        move |window, cx| {
+            let notify = modal_action.get_notify();
+            let task = window.spawn(cx, async move |cx| {
+                loop {
+                    notify.notified().await;
+                    let res = cx.update_window(cx.window_handle(), |_, window, _| {
+                        window.refresh();
+                    });
+                    if res.is_err() {
+                        break;
+                    }
                 }
-            }
-        });
+            });
 
             let focus = cx.focus_handle();
 

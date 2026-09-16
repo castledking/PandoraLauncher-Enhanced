@@ -261,6 +261,10 @@ impl BackendState {
                 after_debounce_effects.skin_manager_changes.dirty_all();
                 true
             },
+            WatchTarget::ManualCurseForgeDownloadDirectory { .. } => {
+                self.send.send_error("Download directory has been deleted!");
+                true
+            },
         }
     }
 
@@ -311,7 +315,7 @@ impl BackendState {
                 if file_name == "instances" {
                     self.load_all_instances().await;
                 } else if file_name == "config.json" {
-                    self.config.write().mark_changed(&path);
+                    self.config.lock().mark_changed(&path);
                 } else if file_name == "accounts.json" {
                     let mut account_info = self.account_info.write();
                     account_info.mark_changed(&path);
@@ -445,6 +449,15 @@ impl BackendState {
             },
             WatchTarget::SkinLibraryDir => {
                 after_debounce_effects.skin_manager_changes.dirty_path(path.clone());
+            },
+            WatchTarget::ManualCurseForgeDownloadDirectory { session_id } => {
+                if let Ok(metadata) = std::fs::symlink_metadata(&path) {
+                    let manual = self.manual_curseforge_downloads.clone();
+                    let path = path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        manual.process_candidate(&path, metadata, session_id, true);
+                    });
+                }
             },
         }
     }

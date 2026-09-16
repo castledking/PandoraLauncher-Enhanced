@@ -220,7 +220,7 @@ impl Render for ImportPage {
                 import_box = import_box.child(
                     h_flex()
                         .gap_2()
-                        .text_color(cx.theme().success_foreground)
+                        .text_color(cx.theme().button_success_foreground)
                         .child(PandoraIcon::Check)
                         .child(t::import::detected_files()),
                 );
@@ -266,7 +266,7 @@ impl Render for ImportPage {
                                                 h_flex()
                                                     .gap_2()
                                                     .line_height(rems(1.0))
-                                                    .text_color(cx.theme().warning_foreground)
+                                                    .text_color(cx.theme().button_warning_foreground)
                                                     .child(PandoraIcon::TriangleAlert)
                                                     .child(t::import::already_exists()),
                                             )
@@ -344,7 +344,7 @@ impl Render for ImportPage {
                 import_box = import_box.child(
                     h_flex()
                         .gap_2()
-                        .text_color(cx.theme().danger_foreground)
+                        .text_color(cx.theme().button_danger_foreground)
                         .child(PandoraIcon::TriangleAlert)
                         .child(t::import::no_detected_files()),
                 );

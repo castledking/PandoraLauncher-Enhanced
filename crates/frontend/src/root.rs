@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+use parking_lot::Mutex;
+
 use bridge::{
     handle::BackendHandle,
     install::ContentInstall,
@@ -11,10 +13,11 @@ use bridge::{
     modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Root, Theme, WindowExt, scroll::ScrollableElement, v_flex};
+use gpui_component::{Root, Theme, scroll::ScrollableElement, v_flex};
+use rustc_hash::FxHashSet;
 
 use crate::{
-    Backwards, CloseWindow, Forwards, MAIN_FONT, OpenSettings,
+    Backwards, CloseWindow, Forwards, OpenSettings,
     entity::DataEntities,
     game_output::{GameOutput, GameOutputRoot},
     interface_config::{InterfaceConfig, LiveGameOutputDisplay},
@@ -104,7 +107,6 @@ impl Render for LauncherRoot {
 
         v_flex()
             .size_full()
-            .font_family(MAIN_FONT)
             .child(self.ui.clone())
             .children(sheet_layer)
             .children(dialog_layer)
@@ -116,8 +118,7 @@ impl Render for LauncherRoot {
             .on_action({
                 let data = self.data.clone();
                 move |_: &OpenSettings, window, cx| {
-                    let build = crate::modals::settings::build_settings_sheet(&data, window, cx);
-                    window.open_sheet_at(gpui_component::Placement::Left, cx, build);
+                    crate::settings::open_settings_window(window, &data, cx);
                 }
             })
             .on_action({
@@ -272,6 +273,32 @@ pub fn start_install(
     modals::generic::show_notification(window, cx, t::instance::content::install::error().into(), modal_action);
 }
 
+pub fn change_mod_version(
+    content_install: ContentInstall,
+    hash: u64,
+    updating: &Arc<Mutex<FxHashSet<u64>>>,
+    backend_handle: &BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let modal_action = ModalAction::default();
+
+    updating.lock().insert(hash);
+    modal_action.add_finish_effect({
+        let updating = updating.clone();
+        move || {
+            updating.lock().remove(&hash);
+        }
+    });
+
+    backend_handle.send(MessageToBackend::InstallContent {
+        content: content_install.clone(),
+        modal_action: modal_action.clone(),
+    });
+
+    modals::generic::show_notification(window, cx, t::instance::content::install::error().into(), modal_action);
+}
+
 pub fn start_update_check(instance: InstanceID, backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::default();
 
@@ -287,11 +314,21 @@ pub fn start_update_check(instance: InstanceID, backend_handle: &BackendHandle, 
 pub fn update_single_mod(
     instance: InstanceID,
     mod_id: InstanceContentID,
+    hash: u64,
+    updating: &Arc<Mutex<FxHashSet<u64>>>,
     backend_handle: &BackendHandle,
     window: &mut Window,
     cx: &mut App,
 ) {
     let modal_action = ModalAction::default();
+
+    updating.lock().insert(hash);
+    modal_action.add_finish_effect({
+        let updating = updating.clone();
+        move || {
+            updating.lock().remove(&hash);
+        }
+    });
 
     backend_handle.send(MessageToBackend::UpdateContent {
         instance,

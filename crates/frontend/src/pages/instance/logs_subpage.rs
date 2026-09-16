@@ -87,13 +87,16 @@ impl InstanceLogsSubpage {
                 if result.paths.is_empty() {
                     page.no_available_logs = true;
                 } else {
-let items = result.paths.into_iter().filter_map(|path| {
-                        Some(NamedDropdownItem {
-                            name: DropdownName::new(Arc::from(path.file_name()?.to_string_lossy())),
-                            item: path,
+                    let items = result
+                        .paths
+                        .into_iter()
+                        .filter_map(|path| {
+                            Some(NamedDropdownItem {
+                                name: DropdownName::new(Arc::from(path.file_name()?.to_string_lossy())),
+                                item: path,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
 
                     let dropdown = NamedDropdown::create(items, window, cx);
 

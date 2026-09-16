@@ -38,6 +38,7 @@ pub mod pages;
 pub mod png_render_cache;
 pub mod processor;
 pub mod root;
+pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
 pub mod ui;
@@ -65,11 +66,6 @@ impl AssetSource for Assets {
     }
 }
 
-#[cfg(windows)]
-pub const MAIN_FONT: &'static str = "Inter 24pt 24pt";
-#[cfg(not(windows))]
-pub const MAIN_FONT: &'static str = "Inter 24pt";
-
 actions!([Quit, CloseWindow, OpenSettings, Forwards, Backwards, Confirm]);
 
 pub fn start(
@@ -80,13 +76,7 @@ pub fn start(
     mut recv: FrontendReceiver,
     quit_coordinator: QuitCoordinator,
 ) {
-    let user_agent = if let Some(version) = option_env!("PANDORA_RELEASE_VERSION") {
-        format!("PandoraLauncher/{version} (https://github.com/Moulberry/PandoraLauncher)")
-    } else {
-        "PandoraLauncher/dev (https://github.com/Moulberry/PandoraLauncher)".to_string()
-    };
-
-    let http_client = Arc::new(reqwest_client::ReqwestClient::user_agent(&user_agent).unwrap());
+    let http_client = Arc::new(reqwest_client::ReqwestClient::user_agent(&*schema::USER_AGENT).unwrap());
 
     gpui_platform::application()
         .with_http_client(http_client)
@@ -108,25 +98,9 @@ pub fn start(
             let theme_folder = launcher_dir.join("themes");
 
             _ = gpui_component::ThemeRegistry::watch_dir(theme_folder.clone(), cx, move |cx| {
-                let theme_name = InterfaceConfig::get(cx).active_theme.clone();
-                if theme_name.is_empty() {
-                    return;
-                }
-
-                let Some(theme) = gpui_component::ThemeRegistry::global(cx)
-                    .themes()
-                    .get(&SharedString::new(theme_name.trim_ascii()))
-                    .cloned()
-                else {
-                    return;
-                };
-
-                gpui_component::Theme::global_mut(cx).apply_config(&theme);
+                InterfaceConfig::apply_theme(cx, true);
             });
-
-            let theme = gpui_component::Theme::global_mut(cx);
-            theme.font_family = SharedString::new_static(MAIN_FONT);
-            theme.scrollbar_mode = gpui_component::scroll::ScrollbarMode::Always;
+            InterfaceConfig::apply_theme(cx, false);
 
             cx.set_quit_mode(QuitMode::Explicit);
 
@@ -146,9 +120,11 @@ pub fn start(
                         return;
                     }
 
+                    let windows = cx.windows();
+
                     let config = InterfaceConfig::get(cx);
                     if config.quit_on_main_closed {
-                        for window in cx.windows() {
+                        for window in &windows {
                             let is_main = window
                                 .read(cx, |window: Entity<Root>, cx| {
                                     window.read(cx).view().clone().downcast::<LauncherRoot>().is_ok()
@@ -159,14 +135,14 @@ pub fn start(
                             }
                         }
 
-                        for window in cx.windows() {
+                        for window in &windows {
                             _ = window.update(cx, |_, window, _| {
                                 window.remove_window();
                             });
                         }
                     }
 
-                    quit_coordinator.set_can_quit(cx.windows().is_empty());
+                    quit_coordinator.set_can_quit(windows.is_empty());
                 }
             })
             .detach();
@@ -244,7 +220,7 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
         .open_window(
             WindowOptions {
                 app_id: Some("PandoraLauncher".into()),
-                window_min_size: Some(size(px(500.0), px(250.0))),
+                window_min_size: Some(size(px(480.0), px(270.0))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Pandora Launcher".into()),
                     appears_transparent: use_custom_titlebar,

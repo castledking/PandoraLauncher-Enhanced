@@ -84,6 +84,10 @@ fn language_to_id(lang: &Language) -> u8 {
     }
 }
 
+pub fn get_current_lang_id() -> u8 {
+    LANG.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn set_lang(lang: &Language) {
     LANG.store(language_to_id(lang), std::sync::atomic::Ordering::Relaxed);
 }

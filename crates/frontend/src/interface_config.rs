@@ -3,12 +3,14 @@ use std::{cmp::Ordering, io::Write, path::Path, sync::Arc, time::Duration};
 use bridge::instance::InstanceID;
 
 use bridge::instance::InstanceContentSummary;
-use gpui::{App, SharedString, Task};
+use gpui::{App, BorrowAppContext, SharedString, Task};
 use rand::RngCore;
 use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType};
 use serde::{Deserialize, Serialize};
 
-use crate::{component::named_dropdown::DropdownName, pages::instance::instance_page::InstanceSubpageType, ui::PageType};
+use crate::{
+    component::named_dropdown::DropdownName, pages::instance::instance_page::InstanceSubpageType, ui::PageType,
+};
 
 struct InterfaceConfigHolder {
     config: InterfaceConfig,
@@ -22,8 +24,16 @@ impl gpui::Global for InterfaceConfigHolder {}
 pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub language: t::Language,
+
+    // Theme
     #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub active_theme: SharedString,
+    pub active_theme: Option<SharedString>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub font_family: Option<SharedString>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub font_size: Option<i32>,
+
+    // Window state
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub main_window_bounds: WindowBounds,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -32,6 +42,8 @@ pub struct InterfaceConfig {
     pub main_page: PageType,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub page_path: Arc<[PageType]>,
+
+    // Instance management
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub quick_delete_mods: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -51,6 +63,14 @@ pub struct InterfaceConfig {
     pub instance_shaders_sort_key: InstanceContentSortKey,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_shaders_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub show_snapshots_in_create_instance: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instances_view_mode: InstancesViewMode,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_subpage: InstanceSubpageType,
+
+    // Content
     #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
     pub content_install_latest: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -65,6 +85,8 @@ pub struct InterfaceConfig {
         deserialize_with = "schema::try_deserialize"
     )]
     pub curseforge_page_class_id: CurseforgeClassId,
+
+    // Window options
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_main_window_on_launch: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -73,18 +95,16 @@ pub struct InterfaceConfig {
     pub quit_on_main_closed: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub use_os_titlebar: bool,
+
+    // Privacy options
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_usernames: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_skins: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_server_addresses: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub show_snapshots_in_create_instance: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub instances_view_mode: InstancesViewMode,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub instance_subpage: InstanceSubpageType,
+
+    // Skins page
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub collapse_capes_in_skins_page: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -104,6 +124,68 @@ pub struct InstanceGroup {
     pub id: u64,
     pub name: String,
     pub collapsed: bool,
+}
+
+pub const DEFAULT_THEME: &'static str = "Default Dark";
+
+#[cfg(windows)]
+pub const DEFAULT_FONT: &'static str = "Inter 24pt 24pt";
+#[cfg(not(windows))]
+pub const DEFAULT_FONT: &'static str = "Inter 24pt";
+
+pub const DEFAULT_FONT_SIZE: i32 = 16;
+
+impl InterfaceConfig {
+    pub fn set_active_theme(&mut self, theme: SharedString) {
+        if theme == DEFAULT_THEME {
+            self.active_theme = None;
+        } else {
+            self.active_theme = Some(theme);
+        }
+    }
+
+    pub fn set_font_family(&mut self, font_family: SharedString) {
+        if font_family == DEFAULT_FONT {
+            self.font_family = None;
+        } else {
+            self.font_family = Some(font_family);
+        }
+    }
+
+    pub fn set_font_size(&mut self, font_size: i32) {
+        if font_size == DEFAULT_FONT_SIZE {
+            self.font_size = None;
+        } else {
+            self.font_size = Some(font_size);
+        }
+    }
+
+    pub fn apply_theme(cx: &mut App, log: bool) {
+        cx.update_global::<InterfaceConfigHolder, _>(|holder, cx| {
+            let registry = gpui_component::ThemeRegistry::global(cx);
+            let theme_config = if let Some(active_theme) = &holder.config.active_theme {
+                if let Some(theme_config) = registry.themes().get(active_theme).cloned() {
+                    theme_config
+                } else {
+                    if log {
+                        log::warn!("Unable to find theme with name {}, using default theme", active_theme);
+                    }
+                    registry.default_dark_theme().clone()
+                }
+            } else {
+                registry.default_dark_theme().clone()
+            };
+
+            let theme = gpui_component::Theme::global_mut(cx);
+
+            theme.apply_config(&theme_config);
+
+            theme.font_family = holder.config.font_family.clone().unwrap_or(SharedString::new_static(DEFAULT_FONT));
+            theme.font_size = gpui::px(holder.config.font_size.unwrap_or(DEFAULT_FONT_SIZE).clamp(8, 32) as f32);
+            theme.scrollbar_mode = gpui_component::scroll::ScrollbarMode::Always;
+        });
+        cx.refresh_windows();
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
@@ -132,7 +214,9 @@ impl InstanceContentSortKey {
             InstanceContentSortKey::Name => DropdownName::translated(t::instance::content::sort_key::name),
             InstanceContentSortKey::ModId => DropdownName::translated(t::instance::content::sort_key::mod_id),
             InstanceContentSortKey::Filename => DropdownName::translated(t::instance::content::sort_key::filename),
-            InstanceContentSortKey::ModifiedTime => DropdownName::translated(t::instance::content::sort_key::modified_time),
+            InstanceContentSortKey::ModifiedTime => {
+                DropdownName::translated(t::instance::content::sort_key::modified_time)
+            },
             InstanceContentSortKey::FileSize => DropdownName::translated(t::instance::content::sort_key::filesize),
         }
     }
@@ -211,6 +295,8 @@ impl Default for InterfaceConfig {
         Self {
             language: Default::default(),
             active_theme: Default::default(),
+            font_family: None,
+            font_size: None,
             main_window_bounds: Default::default(),
             sidebar_width: Default::default(),
             main_page: Default::default(),

@@ -159,7 +159,7 @@ impl SkinManager {
     pub fn download_skin(backend: &BackendState, skin_url: Arc<str>) {
         let skin_manager = backend.skin_manager.clone();
         let account_info = backend.account_info.clone();
-        let http_client = backend.http_client.clone();
+        let http_client = backend.http_client_provider.client();
 
         tokio::task::spawn(async move {
             log::info!("Downloading skin from {}", skin_url);

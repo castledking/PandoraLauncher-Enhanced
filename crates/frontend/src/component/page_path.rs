@@ -47,7 +47,7 @@ impl RenderOnce for PagePath {
                     .into_any_element();
                 [
                     item,
-                    Icon::new(PandoraIcon::ChevronRight).size_4().top_px().into_any_element()
+                    Icon::new(PandoraIcon::ChevronRight).size_4().top_px().into_any_element(),
                 ]
             }))
             .child(div().text_color(cx.theme().foreground).child(self.main_page.title(&self.data, cx)))

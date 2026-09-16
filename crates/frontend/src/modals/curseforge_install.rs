@@ -34,7 +34,9 @@ use ustr::Ustr;
 use crate::{
     component::instance_dropdown::InstanceDropdown,
     entity::{
-DataEntities, instance::InstanceEntry, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
+        DataEntities,
+        instance::InstanceEntry,
+        metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
     root,
 };
@@ -663,7 +665,7 @@ impl InstallDialog {
                 Some(CurseforgeModLoaderType::from_name(selected_loader_string.as_str()) as u32)
             };
 
-let request = FrontendMetadata::request(
+            let request = FrontendMetadata::request(
                 &self.data.metadata,
                 MetadataRequest::CurseforgeGetModFiles(CurseforgeGetModFilesRequest {
                     mod_id: self.project_id,

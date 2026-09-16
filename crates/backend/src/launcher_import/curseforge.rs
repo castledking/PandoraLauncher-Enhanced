@@ -91,6 +91,7 @@ pub fn import_from_curseforge(
     modal_action: ModalAction,
 ) {
     import_instances_from_curseforge(backend, &import_job, &modal_action);
+    modal_action.set_finished();
 }
 
 #[derive(Debug)]

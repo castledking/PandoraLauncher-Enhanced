@@ -13,7 +13,6 @@ pub mod rename_group;
 pub mod rename_instance;
 pub mod select_group;
 pub mod select_icon;
-pub mod settings;
 pub mod unzip_modpack;
 pub mod update_prompt;
 pub mod upload_skin_modal;

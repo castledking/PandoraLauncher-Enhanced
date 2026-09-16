@@ -2,12 +2,12 @@ use std::ffi::OsStr;
 
 #[derive(PartialEq, Eq, Debug)]
 enum GpuDriver {
-    AmdGpu, // Modern AMD
-    Radeon, // Legacy AMD
+    AmdGpu,  // Modern AMD
+    Radeon,  // Legacy AMD
     Nouveau, // Modern Open-Source NVIDIA
-    Nvidia, // Legacy Proprietary NVIDIA
-    I915, // Legacy Intel
-    Xe, // Modern Intel
+    Nvidia,  // Legacy Proprietary NVIDIA
+    I915,    // Legacy Intel
+    Xe,      // Modern Intel
     Other,
 }
 
@@ -27,7 +27,7 @@ impl GpuDriver {
             _ => {
                 log::warn!("Unknown graphics driver name: {}", name.to_string_lossy());
                 Self::Other
-            }
+            },
         }
     }
 }
@@ -103,7 +103,8 @@ fn determine_best_gpu() -> std::io::Result<Option<GpuDevice>> {
         return Ok(Some(gpus.remove(0)));
     }
 
-    let best_device = gpus.into_iter()
+    let best_device = gpus
+        .into_iter()
         .map(|device| (determine_gpu_priority(&device), device))
         .max_by_key(|(prio, _)| *prio)
         .map(|(_, device)| device);
@@ -111,16 +112,17 @@ fn determine_best_gpu() -> std::io::Result<Option<GpuDevice>> {
     Ok(best_device)
 }
 
-static SWITCHEROO_DISCRETE_GPU_TAG: once_cell::sync::Lazy<std::ffi::CString> = once_cell::sync::Lazy::new(|| {
-    std::ffi::CString::new("switcheroo-discrete-gpu").unwrap()
-});
+static SWITCHEROO_DISCRETE_GPU_TAG: once_cell::sync::Lazy<std::ffi::CString> =
+    once_cell::sync::Lazy::new(|| std::ffi::CString::new("switcheroo-discrete-gpu").unwrap());
 
 fn determine_gpu_priority(device: &GpuDevice) -> u32 {
     let mut priority = 0;
 
     match is_discrete_gpu(device) {
-        Ok(discrete) => if discrete {
-            priority += 2;
+        Ok(discrete) => {
+            if discrete {
+                priority += 2;
+            }
         },
         Err(err) => {
             log::error!("Error while checking whether gpu is discrete: {:?}", err);
@@ -134,7 +136,9 @@ fn determine_gpu_priority(device: &GpuDevice) -> u32 {
 }
 
 fn is_default_gpu(device: &GpuDevice) -> bool {
-    device.platform.attribute_value("boot_vga")
+    device
+        .platform
+        .attribute_value("boot_vga")
         .map(|s| s.as_encoded_bytes() == b"1")
         .unwrap_or(false)
 }
@@ -152,7 +156,11 @@ fn is_discrete_gpu(device: &GpuDevice) -> std::io::Result<bool> {
         GpuDriver::AmdGpu => is_discrete_gpu_amdgpu(device),
         GpuDriver::Nouveau => is_discrete_gpu_nouveau(device),
         GpuDriver::Nvidia => Ok(true),
-        GpuDriver::I915 => Ok(!device.render.devpath().as_encoded_bytes().starts_with(b"/devices/pci0000:00/0000:00:02.0/drm/")),
+        GpuDriver::I915 => Ok(!device
+            .render
+            .devpath()
+            .as_encoded_bytes()
+            .starts_with(b"/devices/pci0000:00/0000:00:02.0/drm/")),
         GpuDriver::Xe => is_discrete_gpu_xe(device),
         GpuDriver::Other | GpuDriver::Radeon => Ok(false),
     }
@@ -193,7 +201,7 @@ fn is_discrete_gpu_amdgpu(device: &GpuDevice) -> std::io::Result<bool> {
     #[derive(Debug)]
     struct DrmAmdgpuInfoDevice {
         _unused: [u32; 34],
-    	ids_flags: u64,
+        ids_flags: u64,
     }
     let mut result = DrmAmdgpuInfoDevice {
         _unused: [0; 34],
@@ -205,7 +213,7 @@ fn is_discrete_gpu_amdgpu(device: &GpuDevice) -> std::io::Result<bool> {
         return_pointer: u64,
         return_size: u32,
         query: u32,
-        _pad: [u32; 16]
+        _pad: [u32; 16],
     }
 
     const AMDGPU_INFO_DEV_INFO: u32 = 0x16;
@@ -237,7 +245,7 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
         handle: u64,
         oclass: u32,
         length: u32,
-        data: *mut ()
+        data: *mut (),
     }
     let mut nouveau_object = NouveauObject {
         parent: std::ptr::null_mut(),
@@ -278,7 +286,7 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
     struct InitArgs {
         ioctl: NvifIoctlV0,
         new: NvifIoctlNewV0,
-        dev: NvDeviceV0
+        dev: NvDeviceV0,
     }
     const NVIF_IOCTL_V0_NEW: u8 = 0x02;
     const NVIF_IOCTL_V0_OWNER_ANY: u8 = 0xff;
@@ -292,7 +300,7 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
             owner: NVIF_IOCTL_V0_OWNER_ANY,
             route: NVIF_IOCTL_V0_ROUTE_NVIF,
             token: 0,
-            object: 0
+            object: 0,
         },
         new: NvifIoctlNewV0 {
             version: 0,
@@ -306,8 +314,8 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
         dev: NvDeviceV0 {
             version: 0,
             pad01: Default::default(),
-            device: !0 // device identifier, ~0 for client default
-        }
+            device: !0, // device identifier, ~0 for client default
+        },
     };
 
     const DRM_NOUVEAU_NVIF: u32 = 0x07;
@@ -337,7 +345,7 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
     struct DeviceInfoArgs {
         ioctl: NvifIoctlV0,
         mthd: NvifIoctlMthdV0,
-        info: NvifDeviceInfoV0
+        info: NvifDeviceInfoV0,
     }
     const NVIF_IOCTL_V0_MTHD: u8 = 0x04;
     const NV_DEVICE_V0_INFO: u8 = 0x00;
@@ -349,7 +357,7 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
             owner: NVIF_IOCTL_V0_OWNER_ANY,
             route: NVIF_IOCTL_V0_ROUTE_NVIF,
             token: 0,
-            object: (&mut nouveau_object as *mut NouveauObject).addr() as u64
+            object: (&mut nouveau_object as *mut NouveauObject).addr() as u64,
         },
         mthd: NvifIoctlMthdV0 {
             version: 0,
@@ -375,7 +383,8 @@ fn is_discrete_gpu_nouveau(device: &GpuDevice) -> std::io::Result<bool> {
     const NV_DEVICE_INFO_V0_IGP: u8 = 0x00;
     const NV_DEVICE_INFO_V0_SOC: u8 = 0x04;
 
-    Ok(device_info_args.info.platform != NV_DEVICE_INFO_V0_IGP && device_info_args.info.platform != NV_DEVICE_INFO_V0_SOC)
+    Ok(device_info_args.info.platform != NV_DEVICE_INFO_V0_IGP
+        && device_info_args.info.platform != NV_DEVICE_INFO_V0_SOC)
 }
 
 fn is_discrete_gpu_xe(device: &GpuDevice) -> std::io::Result<bool> {
@@ -392,7 +401,7 @@ fn is_discrete_gpu_xe(device: &GpuDevice) -> std::io::Result<bool> {
         query: u32,
         size: u32,
         data: u64,
-        _reserved: [u64; 2]
+        _reserved: [u64; 2],
     }
 
     const DRM_XE_DEVICE_QUERY_CONFIG: u32 = 0x2;
@@ -412,12 +421,14 @@ fn is_discrete_gpu_xe(device: &GpuDevice) -> std::io::Result<bool> {
     const DRM_XE_QUERY_CONFIG_INFO_OFFSET: u32 = 1;
     const DRM_XE_QUERY_CONFIG_FLAGS: u32 = 1;
 
-    if device_query.size < (DRM_XE_QUERY_CONFIG_INFO_OFFSET + DRM_XE_QUERY_CONFIG_FLAGS + 1) * std::mem::size_of::<u64>() as u32 {
+    if device_query.size
+        < (DRM_XE_QUERY_CONFIG_INFO_OFFSET + DRM_XE_QUERY_CONFIG_FLAGS + 1) * std::mem::size_of::<u64>() as u32
+    {
         log::warn!("is_discrete_gpu_xe: query size is {}, not enough to read flags", device_query.size);
         return Ok(false);
     }
 
-    let mut data = vec![0_u64; ((device_query.size+7)/8) as usize];
+    let mut data = vec![0_u64; ((device_query.size + 7) / 8) as usize];
     device_query.data = data.as_mut_ptr().addr() as u64;
 
     // If size is equal to the required size, the queried information is copied into data.

@@ -82,6 +82,11 @@ pub struct CurseforgeFingerprintResponse {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct CurseforgeProjectResponse {
+    pub data: CurseforgeProject,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CurseforgeFingerprintData {
     pub exact_matches: Arc<[CurseforgeFingerprintMatch]>,
@@ -171,12 +176,17 @@ pub struct CurseforgeFile {
     pub dependencies: Arc<[CurseforgeFileDependency]>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseforgeProjectLinks {
+    pub website_url: Arc<str>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CurseforgeProject {
-    pub id: u32,
     pub name: Arc<str>,
-    pub slug: Arc<str>,
+    pub links: CurseforgeProjectLinks,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -218,7 +228,9 @@ impl CurseforgeReleaseType {
 }
 
 impl From<CurseforgeReleaseType> for u32 {
-    fn from(v: CurseforgeReleaseType) -> Self { v as u32 }
+    fn from(v: CurseforgeReleaseType) -> Self {
+        v as u32
+    }
 }
 
 #[derive(enumset::EnumSetType, Default, Debug, Hash, PartialOrd, Ord)]

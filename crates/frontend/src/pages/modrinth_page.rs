@@ -731,7 +731,7 @@ impl ModrinthSearchPage {
                         actions.insert(2, ModAction::UpdateCheck);
                     }
 
-render_mod_action_dropdown(
+                    render_mod_action_dropdown(
                         (*dropdown_id).clone().into(),
                         actions,
                         Rc::new(move |action, window, cx| match action {
@@ -958,7 +958,7 @@ impl PrimaryAction {
         }
     }
 
-pub fn perform(
+    pub fn perform(
         &self,
         name: SharedString,
         project_id: &Arc<str>,

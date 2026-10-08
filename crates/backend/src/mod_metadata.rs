@@ -270,12 +270,11 @@ impl ModMetadataManager {
         self.content_sources.write().write_dirty_to_folder(&self.sources_dir);
     }
 
-    pub fn set_content_sources(&self, sources: impl Iterator<Item = ([u8; 20], ContentSource)>) {
-        let mut content_sources = self.content_sources.write();
-
-        for (hash, source) in sources {
-            content_sources.set(&hash, source);
+    pub fn set_content_source(&self, hash: [u8; 20], source: ContentSource) {
+        if source == ContentSource::Manual {
+            return;
         }
+        self.content_sources.write().set(&hash, source);
     }
 
     pub fn set_cached_curseforge_info(&self, file_id: u32, info: CachedCurseforgeFileInfo) {
@@ -1252,7 +1251,11 @@ impl Default for ContentSources {
 }
 
 impl ContentSources {
-    pub fn get(&self, hash: &[u8; 20]) -> Option<ContentSource> {
+    pub fn get(&self, hash: &[u8; 20]) -> ContentSource {
+        self.inner_get(hash).unwrap_or(ContentSource::Manual)
+    }
+
+    fn inner_get(&self, hash: &[u8; 20]) -> Option<ContentSource> {
         let first_byte = hash[0];
         let values = &self.by_first_byte.get(first_byte as usize)?;
         let index = values.binary_search_by_key(&&hash[1..], |v| &v.0).ok()?;
@@ -1260,15 +1263,15 @@ impl ContentSources {
     }
 
     pub fn set(&mut self, hash: &[u8; 20], value: ContentSource) {
+        // Don't replace actual source with manual source
+        if value == ContentSource::Manual {
+            return;
+        }
+
         let first_byte = hash[0];
         let values = &mut self.by_first_byte[first_byte as usize];
         match values.binary_search_by_key(&&hash[1..], |v| &v.0) {
             Ok(existing) => {
-                if value == ContentSource::Manual {
-                    // Don't replace actual source with manual source
-                    return;
-                }
-
                 let old_source = &mut values[existing].1;
                 let skip = match old_source {
                     ContentSource::ModrinthProject { project_id: _ } => {

@@ -341,9 +341,9 @@ impl<'a> MetadataItem for ModrinthSearchMetadataItem<'a> {
 }
 
 #[derive(Debug)]
-pub struct ModrinthProjectVersionsMetadataItem<'a>(pub &'a ModrinthProjectVersionsRequest);
+pub struct ModrinthProjectVersionsMetadataItem(pub ModrinthProjectVersionsRequest);
 
-impl<'a> MetadataItem for ModrinthProjectVersionsMetadataItem<'a> {
+impl MetadataItem for ModrinthProjectVersionsMetadataItem {
     type T = ModrinthProjectVersionsResult;
 
     fn request(&self, client: &reqwest::Client) -> RequestBuilder {

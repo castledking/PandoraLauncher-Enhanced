@@ -6,13 +6,14 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, Selectable, WindowExt,
+    ActiveTheme, Icon, Selectable, Sizable, WindowExt,
     alert::Alert,
     button::{Button, ButtonGroup, ButtonVariants},
     checkbox::Checkbox,
     dialog::Dialog,
     h_flex,
     input::{Input, InputEvent, InputState},
+    menu::{DropdownMenu, PopupMenuItem},
     select::{Select, SelectState},
     skeleton::Skeleton,
     v_flex,
@@ -47,8 +48,8 @@ struct CreateInstanceModalState {
     original_fallback_name: SharedString,
     unique_fallback_name: SharedString,
     icon: Option<EmbeddedOrRaw>,
-    selected_group: Option<(crate::modals::select_group::GroupSelection, SharedString)>,
-    on_group_selected: Box<dyn Fn(crate::modals::select_group::GroupSelection, &mut Window, &mut App)>,
+    group_input_state: Entity<InputState>,
+    existing_groups: Vec<SharedString>,
     _versions_updated_subscription: Subscription,
     _name_input_subscription: Subscription,
     _version_selected_subscription: Subscription,
@@ -59,13 +60,37 @@ impl CreateInstanceModalState {
         metadata: Entity<FrontendMetadata>,
         instances: Entity<InstanceEntries>,
         backend_handle: BackendHandle,
-        preselected_group: Option<crate::modals::select_group::SelectedGroup>,
-        on_group_selected: Box<dyn Fn(crate::modals::select_group::GroupSelection, &mut Window, &mut App)>,
+        preselected_group: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let instance_names: Arc<[SharedString]> =
             instances.read(cx).entries.iter().map(|(_, v)| v.read(cx).name.clone()).collect();
+
+        let existing_groups = {
+            let mut seen = rustc_hash::FxHashSet::default();
+            let mut groups = Vec::new();
+            for (_, entry) in instances.read(cx).entries.iter() {
+                if let Some(group) = entry.read(cx).configuration.group.clone()
+                    && seen.insert(group.clone())
+                {
+                    groups.push(SharedString::from(group));
+                }
+            }
+            let ordering = &InterfaceConfig::get(cx).instance_group_order;
+            groups.sort_by_cached_key(|group| {
+                ordering.iter().position(|name| &**name == group.as_str()).map(|v| v + 1).unwrap_or(0)
+            });
+            groups
+        };
+
+        let group_input_state = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder(t::instance::group::select());
+            if let Some(preselected_group) = &preselected_group {
+                state.set_value(preselected_group.clone(), window, cx);
+            }
+            state
+        });
 
         let minecraft_version_dropdown =
             cx.new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
@@ -114,11 +139,8 @@ impl CreateInstanceModalState {
             original_fallback_name: Default::default(),
             unique_fallback_name: Default::default(),
             icon: None,
-            selected_group: preselected_group.map(|group| {
-                let name = group.name.clone();
-                (crate::modals::select_group::GroupSelection::Existing(group), name)
-            }),
-            on_group_selected,
+            group_input_state,
+            existing_groups,
             _versions_updated_subscription,
             _name_input_subscription,
             _version_selected_subscription,
@@ -366,52 +388,29 @@ impl CreateInstanceModalState {
                         this.child(icon)
                     }),
             )
-            .child(
-                h_flex().gap_2().child(
-                    Button::new("select_group")
-                        .icon(PandoraIcon::Plus)
-                        .label(
-                            self.selected_group
-                                .as_ref()
-                                .map(|(_, name)| name.clone())
-                                .unwrap_or_else(|| t::instance::group::select().into()),
-                        )
-                        .on_click({
-                            let entity = cx.entity();
-                            move |_, window, cx| {
-                                let entity = entity.clone();
-                                let current =
-                                    entity.read(cx).selected_group.as_ref().map(|(selection, _)| match selection {
-                                        crate::modals::select_group::GroupSelection::Existing(group) => group.clone(),
-                                        crate::modals::select_group::GroupSelection::New(name) => {
-                                            crate::modals::select_group::SelectedGroup {
-                                                id: None,
-                                                name: name.clone().into(),
-                                            }
-                                        },
-                                    });
-                                crate::modals::select_group::open_select_group(
-                                    current,
-                                    move |selection, window, cx| {
-                                        let label = match &selection {
-                                            crate::modals::select_group::GroupSelection::Existing(group) => {
-                                                group.name.clone()
-                                            },
-                                            crate::modals::select_group::GroupSelection::New(name) => {
-                                                SharedString::from(name.clone())
-                                            },
-                                        };
-                                        entity.update(cx, |this, _| {
-                                            this.selected_group = Some((selection, label));
+            .child(h_flex().gap_2().child(Input::new(&self.group_input_state).flex_1()).when(
+                !self.existing_groups.is_empty(),
+                |this| {
+                    this.child(Button::new("pick_group").icon(PandoraIcon::ChevronDown).small().dropdown_menu({
+                        let groups = self.existing_groups.clone();
+                        let group_input_state = self.group_input_state.clone();
+                        move |mut menu, _window, _cx| {
+                            for group in groups.iter() {
+                                menu = menu.item(PopupMenuItem::new(group.clone()).on_click({
+                                    let group = group.clone();
+                                    let group_input_state = group_input_state.clone();
+                                    move |_, window, cx| {
+                                        group_input_state.update(cx, |state, cx| {
+                                            state.set_value(group.clone(), window, cx);
                                         });
-                                    },
-                                    window,
-                                    cx,
-                                );
+                                    }
+                                }));
                             }
-                        }),
-                ),
-            );
+                            menu
+                        }
+                    }))
+                },
+            ));
 
         let name_is_invalid = self.name_invalid;
         modal
@@ -459,15 +458,17 @@ impl CreateInstanceModalState {
                                     name = this.unique_fallback_name.clone();
                                 }
 
+                                let group = this.group_input_state.read(cx).value().clone();
+                                let group = group.trim_ascii();
+                                let group = (!group.is_empty()).then(|| Arc::<str>::from(group));
+
                                 this.backend_handle.send(MessageToBackend::CreateInstance {
                                     name: name.as_str().into(),
                                     version: selected_version.as_str().into(),
                                     loader: this.selected_loader,
                                     icon: this.icon.clone(),
+                                    group,
                                 });
-                                if let Some((selection, _)) = this.selected_group.take() {
-                                    (this.on_group_selected)(selection, window, cx);
-                                }
                                 window.close_dialog(cx);
                             },
                         ))),
@@ -480,22 +481,12 @@ pub fn open_create_instance(
     metadata: Entity<FrontendMetadata>,
     instances: Entity<InstanceEntries>,
     backend_handle: BackendHandle,
-    preselected_group: Option<crate::modals::select_group::SelectedGroup>,
-    on_group_selected: impl Fn(crate::modals::select_group::GroupSelection, &mut Window, &mut App) + 'static,
+    preselected_group: Option<SharedString>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let state = cx.new(|cx| {
-        CreateInstanceModalState::new(
-            metadata,
-            instances,
-            backend_handle,
-            preselected_group,
-            Box::new(on_group_selected),
-            window,
-            cx,
-        )
-    });
+    let state =
+        cx.new(|cx| CreateInstanceModalState::new(metadata, instances, backend_handle, preselected_group, window, cx));
 
     window.open_dialog(cx, move |modal, window, cx| {
         cx.update_entity(&state, |state, cx| state.render(modal, window, cx))

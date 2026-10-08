@@ -29,6 +29,7 @@ use schema::{
     loader::Loader,
     minecraft_profile::{MinecraftProfileResponse, SkinVariant},
     modrinth::ModrinthLoader,
+    quickplay::QuickplayPreset,
     version::{LaunchArgument, LaunchArgumentValue},
 };
 use serde::{Deserialize, Serialize};
@@ -100,7 +101,7 @@ impl BackendState {
                         bridge::meta::MetadataRequest::ModrinthProjectVersions(ref project_versions) => {
                             let (result, handle) = meta
                                 .fetch_with_keepalive(
-                                    ModrinthProjectVersionsMetadataItem(project_versions),
+                                    ModrinthProjectVersionsMetadataItem(project_versions.clone()),
                                     force_reload,
                                 )
                                 .await;
@@ -162,8 +163,9 @@ impl BackendState {
                 version,
                 loader,
                 icon,
+                group,
             } => {
-                self.create_instance(&name, &version, loader, icon).await;
+                self.create_instance(&name, &version, loader, icon, group);
             },
             MessageToBackend::DeleteInstance { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
@@ -409,6 +411,18 @@ impl BackendState {
                 live_game_output,
                 modal_action,
             } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
+            MessageToBackend::StartQuickplayInstance {
+                preset,
+                minecraft_version,
+                quick_play,
+                live_game_output,
+                modal_action,
+            } => {
+                let Some(id) = self.setup_quickplay_instance(preset, minecraft_version, &modal_action).await else {
+                    return;
+                };
+                self.start_instance(id, quick_play, live_game_output, modal_action).await
+            },
             MessageToBackend::SetContentEnabled {
                 id,
                 content_ids: mod_ids,
@@ -791,7 +805,7 @@ impl BackendState {
                     // Scope is needed so await doesn't complain about the non-send RwLockReadGuard
                     let sources = self.mod_metadata_manager.read_content_sources();
                     for summary in content.iter() {
-                        let source = sources.get(&summary.content_summary.hash).unwrap_or(ContentSource::Manual);
+                        let source = sources.get(&summary.content_summary.hash);
                         let semaphore = &semaphore;
                         let meta = &meta;
                         let tracker = &tracker;
@@ -1413,6 +1427,17 @@ impl BackendState {
             },
             MessageToBackend::GetBackendConfiguration { channel } => {
                 _ = channel.send(self.config.lock().get().clone());
+            },
+            MessageToBackend::SetLaunchDefaults {
+                memory,
+                jvm_flags,
+                jvm_binary,
+            } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.memory = memory;
+                    backend_config.jvm_flags = jvm_flags;
+                    backend_config.jvm_binary = jvm_binary;
+                });
             },
             MessageToBackend::CleanupOldLogFiles { instance: id } => {
                 let mut deleted = 0;
@@ -2224,6 +2249,17 @@ impl BackendState {
             MessageToBackend::Quit => {
                 self.should_quit.store(true, Ordering::Relaxed);
             },
+            MessageToBackend::MoveInstanceToGroup { instance_id, group } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
+                    let group = if group.trim_ascii().is_empty() {
+                        None
+                    } else {
+                        Some(group)
+                    };
+                    instance.configuration.modify(|cfg| cfg.group = group);
+                    self.send.send(instance.create_modify_message());
+                }
+            },
         }
     }
 
@@ -2236,25 +2272,28 @@ impl BackendState {
     ) {
         let keepalive = KeepAlive::new();
 
-        let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            if let Some(launch_keepalive) = &instance.launch_keepalive
-                && launch_keepalive.is_alive()
-            {
-                modal_action.set_finished_with_error("Can't launch instance, already launching".into());
+        let (dot_minecraft, mut configuration) =
+            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                if let Some(launch_keepalive) = &instance.launch_keepalive
+                    && launch_keepalive.is_alive()
+                {
+                    modal_action.set_finished_with_error("Can't launch instance, already launching".into());
+                    return;
+                }
+
+                instance.launch_keepalive = Some(keepalive.create_handle());
+
+                self.send.send(MessageToFrontend::MoveInstanceToTop { id });
+                self.send.send(instance.create_modify_message());
+
+                (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
+            } else {
+                self.send.send_error("Can't launch instance, unknown id");
+                modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
                 return;
-            }
+            };
 
-            instance.launch_keepalive = Some(keepalive.create_handle());
-
-            self.send.send(MessageToFrontend::MoveInstanceToTop { id });
-            self.send.send(instance.create_modify_message());
-
-            (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
-        } else {
-            self.send.send_error("Can't launch instance, unknown id");
-            modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
-            return;
-        };
+        crate::launch::apply_global_launch_defaults(&mut configuration, self.config.lock().get());
 
         scopeguard::defer! {
             modal_action.set_finished();
@@ -2337,6 +2376,83 @@ impl BackendState {
         }
 
         launch_tracker.set_finished(ProgressTrackerFinishType::from_err(is_err));
+    }
+
+    async fn setup_quickplay_instance(
+        self: &Arc<Self>,
+        preset: QuickplayPreset,
+        minecraft_version: Ustr,
+        modal_action: &ModalAction,
+    ) -> Option<InstanceID> {
+        let loader = crate::quickplay_presets::loader(preset);
+
+        let name = schema::quickplay::INSTANCE_NAME;
+        let (id, mods_folder) =
+            if let Some(existing) = self.instance_state.write().instances.iter_mut().find(|i| i.name == name) {
+                existing.configuration.modify(|cfg| {
+                    cfg.minecraft_version = minecraft_version;
+                    cfg.loader = loader;
+                    cfg.sandbox = true;
+                });
+                let mods_folder = if existing.frozen_mods_folder {
+                    None
+                } else {
+                    Some(existing.content_state[ContentFolder::Mods].path.clone())
+                };
+                (existing.id, mods_folder)
+            } else {
+                let tracker = modal_action.push_tracker("Creating instance".into());
+                tracker.add_total(2);
+
+                let path = self.create_instance(name, minecraft_version.as_str(), loader, None, None)?;
+
+                tracker.add_count(1);
+
+                let instance_id = self.load_instance_from_path(&path, true, false)?;
+
+                let mods_folder = if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
+                    instance.configuration.modify(|cfg| {
+                        cfg.minecraft_version = minecraft_version;
+                        cfg.loader = loader;
+                        cfg.sandbox = true;
+                    });
+                    if instance.frozen_mods_folder {
+                        None
+                    } else {
+                        Some(instance.content_state[ContentFolder::Mods].path.clone())
+                    }
+                } else {
+                    None
+                };
+
+                tracker.add_count(1);
+                tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+                (instance_id, mods_folder)
+            };
+
+        if loader == Loader::Vanilla {
+            return Some(id);
+        }
+        let Some(mods_folder) = mods_folder else {
+            return Some(id);
+        };
+
+        let files =
+            crate::quickplay_presets::resolve_installs(preset, minecraft_version, self.meta.clone(), modal_action)
+                .await;
+
+        _ = std::fs::remove_dir_all(mods_folder);
+        let install = ContentInstall {
+            target: InstallTarget::Instance(id),
+            loader,
+            minecraft_version,
+            files,
+        };
+
+        self.install_content(install, modal_action.clone()).await;
+
+        Some(id)
     }
 
     fn extract_skin_url_from_profile(profile_json: &str) -> Option<Arc<str>> {

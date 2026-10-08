@@ -15,6 +15,7 @@ use schema::{
     loader::Loader,
     minecraft_profile::{MinecraftProfileCape, SkinVariant},
     pandora_update::UpdatePrompt,
+    quickplay::QuickplayPreset,
     unique_bytes::UniqueBytes,
 };
 use ustr::Ustr;
@@ -83,6 +84,7 @@ pub enum MessageToBackend {
         version: Ustr,
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
+        group: Option<Arc<str>>,
     },
     DeleteInstance {
         id: InstanceID,
@@ -172,6 +174,13 @@ pub enum MessageToBackend {
         live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
         modal_action: ModalAction,
     },
+    StartQuickplayInstance {
+        preset: QuickplayPreset,
+        minecraft_version: Ustr,
+        quick_play: Option<QuickPlayLaunch>,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
+        modal_action: ModalAction,
+    },
     RequestLoadWorlds {
         id: InstanceID,
     },
@@ -252,6 +261,11 @@ pub enum MessageToBackend {
     },
     GetBackendConfiguration {
         channel: tokio::sync::oneshot::Sender<BackendConfig>,
+    },
+    SetLaunchDefaults {
+        memory: Option<InstanceMemoryConfiguration>,
+        jvm_flags: Option<InstanceJvmFlagsConfiguration>,
+        jvm_binary: Option<InstanceJvmBinaryConfiguration>,
     },
     SetSyncing {
         target: Arc<str>,
@@ -340,6 +354,10 @@ pub enum MessageToBackend {
         modal_action: ModalAction,
     },
     Quit,
+    MoveInstanceToGroup {
+        instance_id: InstanceID,
+        group: Arc<str>,
+    },
 }
 
 #[derive(Debug)]

@@ -15,6 +15,8 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{Root, Theme, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashSet;
+use schema::quickplay::QuickplayPreset;
+use ustr::Ustr;
 
 use crate::{
     Backwards, CloseWindow, Forwards, OpenSettings,
@@ -253,6 +255,61 @@ pub fn start_instance(
                 });
             },
         }
+    })
+    .detach();
+}
+
+pub fn start_quickplay(
+    preset: QuickplayPreset,
+    minecraft_version: Ustr,
+    quick_play: Option<QuickPlayLaunch>,
+    backend_handle: BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let modal_action = ModalAction::default();
+
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+
+    let live_game_output_display = InterfaceConfig::get(cx).live_game_output_display;
+    let live_game_output = if live_game_output_display == LiveGameOutputDisplay::Hidden {
+        None
+    } else {
+        Some(sender)
+    };
+
+    backend_handle.send(MessageToBackend::StartQuickplayInstance {
+        preset,
+        minecraft_version,
+        quick_play,
+        live_game_output,
+        modal_action: modal_action.clone(),
+    });
+
+    let title: SharedString = "Starting Minecraft".into();
+    modals::generic::show_modal(window, cx, title, t::instance::start::error().into(), modal_action);
+
+    cx.spawn(async move |cx| {
+        let Ok(receiver) = receiver.await else {
+            return;
+        };
+
+        let options = WindowOptions {
+            app_id: Some("PandoraLauncher".into()),
+            window_min_size: Some(size(px(360.0), px(240.0))),
+            titlebar: Some(TitlebarOptions {
+                title: Some(t::system::game_output().into()),
+                ..Default::default()
+            }),
+            window_decorations: Some(WindowDecorations::Server),
+            ..Default::default()
+        };
+        _ = cx.open_window(options, |window, cx| {
+            let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
+            let game_output_root = cx.new(|cx| GameOutputRoot::new(game_output.clone(), window, cx));
+            window.activate_window();
+            cx.new(|cx| Root::new(game_output_root, window, cx))
+        });
     })
     .detach();
 }

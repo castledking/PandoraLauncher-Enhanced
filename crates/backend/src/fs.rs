@@ -6,12 +6,41 @@ use std::{
     sync::Arc,
 };
 
-use bridge::instance::InstanceContentSummary;
+use bridge::{
+    instance::InstanceContentSummary,
+    notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle},
+};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use rand::RngCore;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
+
+static FILE_LOCKS: Lazy<Mutex<FxHashMap<Arc<Path>, KeepAliveNotifySignalHandle>>> = Lazy::new(Default::default);
+pub async fn lock_file(path: Arc<Path>) -> KeepAliveNotifySignal {
+    loop {
+        let occupied = match FILE_LOCKS.lock().entry(path.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                let handle = occupied_entry.get();
+                if handle.is_notified() {
+                    let signal = KeepAliveNotifySignal::new();
+                    occupied_entry.insert(signal.create_handle());
+                    return signal;
+                }
+                handle.clone()
+            },
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                let signal = KeepAliveNotifySignal::new();
+                vacant_entry.insert(signal.create_handle());
+                return signal;
+            },
+        };
+
+        occupied.await_notification().await;
+    }
+}
 
 pub fn is_single_component_path_str(path: &str) -> bool {
     is_single_component_path(std::path::Path::new(path))

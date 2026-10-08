@@ -107,6 +107,31 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                 .into(),
                 searched_items: None,
             },
+            SettingGroup {
+                title: Some(t::settings::appearance::sidebar),
+                items: vec![
+                    SettingItem {
+                        title: t::settings::appearance::sidebar::show_sidebar_icons,
+                        description: t::settings::appearance::sidebar::show_sidebar_icons_desc,
+                        widget: SettingItemWidget::Switch(
+                            |cfg| cfg.show_sidebar_icons,
+                            |cfg, val| cfg.show_sidebar_icons = val,
+                        ),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::appearance::sidebar::show_quickplay_page,
+                        description: t::settings::appearance::sidebar::show_quickplay_page_desc,
+                        widget: SettingItemWidget::Switch(
+                            |cfg| cfg.show_quickplay_page,
+                            |cfg, val| cfg.show_quickplay_page = val,
+                        ),
+                        ..Default::default()
+                    },
+                ]
+                .into(),
+                searched_items: None,
+            },
         ]
         .into(),
         searched_groups: None,

@@ -1,3 +1,4 @@
+pub mod clipped_element;
 pub mod content_list;
 pub mod error_alert;
 pub mod generic_title_bar;
@@ -14,6 +15,7 @@ pub mod player_model;
 pub mod player_model_widget;
 pub mod progress_bar;
 pub mod readonly_text_field;
+pub mod reorderable;
 pub mod resize_panel;
 pub mod responsive_grid;
 pub mod search_helper;

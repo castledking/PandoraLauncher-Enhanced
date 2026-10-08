@@ -25,6 +25,7 @@ mod log_reader;
 mod metadata;
 mod mod_metadata;
 mod persistent;
+mod quickplay_presets;
 mod server_list_pinger;
 mod shortcut;
 mod skin_manager;

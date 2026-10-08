@@ -80,7 +80,13 @@ pub struct InstanceConfiguration {
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub show_shader_tab: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
-    pub sandbox: bool,
+    pub sandbox: bool, // Default sandbox to false when loading old configuration json
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_none",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub group: Option<Arc<str>>,
 }
 
 impl InstanceConfiguration {
@@ -101,7 +107,8 @@ impl InstanceConfiguration {
             disable_file_syncing: false,
             created_shortcuts: Vec::new(),
             show_shader_tab: false,
-            sandbox: false,
+            sandbox: false, // todo: for now, off by default. In the future, turn this on by default
+            group: None,
         }
     }
 }
@@ -255,7 +262,7 @@ impl Default for InstanceMemoryConfiguration {
     }
 }
 
-fn is_default_memory_configuration(config: &Option<InstanceMemoryConfiguration>) -> bool {
+pub fn is_default_memory_configuration(config: &Option<InstanceMemoryConfiguration>) -> bool {
     if let Some(config) = config {
         !config.enabled
             && config.min == InstanceMemoryConfiguration::DEFAULT_MIN
@@ -285,7 +292,7 @@ pub struct InstanceJvmFlagsConfiguration {
     pub flags: Arc<str>,
 }
 
-fn is_default_jvm_flags_configuration(config: &Option<InstanceJvmFlagsConfiguration>) -> bool {
+pub fn is_default_jvm_flags_configuration(config: &Option<InstanceJvmFlagsConfiguration>) -> bool {
     if let Some(config) = config {
         !config.enabled && config.flags.trim_ascii().is_empty()
     } else {
@@ -299,7 +306,7 @@ pub struct InstanceJvmBinaryConfiguration {
     pub path: Option<Arc<Path>>,
 }
 
-fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfiguration>) -> bool {
+pub fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfiguration>) -> bool {
     if let Some(config) = config {
         !config.enabled && config.path.is_none()
     } else {

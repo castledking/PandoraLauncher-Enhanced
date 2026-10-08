@@ -1,11 +1,14 @@
 use std::{cmp::Ordering, io::Write, path::Path, sync::Arc, time::Duration};
 
-use bridge::instance::InstanceID;
-
-use bridge::instance::InstanceContentSummary;
+use bridge::{
+    handle::BackendHandle,
+    instance::{InstanceContentSummary, InstanceID},
+    message::MessageToBackend,
+};
 use gpui::{App, BorrowAppContext, SharedString, Task};
 use rand::RngCore;
-use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType};
+use rustc_hash::FxHashSet;
+use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType, quickplay::QuickplayPreset};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -26,22 +29,40 @@ pub struct InterfaceConfig {
     pub language: t::Language,
 
     // Theme
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "schema::skip_if_none",
+        deserialize_with = "schema::try_deserialize"
+    )]
     pub active_theme: Option<SharedString>,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "schema::skip_if_none",
+        deserialize_with = "schema::try_deserialize"
+    )]
     pub font_family: Option<SharedString>,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "schema::skip_if_none",
+        deserialize_with = "schema::try_deserialize"
+    )]
     pub font_size: Option<i32>,
 
     // Window state
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub main_window_bounds: WindowBounds,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub sidebar_width: f32,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub main_page: PageType,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub page_path: Arc<[PageType]>,
+
+    // Sidebar options
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub sidebar_width: f32,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub show_sidebar_icons: bool,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub show_quickplay_page: bool,
 
     // Instance management
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -67,6 +88,10 @@ pub struct InterfaceConfig {
     pub show_snapshots_in_create_instance: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instances_view_mode: InstancesViewMode,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_group_order: Vec<Arc<str>>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_groups_closed: FxHashSet<SharedString>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_subpage: InstanceSubpageType,
 
@@ -113,14 +138,41 @@ pub struct InterfaceConfig {
     pub skin_list_show_3d: bool,
     #[serde(default = "default_zoom", deserialize_with = "schema::try_deserialize")]
     pub player_model_zoom: i32,
+
+    // Quickplay
     #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub instance_groups: Vec<InstanceGroup>,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quickplay_preset: QuickplayPreset,
+    #[serde(
+        default,
+        skip_serializing_if = "schema::skip_if_none",
+        deserialize_with = "schema::try_deserialize"
+    )]
+    pub quickplay_minecraft_version: Option<SharedString>,
+
+    // Groups as they were stored before upstream moved group membership onto the instance itself.
+    // Kept only so `migrate_instance_groups` can carry them over, and cleared once it has.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "schema::try_deserialize"
+    )]
+    pub instance_groups: Vec<LegacyInstanceGroup>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "schema::try_deserialize"
+    )]
     pub instance_group_assignments: Vec<(InstanceID, u64)>,
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        deserialize_with = "schema::try_deserialize"
+    )]
+    pub migrated_instance_group_order: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct InstanceGroup {
+pub struct LegacyInstanceGroup {
     pub id: u64,
     pub name: String,
     pub collapsed: bool,
@@ -298,9 +350,11 @@ impl Default for InterfaceConfig {
             font_family: None,
             font_size: None,
             main_window_bounds: Default::default(),
-            sidebar_width: Default::default(),
             main_page: Default::default(),
             page_path: Default::default(),
+            sidebar_width: Default::default(),
+            show_sidebar_icons: true,
+            show_quickplay_page: true,
             quick_delete_mods: Default::default(),
             quick_delete_instance: Default::default(),
             quick_delete_skins: Default::default(),
@@ -324,13 +378,18 @@ impl Default for InterfaceConfig {
             hide_skins: false,
             show_snapshots_in_create_instance: Default::default(),
             instances_view_mode: Default::default(),
+            instance_group_order: Vec::new(),
+            instance_groups_closed: Default::default(),
             instance_subpage: Default::default(),
             collapse_capes_in_skins_page: false,
             skin_list_sort_desc: false,
             skin_list_show_3d: true,
             instance_groups: Default::default(),
+            migrated_instance_group_order: false,
             instance_group_assignments: Default::default(),
             player_model_zoom: default_zoom(),
+            quickplay_preset: QuickplayPreset::Vanilla,
+            quickplay_minecraft_version: None,
         }
     }
 }
@@ -452,4 +511,63 @@ pub(crate) fn write_safe(path: &Path, content: &[u8]) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Carries groups created before upstream moved group membership onto the instance itself.
+///
+/// The old layout kept the group list in `interface.json` plus a list of `(InstanceID, group id)`
+/// assignments. Ordering and collapsed state still live in the interface config, so they move
+/// across immediately; group membership now lives on the instance and has to go through the
+/// backend.
+///
+/// `InstanceID` is a runtime slab index, so an assignment can only be applied once that instance
+/// has actually loaded, and instances arrive one at a time. Each assignment is therefore applied
+/// and dropped as its instance shows up, and the legacy group list is only cleared once every
+/// assignment has been consumed — clearing it up front would strip the groups off every instance
+/// that had not loaded yet.
+pub fn migrate_instance_group(instance_id: InstanceID, backend_handle: &BackendHandle, cx: &mut App) {
+    if InterfaceConfig::get(cx).instance_groups.is_empty() {
+        return;
+    }
+
+    let config = InterfaceConfig::get_mut(cx);
+
+    // Ordering and collapsed state don't depend on any instance, so they only need doing once
+    if !config.migrated_instance_group_order {
+        let legacy_groups = config.instance_groups.clone();
+        for group in &legacy_groups {
+            let name = Arc::<str>::from(group.name.as_str());
+            if !config.instance_group_order.iter().any(|existing| *existing == name) {
+                config.instance_group_order.push(name);
+            }
+            if group.collapsed {
+                config.instance_groups_closed.insert(SharedString::from(group.name.clone()));
+            }
+        }
+        config.migrated_instance_group_order = true;
+        log::info!("Migrated {} legacy instance groups", legacy_groups.len());
+    }
+
+    let Some(position) = config.instance_group_assignments.iter().position(|(id, _)| *id == instance_id) else {
+        return;
+    };
+    let (_, group_id) = config.instance_group_assignments.remove(position);
+    let group = config
+        .instance_groups
+        .iter()
+        .find(|group| group.id == group_id)
+        .map(|group| group.name.clone());
+
+    if config.instance_group_assignments.is_empty() {
+        config.instance_groups.clear();
+    }
+
+    InterfaceConfig::force_save(cx);
+
+    if let Some(group) = group {
+        backend_handle.send(MessageToBackend::MoveInstanceToGroup {
+            instance_id,
+            group: group.as_str().into(),
+        });
+    }
 }

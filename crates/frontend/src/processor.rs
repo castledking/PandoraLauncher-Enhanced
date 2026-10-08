@@ -103,6 +103,7 @@ impl Processor {
                     ContentStates::new(id, content_states, self.data.backend_handle.clone()),
                     cx,
                 );
+                crate::interface_config::migrate_instance_group(id, &self.data.backend_handle, cx);
             },
             MessageToFrontend::InstanceRemoved { id } => {
                 InstanceEntries::remove(&self.data.instances, id, cx);

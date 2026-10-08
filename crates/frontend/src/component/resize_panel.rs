@@ -8,16 +8,20 @@ use gpui_component::ActiveTheme;
 
 const RESIZE_WIDTH: Pixels = px(1.0);
 const RESIZE_PADDING: Pixels = px(4.0);
+const SNAP_DISTANCE: Pixels = px(12.0);
 
 #[derive(Clone)]
 pub struct ResizePanelState(Rc<RefCell<ResizePanelStateData>>);
 
 struct ResizePanelStateData {
     drag_offset: Option<Pixels>,
+    drag_deadzone: Option<(Pixels, Pixels)>,
+    last_drag_raw_size: Pixels,
     size: Pixels,
     ratio: Option<f32>,
     min_size: Pixels,
     max_size: Pixels,
+    snap_point: Option<Pixels>,
     on_resize: Rc<dyn Fn(Pixels, &mut Window, &mut App)>,
 }
 
@@ -25,12 +29,20 @@ impl ResizePanelState {
     pub fn new(initial_size: Pixels, min_size: Pixels, max_size: Pixels) -> Self {
         Self(Rc::new(RefCell::new(ResizePanelStateData {
             drag_offset: None,
+            drag_deadzone: None,
+            last_drag_raw_size: initial_size,
             size: initial_size,
             ratio: None,
             min_size,
             max_size,
+            snap_point: None,
             on_resize: Rc::new(|_, _, _| {}),
         })))
+    }
+
+    pub fn snap_point(self, snap_point: Pixels) -> Self {
+        self.0.borrow_mut().snap_point = Some(snap_point);
+        self
     }
 
     pub fn on_resize(self, resize: impl Fn(Pixels, &mut Window, &mut App) + 'static) -> Self {
@@ -104,7 +116,9 @@ impl Element for ResizePanel {
 
         let mut state = self.state.0.borrow_mut();
         if state.drag_offset.is_none() {
-            if let Some(ratio) = state.ratio {
+            if let Some(ratio) = state.ratio
+                && state.snap_point != Some(state.size)
+            {
                 let new_size = (bounds.size.width * ratio).round().clamp(state.min_size, state.max_size);
                 if state.size != new_size {
                     state.size = new_size;
@@ -199,6 +213,8 @@ impl Element for ResizePanel {
                     let mut state = state.borrow_mut();
                     state.drag_offset = Some(event.position.x - line_x);
                     state.ratio = None;
+                    state.drag_deadzone = None;
+                    state.last_drag_raw_size = state.size;
                     window.refresh();
                 }
             }
@@ -230,7 +246,17 @@ impl Element for ResizePanel {
                     && !cx.has_active_drag()
                     && event.pressed_button == Some(MouseButton::Left)
                 {
-                    let new_size = (event.position.x - drag_offset).round().clamp(state.min_size, state.max_size);
+                    let raw_size = (event.position.x - drag_offset).round();
+
+                    if let Some((dead_min, dead_max)) = state.drag_deadzone {
+                        if raw_size >= dead_min && raw_size <= dead_max {
+                            return;
+                        }
+                    }
+
+                    let new_size = calculate_new_size(raw_size, &mut state);
+                    state.last_drag_raw_size = raw_size;
+
                     if state.size != new_size {
                         state.size = new_size;
                         state.ratio = None;
@@ -242,4 +268,40 @@ impl Element for ResizePanel {
             }
         });
     }
+}
+
+fn calculate_new_size(raw_size: Pixels, state: &mut ResizePanelStateData) -> Pixels {
+    if let Some(snap_point) = state.snap_point {
+        let distance = (snap_point - raw_size).abs();
+        if distance < SNAP_DISTANCE {
+            return snap_point;
+        }
+
+        if snap_point < state.min_size {
+            if raw_size >= state.min_size {
+                return raw_size.min(state.max_size);
+            }
+            if raw_size < state.last_drag_raw_size && raw_size < state.min_size - SNAP_DISTANCE {
+                state.drag_deadzone = Some((raw_size, raw_size + SNAP_DISTANCE));
+                return snap_point;
+            } else {
+                state.drag_deadzone = Some((raw_size - SNAP_DISTANCE, raw_size));
+                return state.min_size;
+            }
+        } else if snap_point > state.max_size {
+            if raw_size <= state.max_size {
+                return raw_size.max(state.min_size);
+            }
+            if raw_size > state.last_drag_raw_size && raw_size > state.max_size + SNAP_DISTANCE {
+                state.drag_deadzone = Some((raw_size - SNAP_DISTANCE, raw_size));
+                return snap_point;
+            } else {
+                state.drag_deadzone = Some((raw_size, raw_size + SNAP_DISTANCE));
+                return state.max_size;
+            }
+        }
+    }
+
+    state.drag_deadzone = None;
+    raw_size.clamp(state.min_size, state.max_size)
 }

@@ -73,7 +73,7 @@ pub struct Instance {
 
     content_generation: usize,
 
-    frozen_mods_folder: bool,
+    pub frozen_mods_folder: bool,
     pub content_state: enum_map::EnumMap<ContentFolder, ContentFolderState>,
 }
 
@@ -142,6 +142,10 @@ impl From<IoOrSerializationError> for InstanceLoadError {
 }
 
 impl Instance {
+    pub fn should_send_notifications(&self) -> bool {
+        return self.name != schema::quickplay::INSTANCE_NAME;
+    }
+
     pub fn on_root_renamed(&mut self, backend: &Arc<BackendState>, path: &Path) {
         log::info!("Instance {:?} has been moved to {:?}", self.root_path, path);
 
@@ -1032,10 +1036,6 @@ impl Instance {
         }
     }
 
-    pub fn set_frozen_mods_folder(&mut self, frozen_mods_folder: bool) {
-        self.frozen_mods_folder = frozen_mods_folder;
-    }
-
     /// While an instance is running the real mods folder is stashed at
     /// `original_mods/` and the live `mods/` folder is a throwaway copy that is
     /// wiped and replaced by `original_mods/` when the instance stops (see
@@ -1216,7 +1216,7 @@ fn create_instance_content_summary(
     filename_without_disabled.hash(&mut hasher);
     let filename_hash = hasher.finish();
 
-    let content_source = mod_metadata_manager.read_content_sources().get(&summary.hash).unwrap_or_default();
+    let content_source = mod_metadata_manager.read_content_sources().get(&summary.hash);
 
     let lowercase_search_keys = summary
         .id

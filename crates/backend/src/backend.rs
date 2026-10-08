@@ -417,8 +417,8 @@ impl BackendState {
 
         paths_with_time.sort_by_key(|(_, time)| *time);
         for (path, _) in paths_with_time {
-            let success = self.load_instance_from_path(&path, true, false);
-            if !success {
+            let instance = self.load_instance_from_path(&path, true, false);
+            if instance.is_none() {
                 self.file_watching.write().watch_filesystem(path.into(), WatchTarget::InvalidInstanceDir);
             }
         }
@@ -431,11 +431,18 @@ impl BackendState {
 
         if let Some(instance) = instance_state.instances.remove(id) {
             self.send.send(MessageToFrontend::InstanceRemoved { id });
-            self.send.send_info(format!("Instance '{}' removed", instance.name));
+            if instance.should_send_notifications() {
+                self.send.send_info(format!("Instance '{}' removed", instance.name));
+            }
         }
     }
 
-    pub fn load_instance_from_path(&self, path: &Path, mut show_errors: bool, show_success: bool) -> bool {
+    pub fn load_instance_from_path(
+        &self,
+        path: &Path,
+        mut show_errors: bool,
+        show_success: bool,
+    ) -> Option<InstanceID> {
         let instance = Instance::load_from_folder(&path);
 
         let instance_id = {
@@ -459,7 +466,7 @@ impl BackendState {
                     log::error!("Error loading instance: {:?}", &error);
                 }
 
-                return false;
+                return None;
             };
 
             for existing in instance_state.instances.iter_mut() {
@@ -472,11 +479,11 @@ impl BackendState {
 
                 let _ = self.send.send(existing.create_modify_message());
 
-                if show_success {
+                if show_success && existing.should_send_notifications() {
                     self.send.send_info(format!("Instance '{}' updated", existing.name));
                 }
 
-                return true;
+                return Some(existing.id);
             }
 
             let generation = instance_state.instances_generation;
@@ -490,7 +497,7 @@ impl BackendState {
 
             self.restore_mods_folder_if_stopped(instance);
 
-            if show_success {
+            if show_success && instance.should_send_notifications() {
                 self.send.send_success(format!("Instance '{}' created", instance.name));
             }
             let message = MessageToFrontend::InstanceAdded {
@@ -513,7 +520,7 @@ impl BackendState {
         self.file_watching
             .write()
             .watch_filesystem(path.into(), WatchTarget::InstanceDir { id: instance_id });
-        true
+        Some(instance_id)
     }
 
     async fn handle(
@@ -897,7 +904,7 @@ impl BackendState {
 
         let original_mods_dir = instance.root_path.join("original_mods");
         if !original_mods_dir.exists() {
-            instance.set_frozen_mods_folder(false);
+            instance.frozen_mods_folder = false;
             return;
         }
 
@@ -919,7 +926,7 @@ impl BackendState {
             log::error!("Unable to restore mods directory: {err:?}");
         }
 
-        instance.set_frozen_mods_folder(false);
+        instance.frozen_mods_folder = false;
     }
 
     pub async fn prelaunch_setup_mods(self: &Arc<Self>, id: InstanceID, modal_action: &ModalAction) {
@@ -995,7 +1002,7 @@ impl BackendState {
             .await;
 
         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            instance.set_frozen_mods_folder(true);
+            instance.frozen_mods_folder = true;
         }
 
         let original_mods_dir = root_dir.join("original_mods");
@@ -1331,29 +1338,15 @@ impl BackendState {
 
         let mut content_install_files = Vec::new();
         let mut manual_downloads = Vec::new();
-        let mut content_sources_to_set: Vec<([u8; 20], ContentSource)> = Vec::new();
-
-        let modrinth_source_for_url = |url: &str| -> Option<ContentSource> {
-            let path = url.strip_prefix("https://cdn.modrinth.com/data/")?;
-            let project_id = path.split('/').next().filter(|s| !s.is_empty())?;
-            Some(ContentSource::ModrinthProject {
-                project_id: project_id.into(),
-            })
-        };
-
         for file in files.iter() {
-            if file.summary.as_ref().is_some_and(|s| s.hash == file.hash) {
-                if let ModpackFileSource::DownloadUrl { url, .. } = &file.source {
-                    if let Some(source) = modrinth_source_for_url(url) {
-                        content_sources_to_set.push((file.hash, source));
-                    }
-                }
+            if let Some(summary) = &file.summary
+                && summary.hash == file.hash
+            {
                 continue;
             }
 
             match &file.source {
                 ModpackFileSource::DownloadUrl { url, size } => {
-                    let content_source = modrinth_source_for_url(url).unwrap_or_else(|| fallback_source.clone());
                     content_install_files.push(ContentInstallFile {
                         replace_old: None,
                         path: ContentInstallPath::ModpackFilePath(file.path.clone()),
@@ -1362,7 +1355,7 @@ impl BackendState {
                             sha1: file.hash,
                             size: *size,
                         },
-                        content_source,
+                        content_source: fallback_source.clone(),
                         reason: ContentInstallReason::Modpack,
                     });
                 },
@@ -1371,10 +1364,6 @@ impl BackendState {
                 },
                 ModpackFileSource::Builtin { .. } => {},
             }
-        }
-
-        if !content_sources_to_set.is_empty() {
-            self.mod_metadata_manager.set_content_sources(content_sources_to_set.into_iter());
         }
 
         if !curseforge_file_ids.is_empty() {
@@ -1497,12 +1486,13 @@ impl BackendState {
         }
     }
 
-    pub async fn create_instance_sanitized(
+    pub fn create_instance_sanitized(
         &self,
         name: &str,
         version: &str,
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
+        group: Option<Arc<str>>,
     ) -> Option<PathBuf> {
         let mut name = sanitize_filename::sanitize_with_options(
             name,
@@ -1523,15 +1513,16 @@ impl BackendState {
             }
         }
 
-        return self.create_instance(&name, version, loader, icon).await;
+        return self.create_instance(&name, version, loader, icon, group);
     }
 
-    pub async fn create_instance(
+    pub fn create_instance(
         &self,
         name: &str,
         version: &str,
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
+        group: Option<Arc<str>>,
     ) -> Option<PathBuf> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
@@ -1563,6 +1554,7 @@ impl BackendState {
         _ = std::fs::create_dir_all(&instance_dir);
 
         let mut instance_info = InstanceConfiguration::new(version.into(), loader);
+        instance_info.group = group;
 
         match icon {
             Some(EmbeddedOrRaw::Embedded(e)) => {

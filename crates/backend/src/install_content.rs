@@ -10,13 +10,11 @@ use bridge::{
     instance::{ContentFolder, ContentSummary, ContentType, ModpackFileSource},
     manual_download::ManualCurseforgeDownload,
     modal_action::{ModalAction, ProgressTrackerFinishType},
-    notify_signal::KeepAliveNotifySignal,
     safe_path::SafePath,
 };
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use schema::{
     auxiliary::AuxiliaryContentMeta,
     content::{ContentInstallReason, ContentSource},
@@ -82,9 +80,7 @@ struct InstallFromContentLibrary {
     filename: Arc<str>,
     from: Arc<Path>,
     replace: Option<Arc<Path>>,
-    hash: [u8; 20],
     install_path: Option<Arc<Path>>,
-    content_file: ContentInstallFile,
     mod_summary: Arc<ContentSummary>,
     dependencies: Vec<ContentInstallFile>,
 }
@@ -127,8 +123,6 @@ struct InstalledContentIds {
     summary_ids: FxHashSet<Arc<str>>,
 }
 
-static FILE_LOCKS: Lazy<Mutex<FxHashMap<Arc<Path>, KeepAliveNotifySignal>>> = Lazy::new(Default::default);
-
 impl BackendState {
     pub async fn install_content(self: &Arc<Self>, content: ContentInstall, modal_action: ModalAction) {
         let needs_installed_content_ids = content.files.iter().any(|content_file| {
@@ -147,6 +141,7 @@ impl BackendState {
             }
             false
         });
+
         let installed_content_ids: Option<Mutex<InstalledContentIds>> = if needs_installed_content_ids {
             let mut installed_content_ids = InstalledContentIds::default();
 
@@ -233,15 +228,6 @@ impl BackendState {
             }
         }
 
-        let sources = files.iter().filter_map(|install| {
-            if install.content_file.content_source != ContentSource::Manual {
-                Some((install.hash.clone(), install.content_file.content_source.clone()))
-            } else {
-                None
-            }
-        });
-        self.mod_metadata_manager.set_content_sources(sources);
-
         let mut dot_minecraft_dir = None;
         let mut instance_running = false;
 
@@ -258,8 +244,7 @@ impl BackendState {
 
             // todo: use icon of mod/modpack/etc. for icon of instance
             dot_minecraft_dir = self
-                .create_instance_sanitized(&name, &minecraft_version, loader, None)
-                .await
+                .create_instance_sanitized(&name, &minecraft_version, loader, None, None)
                 .map(|v| v.join(".minecraft").into());
         }
 
@@ -438,7 +423,7 @@ impl BackendState {
 
                     let mut result = self
                         .meta
-                        .fetch(ModrinthProjectVersionsMetadataItem(&ModrinthProjectVersionsRequest {
+                        .fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
                             project_id: project_id.clone(),
                             game_versions: Some(Arc::new([content.minecraft_version.into()])),
                             loaders,
@@ -454,7 +439,7 @@ impl BackendState {
 
                         result = self
                             .meta
-                            .fetch(ModrinthProjectVersionsMetadataItem(&ModrinthProjectVersionsRequest {
+                            .fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
                                 project_id: project_id.clone(),
                                 game_versions: Some(Arc::new([content.minecraft_version.into()])),
                                 loaders: None,
@@ -471,7 +456,7 @@ impl BackendState {
 
                         result = self
                             .meta
-                            .fetch(ModrinthProjectVersionsMetadataItem(&ModrinthProjectVersionsRequest {
+                            .fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
                                 project_id: project_id.clone(),
                                 game_versions: None,
                                 loaders: None,
@@ -522,8 +507,19 @@ impl BackendState {
                     return Err(ContentInstallError::InvalidHash(sha1.clone()));
                 };
 
-                let (path, hash, mod_summary) = self
-                    .download_file_into_library(&modal_action, (&safe_filename).into(), url, hash, size, download_meta)
+                let source = ContentSource::ModrinthProject {
+                    project_id: project_id.clone(),
+                };
+                let (path, mod_summary) = self
+                    .download_file_into_library(
+                        &modal_action,
+                        (&safe_filename).into(),
+                        url,
+                        hash,
+                        size,
+                        Some(source),
+                        download_meta,
+                    )
                     .await?;
 
                 if is_wrong_version && mod_summary.extra.is_strict_minecraft_version() {
@@ -613,9 +609,7 @@ impl BackendState {
                     filename: install_file.filename.clone(),
                     from: path,
                     replace: content_file.replace_old.clone(),
-                    hash,
                     install_path,
-                    content_file: content_file.clone(),
                     mod_summary,
                     dependencies,
                 }
@@ -741,8 +735,17 @@ impl BackendState {
                     return Err(ContentInstallError::InvalidHash(sha1.clone()));
                 };
 
-                let (path, hash, mod_summary) = self
-                    .download_file_into_library(&modal_action, (&safe_filename).into(), url, hash, size, download_meta)
+                let source = ContentSource::CurseforgeProject { project_id };
+                let (path, mod_summary) = self
+                    .download_file_into_library(
+                        &modal_action,
+                        (&safe_filename).into(),
+                        url,
+                        hash,
+                        size,
+                        Some(source),
+                        download_meta,
+                    )
                     .await?;
 
                 if is_wrong_version && mod_summary.extra.is_strict_minecraft_version() {
@@ -806,9 +809,7 @@ impl BackendState {
                     filename: file.file_name.clone(),
                     from: path,
                     replace: content_file.replace_old.clone(),
-                    hash,
                     install_path,
-                    content_file: content_file.clone(),
                     mod_summary,
                     dependencies,
                 }
@@ -834,8 +835,16 @@ impl BackendState {
 
                 let filename = name.filename.as_ref().map(|s| s.to_string_lossy()).unwrap_or_default().into();
 
-                let (path, hash, mod_summary) = self
-                    .download_file_into_library(&modal_action, name, url, *sha1, size, download_meta)
+                let mut source = content_file.content_source.clone();
+                if source.can_be_replaced() {
+                    if let Some(automatic_source) = content_source_from_url(&*url) {
+                        if source.should_replace_with(&automatic_source) {
+                            source = automatic_source;
+                        }
+                    }
+                }
+                let (path, mod_summary) = self
+                    .download_file_into_library(&modal_action, name, url, *sha1, size, Some(source), download_meta)
                     .await?;
 
                 let install_path = match &content_file.path {
@@ -866,9 +875,7 @@ impl BackendState {
                     filename,
                     from: path,
                     replace: content_file.replace_old.clone(),
-                    hash,
                     install_path,
-                    content_file: content_file.clone(),
                     mod_summary,
                     dependencies: Default::default(),
                 }
@@ -962,9 +969,7 @@ impl BackendState {
                     filename: path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default().into(),
                     from: path,
                     replace: content_file.replace_old.clone(),
-                    hash: hash.into(),
                     install_path,
-                    content_file: content_file.clone(),
                     mod_summary,
                     dependencies: Default::default(),
                 }
@@ -1012,29 +1017,20 @@ impl BackendState {
         }
 
         // Clear disabled_children when reinstalling a modpack to restore deleted mods
-        if new_summary.extra.is_modpack() {
-            if let Ok(aux_data) = crate::fs::read_json::<AuxiliaryContentMeta>(&new_aux_path) {
-                let mut aux = aux_data;
-                // Clear all disabled_children to restore any deleted mods
-                if !aux.disabled_children.deleted_filenames.is_empty()
-                    || !aux.disabled_children.disabled_ids.is_empty()
-                    || !aux.disabled_children.disabled_names.is_empty()
-                    || !aux.disabled_children.disabled_filenames.is_empty()
-                    || !aux.disabled_children.enabled_ids.is_empty()
-                    || !aux.disabled_children.enabled_names.is_empty()
-                    || !aux.disabled_children.enabled_filenames.is_empty()
-                {
-                    aux.disabled_children = Default::default();
-                    if let Ok(bytes) = serde_json::to_vec(&aux) {
-                        _ = crate::fs::write_safe(&new_aux_path, &bytes);
-                    }
-                }
+        if new_summary.extra.is_modpack()
+            && let Ok(mut aux) = crate::fs::read_json::<AuxiliaryContentMeta>(&new_aux_path)
+            && aux.disabled_children != Default::default()
+        {
+            aux.disabled_children = Default::default();
+            if let Ok(bytes) = serde_json::to_vec(&aux) {
+                _ = crate::fs::write_safe(&new_aux_path, &bytes);
             }
         }
     }
 
+    /// Reinstalling a modpack should bring back any of its mods the user had deleted or disabled,
+    /// so the record of those per-child overrides is dropped.
     fn clear_aux_for_modpack_reinstall(&self, mod_summary: &Arc<ContentSummary>, target_path: &Path) {
-        // Only handle modpacks
         if !mod_summary.extra.is_modpack() {
             return;
         }
@@ -1047,23 +1043,13 @@ impl BackendState {
             return;
         }
 
-        // Read and clear disabled_children
-        if let Ok(aux_data) = crate::fs::read_json::<AuxiliaryContentMeta>(&aux_path) {
-            let mut aux = aux_data;
-            // Clear all disabled_children to restore any deleted mods
-            if !aux.disabled_children.deleted_filenames.is_empty()
-                || !aux.disabled_children.disabled_ids.is_empty()
-                || !aux.disabled_children.disabled_names.is_empty()
-                || !aux.disabled_children.disabled_filenames.is_empty()
-                || !aux.disabled_children.enabled_ids.is_empty()
-                || !aux.disabled_children.enabled_names.is_empty()
-                || !aux.disabled_children.enabled_filenames.is_empty()
-            {
-                log::info!("Clearing disabled_children for modpack reinstall at {:?}", target_path);
-                aux.disabled_children = Default::default();
-                if let Ok(bytes) = serde_json::to_vec(&aux) {
-                    _ = crate::fs::write_safe(&aux_path, &bytes);
-                }
+        if let Ok(mut aux) = crate::fs::read_json::<AuxiliaryContentMeta>(&aux_path)
+            && aux.disabled_children != Default::default()
+        {
+            log::info!("Clearing disabled_children for modpack reinstall at {:?}", target_path);
+            aux.disabled_children = Default::default();
+            if let Ok(bytes) = serde_json::to_vec(&aux) {
+                _ = crate::fs::write_safe(&aux_path, &bytes);
             }
         }
     }
@@ -1094,19 +1080,28 @@ impl BackendState {
         url: &Arc<str>,
         sha1: [u8; 20],
         size: usize,
+        source: Option<ContentSource>,
         download_meta: ModrinthDownloadMeta,
-    ) -> Result<(Arc<Path>, [u8; 20], Arc<ContentSummary>), ContentInstallError> {
+    ) -> Result<(Arc<Path>, Arc<ContentSummary>), ContentInstallError> {
         let mut result = self
-            .download_file_into_library_inner(modal_action, name, url.clone(), sha1, size, download_meta.clone())
+            .download_file_into_library_inner(
+                modal_action,
+                name,
+                url.clone(),
+                sha1,
+                size,
+                source,
+                download_meta.clone(),
+            )
             .await?;
 
         let mut curseforge_file_ids = Vec::new();
 
-        let files = if let ContentType::ModrinthModpack { files, .. } = &result.2.extra {
+        let files = if let ContentType::ModrinthModpack { files, .. } = &result.1.extra {
             Some(files)
         } else if let ContentType::CurseforgeModpack {
             unknown_files, files, ..
-        } = &result.2.extra
+        } = &result.1.extra
         {
             for unknown_file in unknown_files.iter() {
                 curseforge_file_ids.push(unknown_file.file_id);
@@ -1114,7 +1109,7 @@ impl BackendState {
 
             Some(files)
         } else {
-            None
+            return Ok(result);
         };
 
         let mut tasks = Vec::new();
@@ -1125,6 +1120,16 @@ impl BackendState {
                 if let Some(summary) = &file.summary
                     && summary.hash == file.hash
                 {
+                    match &file.source {
+                        ModpackFileSource::DownloadUrl { url, .. } => {
+                            let source = content_source_from_url(&*url);
+                            if let Some(source) = source {
+                                self.mod_metadata_manager.set_content_source(file.hash, source);
+                            }
+                        },
+                        ModpackFileSource::DownloadCurseforge { .. } => {},
+                        ModpackFileSource::Builtin { .. } => {},
+                    }
                     continue;
                 }
 
@@ -1140,12 +1145,14 @@ impl BackendState {
                             game_version: download_meta.game_version,
                             loader: download_meta.loader,
                         };
+                        let source = content_source_from_url(&*url);
                         tasks.push(self.download_file_into_library_inner(
                             modal_action,
                             name,
                             url.clone(),
                             file.hash,
                             *size,
+                            source,
                             meta,
                         ));
                     },
@@ -1170,9 +1177,6 @@ impl BackendState {
             if let Ok(files) = files_result {
                 let mut manual_download_files = Vec::new();
                 let mut manual_download_tasks = Vec::new();
-                // Associate each resolved file with its CurseForge project so the modpack's
-                // mods show as known projects (and can be updated) instead of "unknown".
-                let mut curseforge_sources: Vec<([u8; 20], ContentSource)> = Vec::new();
 
                 for file in files.data.iter() {
                     let sha1 = file.hashes.iter().find(|hash| hash.algo == 1).map(|hash| &hash.value);
@@ -1195,13 +1199,6 @@ impl BackendState {
                         },
                     );
 
-                    curseforge_sources.push((
-                        hash,
-                        ContentSource::CurseforgeProject {
-                            project_id: file.mod_id,
-                        },
-                    ));
-
                     let Some(path) = SafePath::new(&file.file_name) else {
                         log::warn!("Skipping file because of invalid filename: {}", file.file_name);
                         continue;
@@ -1218,12 +1215,16 @@ impl BackendState {
                         loader: download_meta.loader,
                     };
                     if let Some(download_url) = &file.download_url {
+                        let source = ContentSource::CurseforgeProject {
+                            project_id: file.mod_id,
+                        };
                         tasks.push(self.download_file_into_library_inner(
                             modal_action,
                             name,
                             download_url.clone(),
                             hash,
                             file.file_length as usize,
+                            Some(source),
                             meta,
                         ));
                     } else {
@@ -1246,10 +1247,6 @@ impl BackendState {
                         manual_downloads.push(ManualCurseforgeDownload::new(&file, &project, hash));
                     }
                 }
-
-                if !curseforge_sources.is_empty() {
-                    self.mod_metadata_manager.set_content_sources(curseforge_sources.into_iter());
-                }
             }
         }
 
@@ -1262,7 +1259,7 @@ impl BackendState {
             };
         }
 
-        result.2 = self.mod_metadata_manager.get_path(&result.0);
+        result.1 = self.mod_metadata_manager.get_path(&result.0);
 
         Ok(result)
     }
@@ -1274,8 +1271,9 @@ impl BackendState {
         url: Arc<str>,
         sha1: [u8; 20],
         size: usize,
+        source: Option<ContentSource>,
         download_meta: ModrinthDownloadMeta,
-    ) -> Result<(Arc<Path>, [u8; 20], Arc<ContentSummary>), ContentInstallError> {
+    ) -> Result<(Arc<Path>, Arc<ContentSummary>), ContentInstallError> {
         let hash_as_str = hex::encode(sha1);
 
         let hash_folder = self.directories.content_library_dir.join(&hash_as_str[..2]);
@@ -1290,19 +1288,13 @@ impl BackendState {
 
         let _permit = self.content_install_semaphore.acquire().await.unwrap();
 
-        loop {
-            let occupied = match FILE_LOCKS.lock().entry(path.clone()) {
-                std::collections::hash_map::Entry::Occupied(occupied_entry) => occupied_entry.get().create_handle(),
-                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(KeepAliveNotifySignal::new());
-                    break;
-                },
-            };
-
-            occupied.await_notification().await;
-        }
+        let _signal = crate::fs::lock_file(path.clone()).await;
 
         let file_name = name.filename.clone();
+
+        if let Some(source) = source {
+            self.mod_metadata_manager.set_content_source(sha1, source);
+        }
 
         let title = format!(
             "Downloading {}",
@@ -1326,7 +1318,7 @@ impl BackendState {
             tracker.set_count(size);
             tracker.set_finished(ProgressTrackerFinishType::Normal);
             let summary = self.mod_metadata_manager.get_path(&path);
-            return Ok((path, sha1, summary));
+            return Ok((path, summary));
         }
 
         let mut builder = self
@@ -1389,10 +1381,8 @@ impl BackendState {
             }
         }
 
-        FILE_LOCKS.lock().remove(&path);
-
         let summary = self.mod_metadata_manager.get_path(&path);
-        Ok((path, sha1, summary))
+        Ok((path, summary))
     }
 }
 
@@ -1419,4 +1409,14 @@ fn url_to_filename(url: &str) -> Result<SafePath, ContentInstallError> {
     };
 
     Ok(filename)
+}
+
+fn content_source_from_url(url: &str) -> Option<ContentSource> {
+    if let Some(remainder) = url.strip_prefix("https://cdn.modrinth.com/data/") {
+        let (project_id, _) = remainder.split_once('/')?;
+        return Some(ContentSource::ModrinthProject {
+            project_id: project_id.into(),
+        });
+    }
+    None
 }

@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use gpui::{InteractiveElement, prelude::*, *};
-use gpui_component::{button::Button, h_flex, popover::Popover};
+use gpui_component::{Sizable, Size, button::Button, h_flex, popover::Popover};
 
 use crate::icon::PandoraIcon;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ModAction {
     Reinstall,
     OpenPage,
@@ -14,12 +14,12 @@ pub enum ModAction {
 }
 
 impl ModAction {
-    pub fn text(&self) -> SharedString {
+    pub fn text(&self) -> &'static str {
         match self {
-            ModAction::Reinstall => "Reinstall".into(),
-            ModAction::OpenPage => "Open page".into(),
-            ModAction::UpdateCheck => "Update check".into(),
-            ModAction::Remove => "Remove".into(),
+            ModAction::Reinstall => "Reinstall",
+            ModAction::OpenPage => "Open page",
+            ModAction::UpdateCheck => "Update check",
+            ModAction::Remove => "Remove",
         }
     }
 
@@ -41,12 +41,25 @@ pub fn render_mod_action_dropdown(
     on_toggle: Rc<dyn Fn(&mut Window, &mut App)>,
     accent: gpui::Hsla,
 ) -> impl IntoElement {
+    render_mod_action_dropdown_sized(id, actions, on_action, is_open, on_toggle, accent, Size::Medium)
+}
+
+/// As [`render_mod_action_dropdown`], but for rows in a dense list rather than a search result.
+pub fn render_mod_action_dropdown_sized(
+    id: SharedString,
+    actions: Vec<ModAction>,
+    on_action: Rc<dyn Fn(ModAction, &mut Window, &mut App)>,
+    is_open: bool,
+    on_toggle: Rc<dyn Fn(&mut Window, &mut App)>,
+    accent: gpui::Hsla,
+    size: Size,
+) -> impl IntoElement {
     Popover::new(id)
         .trigger(
             Button::new("installed-button")
                 .label("Installed")
                 .icon(PandoraIcon::ChevronDown)
-                .h_10()
+                .with_size(size)
                 .on_click({
                     let on_toggle = on_toggle.clone();
                     move |_, window, cx| {
@@ -62,7 +75,7 @@ pub fn render_mod_action_dropdown(
             let on_action = on_action.clone();
             let action = *action;
             div()
-                .id(action.text())
+                .id(SharedString::from(format!("action-{:?}", action)))
                 .w_full()
                 .px_3()
                 .py_2()

@@ -190,6 +190,7 @@ impl CurseforgeSearchPage {
         let search_state = cx.new(|cx| {
             let placeholder = match project_type {
                 CurseforgeClassId::Mod => t::instance::content::search::mod_(),
+                CurseforgeClassId::BukkitPlugin => t::instance::content::search::plugin(),
                 CurseforgeClassId::Modpack => t::instance::content::search::modpack(),
                 CurseforgeClassId::Resourcepack => t::instance::content::search::resourcepack(),
                 CurseforgeClassId::Shader => t::instance::content::search::shader(),
@@ -344,6 +345,7 @@ impl CurseforgeSearchPage {
         self.search_state.update(cx, |state, cx| {
             let placeholder = match project_type {
                 CurseforgeClassId::Mod => t::instance::content::search::mod_(),
+                CurseforgeClassId::BukkitPlugin => t::instance::content::search::plugin(),
                 CurseforgeClassId::Modpack => t::instance::content::search::modpack(),
                 CurseforgeClassId::Resourcepack => t::instance::content::search::resourcepack(),
                 CurseforgeClassId::Shader => t::instance::content::search::shader(),
@@ -421,8 +423,7 @@ impl CurseforgeSearchPage {
 
         let offset = if self.pending_clear { 0 } else { self.hits.len() };
 
-        let is_mod = class_id == CurseforgeClassId::Mod || class_id == CurseforgeClassId::Modpack;
-        let game_version = if is_mod
+        let game_version = if class_id.has_loader_and_version()
             && let Some(filter_version) = self.filter_version
             && modrinth_filter_version
         {
@@ -431,7 +432,7 @@ impl CurseforgeSearchPage {
             None
         };
 
-        let mod_loader_types = if !self.filter_loaders.is_empty() && is_mod {
+        let mod_loader_types = if !self.filter_loaders.is_empty() && class_id.supports_loader_filter() {
             let mut string = "[\"".to_string();
             for (i, loader) in self.filter_loaders.iter().enumerate() {
                 if i > 0 {
@@ -1048,6 +1049,10 @@ impl Render for CurseforgeSearchPage {
                     .label(t::instance::content::mods()),
             )
             .child(
+                selection_button("plugins", filter_project_type == CurseforgeClassId::BukkitPlugin)
+                    .label(t::server::plugins()),
+            )
+            .child(
                 selection_button("modpacks", filter_project_type == CurseforgeClassId::Modpack)
                     .label(t::instance::content::modpacks()),
             )
@@ -1062,13 +1067,16 @@ impl Render for CurseforgeSearchPage {
             .child(selection_button("datapacks", filter_project_type == CurseforgeClassId::Datapack).label("Datapacks"))
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(CurseforgeClassId::Mod, window, cx),
-                1 => page.set_project_type(CurseforgeClassId::Modpack, window, cx),
-                2 => page.set_project_type(CurseforgeClassId::Resourcepack, window, cx),
-                3 => page.set_project_type(CurseforgeClassId::Shader, window, cx),
-                4 => page.set_project_type(CurseforgeClassId::Datapack, window, cx),
+                1 => page.set_project_type(CurseforgeClassId::BukkitPlugin, window, cx),
+                2 => page.set_project_type(CurseforgeClassId::Modpack, window, cx),
+                3 => page.set_project_type(CurseforgeClassId::Resourcepack, window, cx),
+                4 => page.set_project_type(CurseforgeClassId::Shader, window, cx),
+                5 => page.set_project_type(CurseforgeClassId::Datapack, window, cx),
                 _ => {},
             }));
 
+        // The Bukkit plugin class has no loader facet on CurseForge, so plugins get only the version
+        // filter and their own categories.
         let loader_button_group =
             if filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack {
                 Some(
@@ -1110,6 +1118,7 @@ impl Render for CurseforgeSearchPage {
 
         let categories = match filter_project_type {
             CurseforgeClassId::Mod => FILTER_MOD_CATEGORIES,
+            CurseforgeClassId::BukkitPlugin => FILTER_PLUGIN_CATEGORIES,
             CurseforgeClassId::Modpack => FILTER_MODPACK_CATEGORIES,
             CurseforgeClassId::Resourcepack => FILTER_RESOURCEPACK_CATEGORIES,
             CurseforgeClassId::Shader => FILTER_SHADERPACK_CATEGORIES,
@@ -1197,8 +1206,8 @@ impl Render for CurseforgeSearchPage {
                 })
                 .into_any_element();
 
-        let is_mod = filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack;
-        let filter_version_toggle = if is_mod && let Some(filter_version) = self.filter_version {
+        let filter_version_toggle =
+            if filter_project_type.has_loader_and_version() && let Some(filter_version) = self.filter_version {
             let title = format!("{}: {}", t::instance::version(), filter_version);
             Some(
                 selection_button("filter_version", InterfaceConfig::get(cx).content_filter_version)
@@ -1249,6 +1258,25 @@ const FILTER_MOD_CATEGORIES: &[(&'static str, u32)] = &[
     ("Technology", 412),
     ("Utility & QoL", 5191),
     ("World Gen", 406),
+];
+
+const FILTER_PLUGIN_CATEGORIES: &[(&'static str, u32)] = &[
+    ("Admin Tools", 115),
+    ("Anti-Griefing Tools", 116),
+    ("Chat Related", 117),
+    ("Developer Tools", 122),
+    ("Economy", 123),
+    ("Fun", 126),
+    ("General", 127),
+    ("Informational", 128),
+    ("Mechanics", 129),
+    ("Miscellaneous", 133),
+    ("Role Playing", 132),
+    ("Teleportation", 134),
+    ("Twitch Integration", 4672),
+    ("Website Administration", 130),
+    ("World Editing and Management", 124),
+    ("World Generators", 131),
 ];
 
 const FILTER_MODPACK_CATEGORIES: &[(&'static str, u32)] = &[

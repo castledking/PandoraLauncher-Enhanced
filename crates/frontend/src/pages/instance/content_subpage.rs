@@ -126,8 +126,7 @@ impl ContentType {
             ContentType::Mods => ModrinthProjectType::Mod,
             ContentType::ResourcePacks => ModrinthProjectType::Resourcepack,
             ContentType::Shaders => ModrinthProjectType::Shader,
-            // Modrinth files plugins as mods; the Paper loader filter is what narrows them down
-            ContentType::Plugins => ModrinthProjectType::Mod,
+            ContentType::Plugins => ModrinthProjectType::Plugin,
         }
     }
 

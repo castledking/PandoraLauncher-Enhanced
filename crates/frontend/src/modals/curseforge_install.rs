@@ -132,7 +132,8 @@ pub fn open(
         };
 
         let mut valid_loader = true;
-        if project_type == CurseforgeClassId::Mod || project_type == CurseforgeClassId::Modpack {
+        // Plugin files on CurseForge carry no mod loader, so only mods and modpacks can be checked
+        if project_type.supports_loader_filter() {
             valid_loader =
                 instance_loader == Loader::Vanilla || loaders.loaders.contains(instance_loader.as_curseforge_loader());
         }
@@ -187,7 +188,7 @@ pub fn open(
 
                 if let Some(loaders) = version_matrix.get(minecraft_version) {
                     let mut valid_loader = true;
-                    if project_type == CurseforgeClassId::Mod || project_type == CurseforgeClassId::Modpack {
+                    if project_type.supports_loader_filter() {
                         valid_loader = instance_loader == Loader::Vanilla
                             || loaders.loaders.contains(instance_loader.as_curseforge_loader());
                     }
@@ -358,6 +359,7 @@ impl InstallDialog {
                             RelativePath::new("resourcepacks").join(&*selected_file.file_name)
                         },
                         CurseforgeClassId::Shader => RelativePath::new("shaderpacks").join(&*selected_file.file_name),
+                        CurseforgeClassId::BukkitPlugin => RelativePath::new("plugins").join(&*selected_file.file_name),
                         _ => {
                             window.push_notification(
                                 (NotificationType::Error, t::instance::content::install::unable_install_other()),

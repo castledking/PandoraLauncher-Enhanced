@@ -183,9 +183,9 @@ pub fn open(
                 };
 
                 let mut valid_loader = true;
-                if project_type.mod_or_modpack() {
+                if project_type.has_loader_and_version() {
                     valid_loader = instance_loader == Loader::Vanilla
-                        || loaders.loaders.contains(instance_loader.as_modrinth_loader());
+                        || instance_loader.compatible_modrinth_loaders().iter().any(|loader| loaders.loaders.contains(*loader));
                 }
                 if !valid_loader {
                     let error_message = t::instance::content::load::versions::not_found_for_loader(
@@ -199,7 +199,7 @@ pub fn open(
                 let title = title.clone();
                 let instance_id = instance.id;
                 let fixed_minecraft_version = Some(minecraft_version);
-                let force_target_loader = project_type.mod_or_modpack() && instance_loader != Loader::Vanilla;
+                let force_target_loader = project_type.has_loader_and_version() && instance_loader != Loader::Vanilla;
                 let install_dialog = InstallDialog {
                     title,
                     name: name.into(),
@@ -238,10 +238,9 @@ pub fn open(
 
                         if let Some(loaders) = version_matrix.get(minecraft_version) {
                             let mut valid_loader = true;
-                            if project_type == ModrinthProjectType::Mod || project_type == ModrinthProjectType::Modpack
-                            {
+                            if project_type.has_loader_and_version() {
                                 valid_loader = instance_loader == Loader::Vanilla
-                                    || loaders.loaders.contains(instance_loader.as_modrinth_loader());
+                                    || instance_loader.compatible_modrinth_loaders().iter().any(|loader| loaders.loaders.contains(*loader));
                             }
                             if valid_loader {
                                 return Some(instance.clone());
@@ -442,8 +441,16 @@ impl InstallDialog {
                         .find(|file| file.primary)
                         .unwrap_or(selected_mod_version.files.first().unwrap());
 
+                    // Modrinth labels plugins as mods in search results, so the folder is decided by
+                    // what the jar is going into: on a Paper server it's a plugin, on a modded
+                    // client the same project's jar is a mod.
+                    let onto_plugin_server = this.target_loader == Some(Loader::Paper);
                     let path = match this.project_type {
+                        ModrinthProjectType::Mod | ModrinthProjectType::Plugin if onto_plugin_server => {
+                            RelativePath::new("plugins").join(&*install_file.filename)
+                        },
                         ModrinthProjectType::Mod => RelativePath::new("mods").join(&*install_file.filename),
+                        ModrinthProjectType::Plugin => RelativePath::new("mods").join(&*install_file.filename),
                         ModrinthProjectType::Modpack => RelativePath::new("mods").join(&*install_file.filename),
                         ModrinthProjectType::Resourcepack => {
                             RelativePath::new("resourcepacks").join(&*install_file.filename)
@@ -547,6 +554,7 @@ impl InstallDialog {
     fn render_select_target(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let create_instance_label = match self.project_type {
             ModrinthProjectType::Mod => t::instance::content::install::new_instance_with::mod_(),
+            ModrinthProjectType::Plugin => t::instance::content::install::new_instance_with::plugin(),
             ModrinthProjectType::Modpack => t::instance::content::install::new_instance_with::modpack(),
             ModrinthProjectType::Resourcepack => t::instance::content::install::new_instance_with::resourcepack(),
             ModrinthProjectType::Shader => t::instance::content::install::new_instance_with::shader(),
@@ -587,7 +595,7 @@ impl InstallDialog {
                                     this.target = Some(InstallTarget::Instance(instance.id));
                                     this.fixed_minecraft_version =
                                         Some(instance.configuration.minecraft_version.as_str());
-                                    this.force_target_loader = this.project_type.mod_or_modpack()
+                                    this.force_target_loader = this.project_type.has_loader_and_version()
                                         && instance.configuration.loader != Loader::Vanilla;
                                     this.target_loader = Some(instance.configuration.loader);
                                 })),
@@ -826,6 +834,7 @@ impl InstallDialog {
 
         let mod_version_prefix = match self.project_type {
             ModrinthProjectType::Mod => format!("{}: ", t::instance::content::version::mod_()),
+            ModrinthProjectType::Plugin => format!("{}: ", t::instance::content::version::plugin()),
             ModrinthProjectType::Modpack => format!("{}: ", t::instance::content::version::modpack()),
             ModrinthProjectType::Resourcepack => format!("{}: ", t::instance::content::version::resourcepack()),
             ModrinthProjectType::Shader => format!("{}: ", t::instance::content::version::shader()),

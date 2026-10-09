@@ -18,7 +18,7 @@ use bridge::{
 };
 use image::{DynamicImage, GenericImageView, imageops::FilterType};
 use indexmap::IndexMap;
-use parking_lot::{RwLock, RwLockReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use rayon::iter::{IntoParallelRefIterator, ParallelExtend, ParallelIterator};
 use rc_zip_sync::EntryHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -77,7 +77,9 @@ enum ZipMetadataFile {
     JavaManifest,
     PackMcmeta,
     ModrinthIndexJson,
-    ManifestJson, // CurseForge modpack
+    ManifestJson,   // CurseForge modpack
+    PaperPluginYml, // Paper plugin
+    PluginYml,      // Bukkit/Spigot/Paper plugin
 }
 
 impl ZipMetadataFile {
@@ -85,7 +87,12 @@ impl ZipMetadataFile {
         let mut priority = match self {
             ZipMetadataFile::McModInfo => 1, // If a legacy forge mod manifest is present, that's probably the one we want
             ZipMetadataFile::JarJar => -1,   // Fallback
-            ZipMetadataFile::JavaManifest => -2, // Fallback
+            // Below the mod descriptors: a jar that is both a Fabric mod and a plugin has to stay a
+            // mod, or installing it into a modded client would put it in `plugins/`. A jar with
+            // both plugin descriptors also runs on Spigot, so `plugin.yml` wins.
+            ZipMetadataFile::PluginYml => -2,
+            ZipMetadataFile::PaperPluginYml => -3,
+            ZipMetadataFile::JavaManifest => -4, // Fallback
             _ => 0,
         };
 
@@ -107,6 +114,7 @@ impl ZipMetadataFile {
             ZipMetadataFile::PackMcmeta => Some(OsStr::new("zip")),
             ZipMetadataFile::ModrinthIndexJson => Some(OsStr::new("mrpack")),
             ZipMetadataFile::ManifestJson => Some(OsStr::new("zip")),
+            ZipMetadataFile::PaperPluginYml | ZipMetadataFile::PluginYml => Some(OsStr::new("jar")),
         }
     }
 
@@ -121,6 +129,8 @@ impl ZipMetadataFile {
             "pack.mcmeta" => Some(ZipMetadataFile::PackMcmeta),
             "modrinth.index.json" => Some(ZipMetadataFile::ModrinthIndexJson),
             "manifest.json" => Some(ZipMetadataFile::ManifestJson),
+            "paper-plugin.yml" => Some(ZipMetadataFile::PaperPluginYml),
+            "plugin.yml" => Some(ZipMetadataFile::PluginYml),
             _ => None,
         }
     }
@@ -151,6 +161,15 @@ pub struct ModMetadataManager {
     parents_by_missing_curseforge_id: RwLock<FxHashMap<u32, FxHashSet<[u8; 20]>>>,
     curseforge_info_dirty: AtomicBool,
     pub updates: RwLock<FxHashMap<ContentUpdateKey, ContentUpdateAction>>,
+    remote_icons_dir: PathBuf,
+    /// Project icons for content that doesn't ship one, by [`remote_icon_key`]. `None` means
+    /// there's no icon on disk.
+    remote_icons: RwLock<FxHashMap<Arc<str>, Option<UniqueBytes>>>,
+    /// Hashes looked up on Modrinth and CurseForge this session, so a lookup isn't repeated every
+    /// time a folder reloads
+    identify_attempts: Mutex<FxHashSet<[u8; 20]>>,
+    /// Icons requested this session, by [`remote_icon_key`]
+    remote_icon_attempts: Mutex<FxHashSet<Arc<str>>>,
 }
 
 impl ModMetadataManager {
@@ -158,6 +177,7 @@ impl ModMetadataManager {
         let legacy_sources_json = content_meta_dir.join("sources.json");
         let sources_dir = content_meta_dir.join("sources");
         let cached_curseforge_info_dat = content_meta_dir.join("cached_curseforge_info.dat");
+        let remote_icons_dir = content_meta_dir.join("remote_icons");
 
         let content_sources = if sources_dir.is_dir() {
             ContentSources::load_all(&sources_dir).unwrap_or_default()
@@ -234,6 +254,10 @@ impl ModMetadataManager {
             parents_by_missing_curseforge_id: Default::default(),
             curseforge_info_dirty: AtomicBool::new(false),
             updates: Default::default(),
+            remote_icons_dir,
+            remote_icons: Default::default(),
+            identify_attempts: Default::default(),
+            remote_icon_attempts: Default::default(),
         }
     }
 
@@ -275,6 +299,68 @@ impl ModMetadataManager {
             return;
         }
         self.content_sources.write().set(&hash, source);
+    }
+
+    /// Returns true the first time a hash is passed in this session, so its project only gets
+    /// looked up once
+    pub fn claim_identify_attempt(&self, hash: [u8; 20]) -> bool {
+        self.identify_attempts.lock().insert(hash)
+    }
+
+    /// Lets a failed lookup be tried again the next time the folder loads
+    pub fn release_identify_attempts(&self, hashes: impl IntoIterator<Item = [u8; 20]>) {
+        let mut attempts = self.identify_attempts.lock();
+        for hash in hashes {
+            attempts.remove(&hash);
+        }
+    }
+
+    /// Returns true if the icon for this key isn't available and hasn't been requested this session
+    pub fn claim_remote_icon_attempt(&self, key: &Arc<str>) -> bool {
+        if self.remote_icon(key).is_some() {
+            return false;
+        }
+        self.remote_icon_attempts.lock().insert(key.clone())
+    }
+
+    pub fn release_remote_icon_attempt(&self, key: &str) {
+        self.remote_icon_attempts.lock().remove(key);
+    }
+
+    fn remote_icon(&self, key: &Arc<str>) -> Option<UniqueBytes> {
+        if let Some(icon) = self.remote_icons.read().get(key) {
+            return icon.clone();
+        }
+
+        let icon = std::fs::read(self.remote_icons_dir.join(format!("{key}.png"))).ok().map(UniqueBytes::from);
+        self.remote_icons.write().insert(key.clone(), icon.clone());
+        icon
+    }
+
+    /// Decodes a downloaded project icon and saves it, returning false if it isn't a usable image
+    pub fn store_remote_icon(&self, key: Arc<str>, image_bytes: &[u8]) -> bool {
+        let Some(icon) = load_icon_bytes_as_png(image_bytes) else {
+            return false;
+        };
+
+        _ = crate::fs::write_safe(&self.remote_icons_dir.join(format!("{key}.png")), &icon);
+        self.remote_icons.write().insert(key, Some(icon));
+        true
+    }
+
+    /// Content that doesn't ship an icon gets the icon of the project it came from, once it has
+    /// been downloaded
+    pub fn with_remote_icon(&self, summary: Arc<ContentSummary>, source: &ContentSource) -> Arc<ContentSummary> {
+        if summary.png_icon.is_some() || ContentSummary::is_unknown(&summary) {
+            return summary;
+        }
+        let Some(icon) = remote_icon_key(source).and_then(|key| self.remote_icon(&key)) else {
+            return summary;
+        };
+        Arc::new(ContentSummary {
+            png_icon: Some(icon),
+            ..(*summary).clone()
+        })
     }
 
     pub fn set_cached_curseforge_info(&self, file_id: u32, info: CachedCurseforgeFileInfo) {
@@ -412,6 +498,12 @@ impl ModMetadataManager {
                 ZipMetadataFile::PackMcmeta => self.load_from_pack_mcmeta(hash, filesize, &archive, file),
                 ZipMetadataFile::ModrinthIndexJson => self.load_modrinth_modpack(hash, filesize, &archive, file),
                 ZipMetadataFile::ManifestJson => self.load_curseforge_modpack(hash, filesize, &archive, file),
+                ZipMetadataFile::PaperPluginYml => {
+                    self.load_bukkit_plugin(hash, filesize, &archive, file, ContentType::PaperPlugin)
+                },
+                ZipMetadataFile::PluginYml => {
+                    self.load_bukkit_plugin(hash, filesize, &archive, file, ContentType::BukkitPlugin)
+                },
             };
 
             if let Some(summary) = summary {
@@ -995,6 +1087,40 @@ impl ModMetadataManager {
         None
     }
 
+    /// Reads a plugin's `plugin.yml` or `paper-plugin.yml`. Neither format has an icon field, so the
+    /// conventional icon file names are checked instead; most plugins have none, in which case the
+    /// content list falls back to the icon of the Modrinth or CurseForge project it came from.
+    fn load_bukkit_plugin<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+        content_type: ContentType,
+    ) -> Option<Arc<ContentSummary>> {
+        let bytes = file.bytes().ok()?;
+        let descriptor = schema::bukkit_plugin::parse_bukkit_plugin_descriptor(&String::from_utf8_lossy(&bytes))?;
+        drop(file);
+
+        let name: Arc<str> = descriptor.name.as_deref()?.into();
+
+        let png_icon = schema::bukkit_plugin::PLUGIN_ICON_NAMES
+            .iter()
+            .find_map(|icon| archive.by_name(icon).and_then(load_icon));
+
+        Some(Arc::new(ContentSummary {
+            id: Some(name.clone()),
+            hash,
+            filesize,
+            name: Some(name),
+            authors: descriptor.authors_string().unwrap_or_default().into(),
+            version_str: descriptor.version.as_deref().map(create_version_string).unwrap_or_default(),
+            rich_description: None,
+            png_icon,
+            extra: content_type,
+        }))
+    }
+
     fn load_from_java_manifest<R: rc_zip_sync::HasCursor>(
         self: &Arc<Self>,
         hash: [u8; 20],
@@ -1014,6 +1140,11 @@ impl ModMetadataManager {
             impl_title.as_str().into()
         } else if let Some(spec_title) = manifest_map.get("Specification-Title") {
             spec_title.as_str().into()
+        } else if let Some(bundle_name) = manifest_map.get("Bundle-Name") {
+            bundle_name.as_str().into()
+        } else if let Some(symbolic_name) = manifest_map.get("Bundle-SymbolicName") {
+            // May carry directives after a semicolon, e.g. `com.example.lib;singleton:=true`
+            symbolic_name.split(';').next().unwrap_or(symbolic_name).trim().into()
         } else {
             return None;
         };
@@ -1030,6 +1161,8 @@ impl ModMetadataManager {
             Some(Arc::from(format!("v{impl_version}")))
         } else if let Some(spec_version) = manifest_map.get("Specification-Version") {
             Some(Arc::from(format!("v{spec_version}")))
+        } else if let Some(bundle_version) = manifest_map.get("Bundle-Version") {
+            Some(Arc::from(format!("v{bundle_version}")))
         } else {
             None
         };
@@ -1109,6 +1242,18 @@ impl ModMetadataManager {
     }
 }
 
+/// Names the cached icon of the project a piece of content was installed from. Project ids are
+/// alphanumeric on both sites, which keeps the key safe to use as a filename.
+pub fn remote_icon_key(source: &ContentSource) -> Option<Arc<str>> {
+    match source {
+        ContentSource::ModrinthProject { project_id } if project_id.chars().all(|c| c.is_ascii_alphanumeric()) => {
+            Some(format!("modrinth-{project_id}").into())
+        },
+        ContentSource::CurseforgeProject { project_id } => Some(format!("curseforge-{project_id}").into()),
+        _ => None,
+    }
+}
+
 fn load_icon<R: rc_zip_sync::HasCursor>(icon_file: rc_zip_sync::EntryHandle<R>) -> Option<UniqueBytes> {
     let Ok(icon_bytes) = icon_file.bytes() else {
         return None;
@@ -1118,10 +1263,20 @@ fn load_icon<R: rc_zip_sync::HasCursor>(icon_file: rc_zip_sync::EntryHandle<R>) 
 }
 
 fn load_icon_bytes(icon_bytes: &[u8]) -> Option<UniqueBytes> {
+    load_icon_bytes_inner(icon_bytes, false)
+}
+
+/// Like [`load_icon_bytes`], but always re-encodes, since project icons are often WebP or JPEG
+/// and the frontend only decodes PNG
+fn load_icon_bytes_as_png(icon_bytes: &[u8]) -> Option<UniqueBytes> {
+    load_icon_bytes_inner(icon_bytes, true)
+}
+
+fn load_icon_bytes_inner(icon_bytes: &[u8], force_png: bool) -> Option<UniqueBytes> {
     let Ok(mut image) = image::load_from_memory(&icon_bytes) else {
         return None;
     };
-    let mut changed = false;
+    let mut changed = force_png;
 
     if let Some(cropped) = crop_to_content(&image) {
         image = cropped;
@@ -1513,4 +1668,99 @@ impl<'de> DeserializeAs<'de, [u8; 20]> for DeserializeAsHex {
 pub enum LegacyContentSource {
     Manual,
     Modrinth,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        ffi::OsStr,
+        io::{Cursor, Write},
+        sync::Arc,
+    };
+
+    use bridge::instance::{ContentSummary, ContentType};
+
+    use super::ModMetadataManager;
+
+    const PLUGIN_YML: &[u8] = b"name: Allium\nversion: '1.4.0'\nmain: codes.castled.allium.Allium\nauthors: [castledking, Moulberry]\n";
+    const PAPER_PLUGIN_YML: &[u8] = b"name: Karasu\nversion: 2.1\nmain: codes.castled.karasu.Karasu\napi-version: '1.21'\n";
+    const FABRIC_MOD_JSON: &[u8] = br#"{"schemaVersion": 1, "id": "griefprevention3d", "version": "18.4.8", "name": "GriefPrevention3D"}"#;
+
+    fn summarize(entries: &[(&str, &[u8])]) -> Arc<ContentSummary> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, data) in entries {
+            writer.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        let jar = writer.finish().unwrap().into_inner();
+
+        // Nothing is written while summarizing, so the directories don't need to exist
+        let dir = std::env::temp_dir().join("pandora-mod-metadata-tests");
+        let manager = Arc::new(ModMetadataManager::load(dir.clone().into(), dir.into()));
+        manager.get_bytes(&jar, Some(OsStr::new("jar")))
+    }
+
+    fn png_icon() -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(16, 16, image::Rgba([200, 80, 40, 255]));
+        let mut bytes = Vec::new();
+        image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn reads_plugin_yml() {
+        let summary = summarize(&[("plugin.yml", PLUGIN_YML)]);
+        assert!(matches!(summary.extra, ContentType::BukkitPlugin));
+        assert_eq!(summary.name.as_deref(), Some("Allium"));
+        assert_eq!(&*summary.version_str, "v1.4.0");
+        assert_eq!(&*summary.authors, "By castledking, Moulberry");
+        assert!(summary.png_icon.is_none());
+    }
+
+    #[test]
+    fn reads_paper_plugin_yml() {
+        let summary = summarize(&[("paper-plugin.yml", PAPER_PLUGIN_YML)]);
+        assert!(matches!(summary.extra, ContentType::PaperPlugin));
+        assert_eq!(summary.name.as_deref(), Some("Karasu"));
+        assert_eq!(&*summary.version_str, "v2.1");
+    }
+
+    #[test]
+    fn plugin_yml_wins_over_paper_plugin_yml() {
+        let summary = summarize(&[("paper-plugin.yml", PAPER_PLUGIN_YML), ("plugin.yml", PLUGIN_YML)]);
+        assert!(matches!(summary.extra, ContentType::BukkitPlugin));
+    }
+
+    #[test]
+    fn mod_descriptor_wins_over_plugin_yml() {
+        let summary = summarize(&[("plugin.yml", PLUGIN_YML), ("fabric.mod.json", FABRIC_MOD_JSON)]);
+        assert!(matches!(summary.extra, ContentType::Fabric));
+        assert_eq!(summary.name.as_deref(), Some("GriefPrevention3D"));
+    }
+
+    #[test]
+    fn reads_plugin_icon() {
+        let icon = png_icon();
+        let summary = summarize(&[("plugin.yml", PLUGIN_YML), ("plugin.png", &icon)]);
+        assert!(summary.png_icon.is_some());
+    }
+
+    #[test]
+    fn reads_bundle_manifest() {
+        let manifest = b"Manifest-Version: 1.0\r\nBundle-SymbolicName: codes.castled.example;singleton:=true\r\nBundle-Version: 3.0.0\r\n";
+        let summary = summarize(&[("META-INF/MANIFEST.MF", manifest)]);
+        assert!(matches!(summary.extra, ContentType::JavaModule));
+        assert_eq!(summary.name.as_deref(), Some("codes.castled.example"));
+        assert_eq!(&*summary.version_str, "v3.0.0");
+    }
+
+    #[test]
+    fn remote_icons_are_png() {
+        let mut webp = Vec::new();
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([10, 120, 220, 255]))
+            .write_to(&mut Cursor::new(&mut webp), image::ImageFormat::WebP)
+            .unwrap();
+        let png = super::load_icon_bytes_as_png(&webp).unwrap();
+        assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+    }
 }

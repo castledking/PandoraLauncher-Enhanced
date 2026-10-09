@@ -346,16 +346,19 @@ impl InstanceList {
                             );
                         }
                     }))
-                    .item(PopupMenuItem::new(t::instance::delete()).on_click({
+                    .separator()
+                    .item(delete_menu_item(t::instance::delete()).on_click({
                         let instance_id = instance.id;
                         let instance_name = instance.name.clone();
                         let backend_handle = data.backend_handle.clone();
-                        move |click: &ClickEvent, window, cx| {
+                        move |_, window, cx| {
+                            // Menu items are handed an empty click event, so the shift state has
+                            // to come from the window instead
                             delete_instance(
                                 instance_id,
                                 &instance_name,
                                 &backend_handle,
-                                click.modifiers().shift,
+                                window.modifiers().shift,
                                 window,
                                 cx,
                             );
@@ -510,7 +513,20 @@ fn is_listed(entry: &InstanceEntry) -> bool {
 }
 
 /// Shift-clicking skips the confirmation when the user has enabled quick deletion.
-fn delete_instance(
+/// A destructive popup menu entry, drawn in the theme's danger colour so it stands apart from the
+/// harmless actions above it.
+pub fn delete_menu_item(label: &'static str) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| {
+        let danger = cx.theme().danger;
+        h_flex()
+            .gap_2()
+            .text_color(danger)
+            .child(Icon::new(PandoraIcon::Trash2).size_4().text_color(danger))
+            .child(label)
+    })
+}
+
+pub fn delete_instance(
     id: bridge::instance::InstanceID,
     name: &SharedString,
     backend_handle: &bridge::handle::BackendHandle,

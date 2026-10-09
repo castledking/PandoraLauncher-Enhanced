@@ -57,6 +57,18 @@ impl Loader {
         }
     }
 
+    /// Every Modrinth loader whose builds this loader can run. For mod loaders that's just the
+    /// one; a Paper server also runs plugins published only for Spigot, Bukkit or Purpur.
+    pub fn compatible_modrinth_loaders(self) -> &'static [ModrinthLoader] {
+        match self {
+            Loader::Vanilla => &[],
+            Loader::Fabric => &[ModrinthLoader::Fabric],
+            Loader::Forge => &[ModrinthLoader::Forge],
+            Loader::NeoForge => &[ModrinthLoader::NeoForge],
+            Loader::Paper => &[ModrinthLoader::Paper, ModrinthLoader::Spigot, ModrinthLoader::Bukkit, ModrinthLoader::Purpur],
+        }
+    }
+
     pub fn as_curseforge_loader(&self) -> CurseforgeModLoaderType {
         match self {
             Loader::Vanilla => CurseforgeModLoaderType::Any,

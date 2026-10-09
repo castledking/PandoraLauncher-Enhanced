@@ -688,6 +688,7 @@ impl Instance {
             state.pending_load = None;
             state.load_state.load_finished();
             let should_load = state.load_state.should_load();
+            let is_server = this.configuration.get().server.is_some();
             drop(guard);
 
             backend.send.send(MessageToFrontend::InstanceContentUpdated {
@@ -695,6 +696,8 @@ impl Instance {
                 content_folder,
                 content: Arc::clone(&result),
             });
+
+            crate::content_links::after_content_loaded(&backend, id, content_folder, is_server, &result);
 
             keep_alive.notify();
             if should_load {
@@ -1217,6 +1220,7 @@ fn create_instance_content_summary(
     let filename_hash = hasher.finish();
 
     let content_source = mod_metadata_manager.read_content_sources().get(&summary.hash);
+    let summary = mod_metadata_manager.with_remote_icon(summary, &content_source);
 
     let lowercase_search_keys = summary
         .id

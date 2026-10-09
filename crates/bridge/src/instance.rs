@@ -227,6 +227,10 @@ pub enum ContentType {
     Forge,
     NeoForge,
     JavaModule,
+    /// Bukkit-style plugin, described by `plugin.yml`.
+    BukkitPlugin,
+    /// Paper-style plugin, described by `paper-plugin.yml`.
+    PaperPlugin,
     ModrinthModpack {
         files: Arc<[ModpackFile]>,
         dependencies: IndexMap<Arc<str>, Arc<str>>,
@@ -264,6 +268,9 @@ impl ContentType {
             | Self::CurseforgeModpack { .. } => Some("mods"),
             ContentType::ResourcePack => Some("resourcepacks"),
             ContentType::ShaderPack => Some("shaderpacks"),
+            // Only reached for non-server installs, since a plugin fetched for a client instance
+            // is a mod. `plugins_folder_for` overrides this to `plugins` for plugin servers.
+            ContentType::BukkitPlugin | ContentType::PaperPlugin => Some("plugins"),
             ContentType::Unknown => None,
         }
     }
@@ -272,6 +279,9 @@ impl ContentType {
         match self {
             Self::ResourcePack => false,
             Self::ShaderPack => false,
+            // Plugins target the Bukkit API rather than one Minecraft release, and routinely run on
+            // versions they don't list yet
+            Self::BukkitPlugin | Self::PaperPlugin => false,
             _ => true,
         }
     }
@@ -293,11 +303,38 @@ impl ContentType {
             ContentType::NeoForge => [ModrinthLoader::NeoForge].into(),
             ContentType::ResourcePack => [ModrinthLoader::Minecraft].into(),
             ContentType::ShaderPack => [ModrinthLoader::Iris, ModrinthLoader::Optifine, ModrinthLoader::Canvas].into(),
+            // A Bukkit plugin runs on anything implementing the Bukkit API, and plenty only list
+            // Spigot or Bukkit, so updates are looked up across all of them
+            ContentType::BukkitPlugin => {
+                [ModrinthLoader::Paper, ModrinthLoader::Spigot, ModrinthLoader::Bukkit, ModrinthLoader::Purpur].into()
+            },
+            // `paper-plugin.yml` plugins use Paper-only API, so Spigot and Bukkit builds won't do
+            ContentType::PaperPlugin => [ModrinthLoader::Paper, ModrinthLoader::Purpur].into(),
             ContentType::Unknown
             | ContentType::JavaModule
             | ContentType::ModrinthModpack { .. }
             | ContentType::CurseforgeModpack { .. } => [fallback].into(),
         }
+    }
+
+    /// The Modrinth loaders to check for versions of this content on an instance using `loader`.
+    /// Everything on a plugin server is a plugin, including jars that also carry a mod
+    /// descriptor and so get detected as mods.
+    pub fn modrinth_loaders_for(&self, loader: Loader) -> Arc<[ModrinthLoader]> {
+        match self {
+            ContentType::ResourcePack
+            | ContentType::ShaderPack
+            | ContentType::ModrinthModpack { .. }
+            | ContentType::CurseforgeModpack { .. } => self.modrinth_loaders(loader.as_modrinth_loader()),
+            _ if loader == Loader::Paper => loader.compatible_modrinth_loaders().into(),
+            _ => self.modrinth_loaders(loader.as_modrinth_loader()),
+        }
+    }
+
+    /// The CurseForge loader to check for files of this content on an instance using `loader`.
+    /// Plugin files on CurseForge have no loader at all.
+    pub fn curseforge_loader_for(&self, loader: Loader) -> Option<CurseforgeModLoaderType> {
+        if loader == Loader::Paper { None } else { self.curseforge_loader() }
     }
 
     pub fn curseforge_loader(&self) -> Option<CurseforgeModLoaderType> {
@@ -307,6 +344,8 @@ impl ContentType {
             ContentType::NeoForge => Some(CurseforgeModLoaderType::NeoForge),
             ContentType::Unknown
             | ContentType::JavaModule
+            | ContentType::BukkitPlugin
+            | ContentType::PaperPlugin
             | ContentType::ModrinthModpack { .. }
             | ContentType::CurseforgeModpack { .. }
             | ContentType::ResourcePack

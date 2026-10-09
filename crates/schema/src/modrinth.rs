@@ -101,6 +101,7 @@ pub enum ModrinthSideRequirement {
 #[serde(rename_all = "lowercase")]
 pub enum ModrinthProjectType {
     Mod,
+    Plugin,
     Modpack,
     Resourcepack,
     Shader,
@@ -114,6 +115,7 @@ impl ModrinthProjectType {
     pub fn as_str(self) -> &'static str {
         match self {
             ModrinthProjectType::Mod => "mod",
+            ModrinthProjectType::Plugin => "plugin",
             ModrinthProjectType::Modpack => "modpack",
             ModrinthProjectType::Resourcepack => "resourcepack",
             ModrinthProjectType::Shader => "shader",
@@ -127,6 +129,21 @@ impl ModrinthProjectType {
             Self::Mod | Self::Modpack => true,
             _ => false,
         }
+    }
+
+    /// Mods, plugins and modpacks are the project types that are tied to a mod loader, and so the
+    /// only ones the search can filter by game version or loader.
+    pub fn has_loader_and_version(self) -> bool {
+        match self {
+            Self::Mod | Self::Plugin | Self::Modpack => true,
+            _ => false,
+        }
+    }
+
+    /// Modpacks are described purely by categories on Modrinth and carry no `loaders`, so their
+    /// loader facet has to go through `categories` instead.
+    pub fn loader_facet_uses_categories(self) -> bool {
+        self == Self::Modpack
     }
 }
 
@@ -189,6 +206,8 @@ pub enum ModrinthLoader {
     Paper,
     Spigot,
     Bukkit,
+    Purpur,
+    Folia,
     // Other
     #[serde(other)]
     Unknown,
@@ -202,7 +221,11 @@ impl ModrinthLoader {
             ModrinthLoader::Iris | ModrinthLoader::Optifine => Some("shaderpacks"),
             ModrinthLoader::Canvas => Some("resourcepacks"),
             ModrinthLoader::Datapack => Some("saves/World/datapacks"),
-            ModrinthLoader::Paper | ModrinthLoader::Spigot | ModrinthLoader::Bukkit => Some("plugins"),
+            ModrinthLoader::Paper
+            | ModrinthLoader::Spigot
+            | ModrinthLoader::Bukkit
+            | ModrinthLoader::Purpur
+            | ModrinthLoader::Folia => Some("plugins"),
             ModrinthLoader::Unknown => None,
         }
     }
@@ -220,6 +243,8 @@ impl ModrinthLoader {
             Self::Paper => "Paper",
             Self::Spigot => "Spigot",
             Self::Bukkit => "Bukkit",
+            Self::Purpur => "Purpur",
+            Self::Folia => "Folia",
             Self::Unknown => "Unknown",
         }
     }
@@ -237,6 +262,8 @@ impl ModrinthLoader {
             Self::Paper => "paper",
             Self::Spigot => "spigot",
             Self::Bukkit => "bukkit",
+            Self::Purpur => "purpur",
+            Self::Folia => "folia",
             Self::Unknown => "unknown",
         }
     }
@@ -254,6 +281,8 @@ impl ModrinthLoader {
             "Paper" | "paper" => Self::Paper,
             "Spigot" | "spigot" => Self::Spigot,
             "Bukkit" | "bukkit" => Self::Bukkit,
+            "Purpur" | "purpur" => Self::Purpur,
+            "Folia" | "folia" => Self::Folia,
             _ => Self::Unknown,
         }
     }
@@ -268,7 +297,11 @@ impl ModrinthLoader {
             ModrinthLoader::Optifine => None,
             ModrinthLoader::Canvas => None,
             ModrinthLoader::Datapack => None,
-            ModrinthLoader::Paper | ModrinthLoader::Spigot | ModrinthLoader::Bukkit => Some(Loader::Paper),
+            ModrinthLoader::Paper | ModrinthLoader::Spigot | ModrinthLoader::Bukkit | ModrinthLoader::Purpur => {
+                Some(Loader::Paper)
+            },
+            // Folia-only plugins can't run on a Paper server
+            ModrinthLoader::Folia => None,
             ModrinthLoader::Unknown => None,
         }
     }

@@ -506,11 +506,12 @@ impl Render for ServerSettingsSubpage {
                             .disabled(is_running)
                             .on_click({
                                 let backend_handle = self.backend_handle.clone();
-                                move |_, window, cx| {
-                                    crate::modals::delete_instance::open_delete_instance(
+                                move |click: &ClickEvent, window, cx| {
+                                    crate::component::instance_list::delete_instance(
                                         id,
-                                        server_name.clone(),
-                                        backend_handle.clone(),
+                                        &server_name,
+                                        &backend_handle,
+                                        click.modifiers().shift,
                                         window,
                                         cx,
                                     );

@@ -415,11 +415,8 @@ impl BackendState {
                     Some(version)
                 } else {
                     let modrinth_loader = content.loader.as_modrinth_loader();
-                    let loaders = if modrinth_loader != ModrinthLoader::Unknown {
-                        Some(Arc::from([modrinth_loader]))
-                    } else {
-                        None
-                    };
+                    let compatible = content.loader.compatible_modrinth_loaders();
+                    let loaders = if !compatible.is_empty() { Some(Arc::from(compatible)) } else { None };
 
                     let mut result = self
                         .meta

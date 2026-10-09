@@ -294,8 +294,8 @@ pub fn open(
     sha1.copy_from_slice(&summary.content_summary.hash);
     let installed_sha1: Arc<str> = hex::encode(sha1).into();
 
-    let modrinth_loaders = summary.content_summary.extra.modrinth_loaders(loader.as_modrinth_loader());
-    let curseforge_loader = summary.content_summary.extra.curseforge_loader();
+    let modrinth_loaders = summary.content_summary.extra.modrinth_loaders_for(loader);
+    let curseforge_loader = summary.content_summary.extra.curseforge_loader_for(loader);
 
     let content_name: SharedString =
         summary.content_summary.name.clone().unwrap_or_else(|| summary.filename.clone()).into();
@@ -306,6 +306,8 @@ pub fn open(
         ContentType::ModrinthModpack { .. } | ContentType::CurseforgeModpack { .. } => {
             t::instance::content::version::modpack()
         },
+        ContentType::BukkitPlugin | ContentType::PaperPlugin => t::instance::content::version::plugin(),
+        _ if loader == Loader::Paper => t::instance::content::version::plugin(),
         _ => t::instance::content::version::mod_(),
     }
     .into();

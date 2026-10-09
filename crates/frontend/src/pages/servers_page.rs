@@ -345,14 +345,15 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
                     move |_, window, cx| crate::open_folder(&folder, window, cx)
                 }))
                 .separator()
-                .item(PopupMenuItem::new(t::server::action::delete()).on_click({
+                .item(crate::component::instance_list::delete_menu_item(t::server::action::delete()).on_click({
                     let name = name.clone();
                     let backend_handle = backend_handle.clone();
                     move |_, window, cx| {
-                        crate::modals::delete_instance::open_delete_instance(
+                        crate::component::instance_list::delete_instance(
                             id,
-                            name.clone(),
-                            backend_handle.clone(),
+                            &name,
+                            &backend_handle,
+                            window.modifiers().shift,
                             window,
                             cx,
                         );

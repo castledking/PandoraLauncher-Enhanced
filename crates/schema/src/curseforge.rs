@@ -187,6 +187,8 @@ pub struct CurseforgeProjectLinks {
 pub struct CurseforgeProject {
     pub name: Arc<str>,
     pub links: CurseforgeProjectLinks,
+    #[serde(default)]
+    pub logo: Option<CurseforgeModAsset>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -371,6 +373,24 @@ impl CurseforgeClassId {
             _ => false,
         }
     }
+
+    /// Bukkit plugins are a class of their own on CurseForge rather than a loader, but they are
+    /// still tied to a game version, so the version filter applies to them.
+    pub fn has_loader_and_version(self) -> bool {
+        match self {
+            Self::Mod | Self::Modpack | Self::BukkitPlugin => true,
+            _ => false,
+        }
+    }
+
+    /// CurseForge rejects `modLoaderType` on the Bukkit plugin class with a 400, since the class
+    /// already implies it. Every other class can be narrowed by loader.
+    pub fn supports_loader_filter(self) -> bool {
+        match self {
+            Self::Mod | Self::Modpack => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -425,4 +445,62 @@ pub struct CachedCurseforgeFileInfo {
     pub hash: [u8; 20],
     pub filename: Arc<str>,
     pub disabled_third_party_downloads: bool,
+}
+
+/// CurseForge's file fingerprint, used to look files up by their contents: 32-bit MurmurHash2
+/// with a seed of 1, taken over the file with every tab, newline, carriage return and space removed.
+pub fn fingerprint(bytes: &[u8]) -> u32 {
+    const M: u32 = 0x5bd1_e995;
+    const R: u32 = 24;
+    const SEED: u32 = 1;
+
+    let is_kept = |byte: &&u8| !matches!(**byte, b'\t' | b'\n' | b'\r' | b' ');
+    let length = bytes.iter().filter(is_kept).count() as u32;
+
+    let mut hash = SEED ^ length;
+    let mut block = [0_u8; 4];
+    let mut filled = 0;
+    for &byte in bytes.iter().filter(is_kept) {
+        block[filled] = byte;
+        filled += 1;
+        if filled == block.len() {
+            let mut k = u32::from_le_bytes(block);
+            k = k.wrapping_mul(M);
+            k ^= k >> R;
+            k = k.wrapping_mul(M);
+            hash = hash.wrapping_mul(M) ^ k;
+            filled = 0;
+        }
+    }
+
+    if filled > 0 {
+        for (index, &byte) in block[..filled].iter().enumerate() {
+            hash ^= (byte as u32) << (8 * index);
+        }
+        hash = hash.wrapping_mul(M);
+    }
+
+    hash ^= hash >> 13;
+    hash = hash.wrapping_mul(M);
+    hash ^= hash >> 15;
+    hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fingerprint;
+
+    // Reference values from an implementation that reproduces the fingerprints CurseForge reports
+    // for uploaded files
+    #[test]
+    fn fingerprint_matches_curseforge() {
+        assert_eq!(fingerprint(b""), 1540447798);
+        assert_eq!(fingerprint(b"PandoraLauncher"), 2647682328);
+        assert_eq!(fingerprint(b"PandoraLauncherEnhanced"), 3361054667);
+    }
+
+    #[test]
+    fn fingerprint_ignores_whitespace() {
+        assert_eq!(fingerprint(b"Pandora Launcher\r\n\tEnhanced"), fingerprint(b"PandoraLauncherEnhanced"));
+    }
 }

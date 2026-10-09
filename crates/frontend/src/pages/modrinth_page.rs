@@ -393,6 +393,7 @@ impl ModrinthSearchPage {
         self.search_state.update(cx, |state, cx| {
             let placeholder = match project_type {
                 ModrinthProjectType::Mod => t::instance::content::search::mod_(),
+                ModrinthProjectType::Plugin => t::instance::content::search::plugin(),
                 ModrinthProjectType::Modpack => t::instance::content::search::modpack(),
                 ModrinthProjectType::Resourcepack => t::instance::content::search::resourcepack(),
                 ModrinthProjectType::Shader => t::instance::content::search::shader(),
@@ -477,6 +478,7 @@ impl ModrinthSearchPage {
 
         let project_type = match filter_project_type {
             ModrinthProjectType::Mod | ModrinthProjectType::Other => "mod",
+            ModrinthProjectType::Plugin => "plugin",
             ModrinthProjectType::Modpack => "modpack",
             ModrinthProjectType::Resourcepack => "resourcepack",
             ModrinthProjectType::Shader => "shader",
@@ -487,9 +489,8 @@ impl ModrinthSearchPage {
 
         let mut facets = format!("[[\"project_type={}\"]", project_type);
 
-        let is_mod =
-            filter_project_type == ModrinthProjectType::Mod || filter_project_type == ModrinthProjectType::Modpack;
-        if is_mod
+        let filter_by_loader = filter_project_type.has_loader_and_version();
+        if filter_by_loader
             && let Some(filter_version) = self.filter_version
             && modrinth_filter_version
         {
@@ -498,13 +499,22 @@ impl ModrinthSearchPage {
             facets.push_str("\"]");
         }
 
-        if !self.filter_loaders.is_empty() && is_mod {
+        if !self.filter_loaders.is_empty() && filter_by_loader {
+            // Modrinth tracks loaders in their own facet. Only modpacks are an exception, since they
+            // carry no loaders and describe themselves purely by category.
+            let loader_facet = if filter_project_type.loader_facet_uses_categories() {
+                "categories"
+            } else {
+                "loaders"
+            };
+
             facets.push_str(",[");
 
             let mut first = true;
             for loader in self.filter_loaders {
                 // Paper runs anything written against the Bukkit API, and most plugins only list
-                // some of these, so a Paper server searches all of them
+                // some of these, so a Paper server searches all of them. Folia is left out: a
+                // Folia-only plugin can't load on Paper or Purpur.
                 let ids: &[&str] = match loader {
                     Loader::Paper => &["paper", "spigot", "bukkit", "purpur"],
                     _ => &[loader.as_modrinth_loader().id()],
@@ -515,7 +525,9 @@ impl ModrinthSearchPage {
                     } else {
                         facets.push(',');
                     }
-                    facets.push_str("\"categories:");
+                    facets.push('"');
+                    facets.push_str(loader_facet);
+                    facets.push(':');
                     facets.push_str(id);
                     facets.push('"');
                 }
@@ -1178,6 +1190,10 @@ impl Render for ModrinthSearchPage {
                     .label(t::instance::content::mods()),
             )
             .child(
+                selection_button("plugins", filter_project_type == ModrinthProjectType::Plugin)
+                    .label(t::server::plugins()),
+            )
+            .child(
                 selection_button("modpacks", filter_project_type == ModrinthProjectType::Modpack)
                     .label(t::instance::content::modpacks()),
             )
@@ -1194,54 +1210,74 @@ impl Render for ModrinthSearchPage {
             )
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(ModrinthProjectType::Mod, window, cx),
-                1 => page.set_project_type(ModrinthProjectType::Modpack, window, cx),
-                2 => page.set_project_type(ModrinthProjectType::Resourcepack, window, cx),
-                3 => page.set_project_type(ModrinthProjectType::Shader, window, cx),
-                4 => page.set_project_type(ModrinthProjectType::Datapack, window, cx),
+                1 => page.set_project_type(ModrinthProjectType::Plugin, window, cx),
+                2 => page.set_project_type(ModrinthProjectType::Modpack, window, cx),
+                3 => page.set_project_type(ModrinthProjectType::Resourcepack, window, cx),
+                4 => page.set_project_type(ModrinthProjectType::Shader, window, cx),
+                5 => page.set_project_type(ModrinthProjectType::Datapack, window, cx),
                 _ => {},
             }));
 
-        let loader_button_group =
-            if filter_project_type == ModrinthProjectType::Mod || filter_project_type == ModrinthProjectType::Modpack {
-                Some(
-                    ButtonGroup::new("loader_group")
-                        .layout(Axis::Vertical)
-                        .outline()
-                        .multiple(true)
-                        .child(
-                            selection_button("fabric", self.filter_loaders.contains(Loader::Fabric))
-                                .label(t::modrinth::category::fabric()),
-                        )
-                        .child(
-                            selection_button("forge", self.filter_loaders.contains(Loader::Forge))
-                                .label(t::modrinth::category::forge()),
-                        )
-                        .child(
-                            selection_button("neoforge", self.filter_loaders.contains(Loader::NeoForge))
-                                .label(t::modrinth::category::neoforge()),
-                        )
-                        .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
-                            page.set_filter_loaders(
-                                clicked
-                                    .iter()
-                                    .filter_map(|index| match index {
-                                        0 => Some(Loader::Fabric),
-                                        1 => Some(Loader::Forge),
-                                        2 => Some(Loader::NeoForge),
-                                        _ => None,
-                                    })
-                                    .collect(),
-                                window,
-                                cx,
-                            );
-                        })),
-                )
-            } else {
-                None
-            };
+        let loader_button_group = match filter_project_type {
+            ModrinthProjectType::Mod | ModrinthProjectType::Modpack => Some(
+                ButtonGroup::new("loader_group")
+                    .layout(Axis::Vertical)
+                    .outline()
+                    .multiple(true)
+                    .child(
+                        selection_button("fabric", self.filter_loaders.contains(Loader::Fabric))
+                            .label(t::modrinth::category::fabric()),
+                    )
+                    .child(
+                        selection_button("forge", self.filter_loaders.contains(Loader::Forge))
+                            .label(t::modrinth::category::forge()),
+                    )
+                    .child(
+                        selection_button("neoforge", self.filter_loaders.contains(Loader::NeoForge))
+                            .label(t::modrinth::category::neoforge()),
+                    )
+                    .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
+                        page.set_filter_loaders(
+                            clicked
+                                .iter()
+                                .filter_map(|index| match index {
+                                    0 => Some(Loader::Fabric),
+                                    1 => Some(Loader::Forge),
+                                    2 => Some(Loader::NeoForge),
+                                    _ => None,
+                                })
+                                .collect(),
+                            window,
+                            cx,
+                        );
+                    })),
+            ),
+            ModrinthProjectType::Plugin => Some(
+                ButtonGroup::new("loader_group")
+                    .layout(Axis::Vertical)
+                    .outline()
+                    .multiple(true)
+                    .child(
+                        selection_button("paper", self.filter_loaders.contains(Loader::Paper))
+                            .label(t::modrinth::category::paper()),
+                    )
+                    .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
+                        let loaders = clicked
+                            .iter()
+                            .filter_map(|index| match index {
+                                0 => Some(Loader::Paper),
+                                _ => None,
+                            })
+                            .collect();
+                        page.set_filter_loaders(loaders, window, cx);
+                    })),
+            ),
+            _ => None,
+        };
 
         let categories = match filter_project_type {
             ModrinthProjectType::Mod => FILTER_MOD_CATEGORIES,
+            ModrinthProjectType::Plugin => FILTER_PLUGIN_CATEGORIES,
             ModrinthProjectType::Modpack => FILTER_MODPACK_CATEGORIES,
             ModrinthProjectType::Resourcepack => FILTER_RESOURCEPACK_CATEGORIES,
             ModrinthProjectType::Shader => FILTER_SHADERPACK_CATEGORIES,
@@ -1332,8 +1368,7 @@ impl Render for ModrinthSearchPage {
             })
             .into_any_element();
 
-        let is_mod =
-            filter_project_type == ModrinthProjectType::Mod || filter_project_type == ModrinthProjectType::Modpack;
+        let is_mod = filter_project_type.has_loader_and_version();
         let filter_version_toggle = if is_mod && let Some(filter_version) = self.filter_version {
             let title = format!("{}: {}", t::instance::version(), filter_version);
             Some(
@@ -1442,6 +1477,17 @@ const FILTER_MOD_CATEGORIES: &[&'static str] = &[
     "transportation",
     "utility",
     "worldgen",
+];
+
+const FILTER_PLUGIN_CATEGORIES: &[&'static str] = &[
+    "adventure",
+    "economy",
+    "game-mechanics",
+    "library",
+    "management",
+    "optimization",
+    "social",
+    "utility",
 ];
 
 const FILTER_MODPACK_CATEGORIES: &[&'static str] = &[

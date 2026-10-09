@@ -836,7 +836,7 @@ impl BackendState {
                                                     }).await
                                                 },
                                                 extra => {
-                                                    let loaders = extra.modrinth_loaders(instance_modrinth_loader);
+                                                    let loaders = extra.modrinth_loaders_for(loader);
                                                     meta.fetch(ModrinthVersionUpdateMetadataItem {
                                                         sha1: sha1.clone(),
                                                         params: VersionUpdateParameters {
@@ -898,7 +898,7 @@ impl BackendState {
                                 ContentSource::CurseforgeProject { project_id } => {
                                     let permit = semaphore.acquire().await.unwrap();
 
-                                    let mod_loader_type = summary.content_summary.extra.curseforge_loader().map(|loader| loader as u32);
+                                    let mod_loader_type = summary.content_summary.extra.curseforge_loader_for(loader).map(|loader| loader as u32);
 
                                     let result = async {
                                         for &release_types in update_channel.curseforge_release_types_with_fallback().iter() {

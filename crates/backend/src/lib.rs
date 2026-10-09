@@ -9,6 +9,7 @@ mod account;
 mod arcfactory;
 mod backend_filesystem;
 mod backend_handler;
+mod content_links;
 mod curseforge_manual_download;
 mod directories;
 mod duplicate;

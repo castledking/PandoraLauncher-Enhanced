@@ -928,53 +928,7 @@ fn compute_murmur2(path: &Path) -> Result<u32, String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let mut data = Vec::new();
     file.read_to_end(&mut data).map_err(|e| e.to_string())?;
-    Ok(murmur2_32(&data))
-}
-
-fn murmur2_32(data: &[u8]) -> u32 {
-    const M: u32 = 0x5bd1_e995;
-    const R: u32 = 24;
-
-    let len = data.len() as u32;
-    let mut h = len;
-
-    let mut i = 0;
-    while i + 4 <= data.len() {
-        let mut k = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-        k = k.wrapping_mul(M);
-        k ^= k >> R;
-        k = k.wrapping_mul(M);
-
-        h = h.wrapping_mul(M);
-        h ^= k;
-
-        i += 4;
-    }
-
-    match data.len() & 3 {
-        3 => {
-            h ^= (data[i + 2] as u32) << 16;
-            h ^= (data[i + 1] as u32) << 8;
-            h ^= data[i] as u32;
-            h = h.wrapping_mul(M);
-        },
-        2 => {
-            h ^= (data[i + 1] as u32) << 8;
-            h ^= data[i] as u32;
-            h = h.wrapping_mul(M);
-        },
-        1 => {
-            h ^= data[i] as u32;
-            h = h.wrapping_mul(M);
-        },
-        _ => {},
-    }
-
-    h ^= h >> 13;
-    h = h.wrapping_mul(M);
-    h ^= h >> 15;
-
-    h
+    Ok(schema::curseforge::fingerprint(&data))
 }
 
 fn is_mod_file(path: &SafePath) -> bool {

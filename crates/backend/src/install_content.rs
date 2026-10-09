@@ -529,7 +529,9 @@ impl BackendState {
                     return Err(ContentInstallError::UnableToFindVersion);
                 }
 
-                let content_folder_base = if let Some(content_folder) = mod_summary.extra.content_folder() {
+                let content_folder_base = if let Some(plugins) = plugins_folder_for(content.loader, &mod_summary) {
+                    Some(plugins)
+                } else if let Some(content_folder) = mod_summary.extra.content_folder() {
                     Some(Path::new(content_folder))
                 } else if let Some(loaders) = &version.loaders {
                     let mut base = None;
@@ -632,7 +634,7 @@ impl BackendState {
                 tracker.add_total(1);
 
                 let mod_loader_type = match content.loader {
-                    Loader::Vanilla => None,
+                    Loader::Vanilla | Loader::Paper => None,
                     Loader::Fabric => Some(CurseforgeModLoaderType::Fabric as u32),
                     Loader::Forge => Some(CurseforgeModLoaderType::Forge as u32),
                     Loader::NeoForge => Some(CurseforgeModLoaderType::NeoForge as u32),
@@ -773,7 +775,9 @@ impl BackendState {
                         },
                     },
                     ContentInstallPath::Automatic => {
-                        if let Some(base) = mod_summary.extra.content_folder() {
+                        if let Some(base) = plugins_folder_for(content.loader, &mod_summary) {
+                            Some(safe_filename.to_path(base).into())
+                        } else if let Some(base) = mod_summary.extra.content_folder() {
                             Some(safe_filename.to_path(Path::new(base)).into())
                         } else {
                             None
@@ -1409,6 +1413,13 @@ fn url_to_filename(url: &str) -> Result<SafePath, ContentInstallError> {
     };
 
     Ok(filename)
+}
+
+/// Plugin jars look like plain Java modules to the metadata reader, which would otherwise send
+/// them to `mods/`. On a Paper server every jar fetched for it is a plugin.
+fn plugins_folder_for(loader: Loader, summary: &ContentSummary) -> Option<&'static Path> {
+    let is_pack = matches!(summary.extra, ContentType::ResourcePack | ContentType::ShaderPack);
+    (loader == Loader::Paper && !is_pack).then(|| Path::new("plugins"))
 }
 
 fn content_source_from_url(url: &str) -> Option<ContentSource> {

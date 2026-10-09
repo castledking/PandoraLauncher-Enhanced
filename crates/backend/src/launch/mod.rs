@@ -298,7 +298,7 @@ impl Launcher {
         instance_info: &InstanceConfiguration,
     ) -> Result<(Arc<MinecraftVersion>, AddVanillaJar), LaunchError> {
         match instance_info.loader {
-            Loader::Vanilla => {
+            Loader::Vanilla | Loader::Paper => {
                 launch_tracker.add_total(1);
 
                 let versions = self.meta.fetch(MinecraftVersionManifestMetadataItem).await?;
@@ -996,6 +996,25 @@ impl Launcher {
         Some(mirror.url.clone())
     }
 
+    /// Resolves the Java runtime for a server, downloading the managed runtime if needed.
+    ///
+    /// Servers have no modal to report progress into, so this takes none; the caller surfaces
+    /// failures instead.
+    pub(crate) async fn load_java_binary_for_server(
+        &self,
+        meta: &MetadataManager,
+        http_client: &reqwest::Client,
+        configuration: &InstanceConfiguration,
+        version_info: &MinecraftVersion,
+    ) -> Option<PathBuf> {
+        let modal_action = ModalAction::default();
+        let tracker = modal_action.push_tracker("Preparing Java".into());
+        self.load_mojang_java_binary(meta, http_client, configuration, version_info, &modal_action, &tracker)
+            .await
+            .inspect_err(|err| log::error!("Unable to resolve a Java runtime for the server: {err:?}"))
+            .ok()
+    }
+
     async fn load_mojang_java_binary(
         &self,
         meta: &MetadataManager,
@@ -1384,7 +1403,7 @@ impl Launcher {
         }
     }
 
-    fn search_for_java_binary(path: &Path) -> Option<PathBuf> {
+    pub(crate) fn search_for_java_binary(path: &Path) -> Option<PathBuf> {
         if path.is_file() {
             return Some(path.to_path_buf());
         }

@@ -51,6 +51,7 @@ pub struct InstanceContentSubpage {
     instance_loader: Loader,
     instance_version: Ustr,
     instance_name: SharedString,
+    is_server: bool,
     backend_handle: BackendHandle,
     content_states: ContentStates,
     content_list: Entity<ListState<ContentListDelegate>>,
@@ -89,6 +90,7 @@ pub enum ContentType {
     Mods,
     ResourcePacks,
     Shaders,
+    Plugins,
 }
 
 impl ContentType {
@@ -97,6 +99,7 @@ impl ContentType {
             ContentType::Mods => ContentFolder::Mods,
             ContentType::ResourcePacks => ContentFolder::ResourcePacks,
             ContentType::Shaders => ContentFolder::Shaders,
+            ContentType::Plugins => ContentFolder::Plugins,
         }
     }
 
@@ -105,6 +108,7 @@ impl ContentType {
             ContentType::Mods => t::instance::content::mods(),
             ContentType::ResourcePacks => t::instance::content::resourcepacks(),
             ContentType::Shaders => t::instance::content::shaders(),
+            ContentType::Plugins => t::server::plugins(),
         }
     }
 
@@ -113,6 +117,7 @@ impl ContentType {
             ContentType::Mods => t::instance::content::install::select_mods(),
             ContentType::ResourcePacks => t::instance::content::install::select_resourcepacks(),
             ContentType::Shaders => t::instance::content::install::select_shaders(),
+            ContentType::Plugins => t::server::select_plugins(),
         }
     }
 
@@ -121,6 +126,8 @@ impl ContentType {
             ContentType::Mods => ModrinthProjectType::Mod,
             ContentType::ResourcePacks => ModrinthProjectType::Resourcepack,
             ContentType::Shaders => ModrinthProjectType::Shader,
+            // Modrinth files plugins as mods; the Paper loader filter is what narrows them down
+            ContentType::Plugins => ModrinthProjectType::Mod,
         }
     }
 
@@ -129,6 +136,7 @@ impl ContentType {
             ContentType::Mods => CurseforgeClassId::Mod,
             ContentType::ResourcePacks => CurseforgeClassId::Resourcepack,
             ContentType::Shaders => CurseforgeClassId::Shader,
+            ContentType::Plugins => CurseforgeClassId::BukkitPlugin,
         }
     }
 
@@ -141,7 +149,7 @@ impl ContentType {
                 InstanceContentSortKey::ModifiedTime,
                 InstanceContentSortKey::FileSize,
             ],
-            ContentType::ResourcePacks | ContentType::Shaders => &[
+            ContentType::ResourcePacks | ContentType::Shaders | ContentType::Plugins => &[
                 InstanceContentSortKey::Filename,
                 InstanceContentSortKey::ModifiedTime,
                 InstanceContentSortKey::FileSize,
@@ -154,6 +162,7 @@ impl ContentType {
             ContentType::Mods => config.instance_mods_sort_key,
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_key,
             ContentType::Shaders => config.instance_shaders_sort_key,
+            ContentType::Plugins => config.instance_plugins_sort_key,
         }
     }
 
@@ -162,6 +171,7 @@ impl ContentType {
             ContentType::Mods => config.instance_mods_sort_enabled_first,
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_enabled_first,
             ContentType::Shaders => config.instance_shaders_sort_enabled_first,
+            ContentType::Plugins => config.instance_plugins_sort_enabled_first,
         }
     }
 
@@ -170,6 +180,7 @@ impl ContentType {
             ContentType::Mods => config.instance_mods_sort_key = value,
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_key = value,
             ContentType::Shaders => config.instance_shaders_sort_key = value,
+            ContentType::Plugins => config.instance_plugins_sort_key = value,
         }
     }
 
@@ -178,6 +189,7 @@ impl ContentType {
             ContentType::Mods => config.instance_mods_sort_enabled_first = value,
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_enabled_first = value,
             ContentType::Shaders => config.instance_shaders_sort_enabled_first = value,
+            ContentType::Plugins => config.instance_plugins_sort_enabled_first = value,
         }
     }
 }
@@ -196,6 +208,7 @@ impl InstanceContentSubpage {
         let instance_version = instance.configuration.minecraft_version;
         let instance_id = instance.id;
         let instance_name = instance.name.clone();
+        let is_server = instance.configuration.server.is_some();
         let content_states = instance.content_states.clone();
 
         let content_folder = content_type.content_folder();
@@ -315,6 +328,7 @@ impl InstanceContentSubpage {
             instance_loader,
             instance_version,
             instance_name,
+            is_server,
             backend_handle,
             content_states,
             content_list,
@@ -443,6 +457,7 @@ impl Render for InstanceContentSubpage {
                                 t::instance::content::update_all_resourcepacks(self.update_count)
                             },
                             ContentType::Shaders => t::instance::content::update_all_shaders(self.update_count),
+                            ContentType::Plugins => t::server::update_all_plugins(self.update_count),
                         })
                         .success()
                         .compact()
@@ -551,17 +566,23 @@ impl Render for InstanceContentSubpage {
 }
 
 impl InstanceContentSubpage {
+    /// Where the back button should lead after browsing for content: the server's page for a
+    /// server, the instance's page otherwise.
+    fn return_path(&self) -> [PageType; 2] {
+        let name = self.instance_name.clone();
+        if self.is_server {
+            [PageType::Servers, PageType::ServerPage { name }]
+        } else {
+            [PageType::Instances, PageType::InstancePage { name }]
+        }
+    }
+
     fn add_from_modrinth(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<'_, InstanceContentSubpage>) {
         let config = InterfaceConfig::get_mut(cx);
         config.modrinth_page_project_type = self.content_type.modrinth_project_type();
         config.preferred_add_content_source = PreferredAddContentSource::Modrinth;
 
-        let path = &[
-            PageType::Instances,
-            PageType::InstancePage {
-                name: self.instance_name.clone(),
-            },
-        ];
+        let path = &self.return_path();
         let page = crate::ui::PageType::Modrinth {
             installing_for: Some(self.instance_name.clone()),
         };
@@ -578,12 +599,7 @@ impl InstanceContentSubpage {
         config.curseforge_page_class_id = self.content_type.curseforge_class_id();
         config.preferred_add_content_source = PreferredAddContentSource::CurseForge;
 
-        let path = &[
-            PageType::Instances,
-            PageType::InstancePage {
-                name: self.instance_name.clone(),
-            },
-        ];
+        let path = &self.return_path();
         let page = crate::ui::PageType::Curseforge {
             installing_for: Some(self.instance_name.clone()),
         };

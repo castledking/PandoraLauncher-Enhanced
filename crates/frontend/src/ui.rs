@@ -34,7 +34,8 @@ use crate::{
     pages::{
         curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage,
         instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage,
-        page::Page, quickplay::QuickplayPage, skins_page::SkinsPage, syncing_page::SyncingPage,
+        page::Page, quickplay::QuickplayPage, server::server_page::ServerPage, servers_page::ServersPage,
+        skins_page::SkinsPage, syncing_page::SyncingPage,
     },
     png_render_cache,
 };
@@ -82,6 +83,10 @@ pub enum PageType {
     InstancePage {
         name: SharedString,
     },
+    Servers,
+    ServerPage {
+        name: SharedString,
+    },
 }
 
 impl PageType {
@@ -110,6 +115,10 @@ impl PageType {
             PageType::InstancePage { name } => {
                 InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
             },
+            PageType::Servers => t::server::title().into(),
+            PageType::ServerPage { name } => {
+                InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
+            },
         }
     }
 }
@@ -125,6 +134,8 @@ pub enum LauncherPage {
     Syncing(Entity<SyncingPage>),
     ModrinthProject(Entity<ModrinthProjectPage>),
     InstancePage(Entity<InstancePage>),
+    Servers(Entity<ServersPage>),
+    ServerPage(Entity<ServerPage>),
 }
 
 impl LauncherPage {
@@ -149,6 +160,8 @@ impl LauncherPage {
             LauncherPage::Syncing(entity) => process(entity, window, cx),
             LauncherPage::ModrinthProject(entity) => process(entity, window, cx),
             LauncherPage::InstancePage(entity) => process(entity, window, cx),
+            LauncherPage::Servers(entity) => process(entity, window, cx),
+            LauncherPage::ServerPage(entity) => process(entity, window, cx),
         };
 
         let config = InterfaceConfig::get(cx);
@@ -182,18 +195,14 @@ impl LauncherUI {
             .values()
             .filter_map(|entry| {
                 let entry = entry.read(cx).clone();
-                if entry.name == schema::quickplay::INSTANCE_NAME {
-                    None
-                } else {
-                    Some(entry)
-                }
+                if is_recentable(&entry) { Some(entry) } else { None }
             })
             .take(3)
             .collect();
 
         let _instance_added_subscription =
             cx.subscribe::<_, InstanceAddedEvent>(&data.instances, |this, _, event, cx| {
-                if event.instance.name == schema::quickplay::INSTANCE_NAME {
+                if !is_recentable(&event.instance) {
                     return;
                 }
                 if this.recent_instances.is_full() {
@@ -223,6 +232,22 @@ impl LauncherUI {
                         cx,
                     );
                 }
+                if let LauncherPage::ServerPage(page) = &this.page
+                    && page.read(cx).instance.read(cx).id == event.instance.id
+                    && InterfaceConfig::get(cx).main_page
+                        != (PageType::ServerPage {
+                            name: event.instance.name.clone(),
+                        })
+                {
+                    this.switch_page(
+                        PageType::ServerPage {
+                            name: event.instance.name.clone(),
+                        },
+                        &[PageType::Servers],
+                        window,
+                        cx,
+                    );
+                }
                 cx.notify();
             });
         let _instance_removed_subscription =
@@ -234,11 +259,16 @@ impl LauncherUI {
                 {
                     this.switch_page(PageType::Instances, &[], window, cx);
                 }
+                if let LauncherPage::ServerPage(page) = &this.page
+                    && page.read(cx).instance.read(cx).id == event.id
+                {
+                    this.switch_page(PageType::Servers, &[], window, cx);
+                }
                 cx.notify();
             });
         let _instance_moved_to_top_subscription =
             cx.subscribe::<_, InstanceMovedToTopEvent>(&data.instances, |this, _, event, cx| {
-                if event.instance.name == schema::quickplay::INSTANCE_NAME {
+                if !is_recentable(&event.instance) {
                     return;
                 }
                 this.recent_instances.retain(|entry| entry.id != event.instance.id);
@@ -381,6 +411,14 @@ impl LauncherUI {
 
                 Ok(LauncherPage::InstancePage(cx.new(|cx| InstancePage::new(id, data, window, cx))))
             },
+            PageType::Servers => Ok(LauncherPage::Servers(cx.new(|cx| ServersPage::new(data, window, cx)))),
+            PageType::ServerPage { ref name } => {
+                let Some(id) = InstanceEntries::find_id_by_name(&data.instances, name, cx) else {
+                    return Err(PageType::Servers);
+                };
+
+                Ok(LauncherPage::ServerPage(cx.new(|cx| ServerPage::new(id, data, window, cx))))
+            },
         }
     }
 
@@ -501,6 +539,7 @@ impl Render for LauncherUI {
                 &[
                     (show_quickplay_page, t::quickplay::title(), PandoraIcon::Rocket, PageType::Quickplay),
                     (true, t::instance::title(), PandoraIcon::Box, PageType::Instances),
+                    (true, t::server::title(), PandoraIcon::Server, PageType::Servers),
                     (show_skins, t::skins::title(), PandoraIcon::FaceSlightlySmiling, PageType::Skins),
                 ],
             ),
@@ -543,7 +582,10 @@ impl Render for LauncherUI {
                     group = group.child(
                         MenuGroupItem::new(*title)
                             .when(show_sidebar_icons, |this| this.icon(icon.clone()))
-                            .active(page_type == page)
+                            .active(
+                                page_type == page
+                                    || (page == PageType::Servers && matches!(page_type, PageType::ServerPage { .. })),
+                            )
                             .on_click(cx.listener(move |launcher, _, window, cx| {
                                 launcher.switch_page(page.clone(), &[], window, cx);
                             })),
@@ -886,6 +928,12 @@ impl Render for LauncherUI {
 
         ResizePanel::new(&self.sidebar_state, sidebar, self.page.clone().render(&self, window, cx))
     }
+}
+
+/// The sidebar's recent list is for jumping back into a game, so the quickplay instance and
+/// servers stay out of it.
+fn is_recentable(entry: &InstanceEntry) -> bool {
+    entry.name != schema::quickplay::INSTANCE_NAME && entry.configuration.server.is_none()
 }
 
 fn enhanced_label() -> impl IntoElement {

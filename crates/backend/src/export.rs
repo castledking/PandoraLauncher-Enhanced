@@ -104,7 +104,7 @@ impl ExportInstanceData {
                 .await
                 .ok()
                 .and_then(|manifest| self.configuration.determine_neoforge_loader_version(&manifest)),
-            Loader::Vanilla => None,
+            Loader::Vanilla | Loader::Paper => None,
         }
     }
 }

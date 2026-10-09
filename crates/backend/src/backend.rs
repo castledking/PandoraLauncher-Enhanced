@@ -240,6 +240,7 @@ pub fn start(
         quit_coordinator: quit_handler,
         should_quit: AtomicBool::new(false),
         content_install_semaphore: Semaphore::new(8),
+        servers: Default::default(),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
@@ -315,6 +316,7 @@ pub struct BackendState {
     pub quit_coordinator: QuitCoordinator,
     pub should_quit: AtomicBool,
     pub content_install_semaphore: Semaphore,
+    pub servers: crate::ServerRegistry,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
@@ -498,7 +500,12 @@ impl BackendState {
             self.restore_mods_folder_if_stopped(instance);
 
             if show_success && instance.should_send_notifications() {
-                self.send.send_success(format!("Instance '{}' created", instance.name));
+                let kind = if instance.configuration.get().server.is_some() {
+                    "Server"
+                } else {
+                    "Instance"
+                };
+                self.send.send_success(format!("{kind} '{}' created", instance.name));
             }
             let message = MessageToFrontend::InstanceAdded {
                 id: instance.id,
@@ -1524,6 +1531,20 @@ impl BackendState {
         icon: Option<EmbeddedOrRaw>,
         group: Option<Arc<str>>,
     ) -> Option<PathBuf> {
+        self.create_instance_configured(name, version, loader, icon, |configuration| configuration.group = group)
+    }
+
+    /// Creates an instance, letting the caller fill in the rest of its configuration before it is
+    /// first written. Writing it all at once matters because the filesystem watcher loads new
+    /// instance folders on its own, and would otherwise see a half-configured instance.
+    pub fn create_instance_configured(
+        &self,
+        name: &str,
+        version: &str,
+        loader: Loader,
+        icon: Option<EmbeddedOrRaw>,
+        configure: impl FnOnce(&mut InstanceConfiguration),
+    ) -> Option<PathBuf> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
             self.send
@@ -1554,7 +1575,7 @@ impl BackendState {
         _ = std::fs::create_dir_all(&instance_dir);
 
         let mut instance_info = InstanceConfiguration::new(version.into(), loader);
-        instance_info.group = group;
+        configure(&mut instance_info);
 
         match icon {
             Some(EmbeddedOrRaw::Embedded(e)) => {

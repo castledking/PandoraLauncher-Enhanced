@@ -473,7 +473,7 @@ impl InstallDialog {
                         loader
                     } else if let Some(single_loader_set) = this.single_loader_set {
                         Loader::iter()
-                            .filter(|loader| *loader != Loader::Vanilla)
+                            .filter(|loader| *loader != Loader::Vanilla && loader.is_client_loader())
                             .find(|loader| single_loader_set.contains(loader.as_modrinth_loader()))
                             .unwrap_or(Loader::Vanilla)
                     } else {

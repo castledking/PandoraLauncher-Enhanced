@@ -77,6 +77,10 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_mods_sort_enabled_first: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_plugins_sort_key: InstanceContentSortKey,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_plugins_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_resourcepacks_sort_key: InstanceContentSortKey,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_resourcepacks_sort_enabled_first: bool,
@@ -361,6 +365,8 @@ impl Default for InterfaceConfig {
             preferred_add_content_source: Default::default(),
             instance_mods_sort_key: Default::default(),
             instance_mods_sort_enabled_first: Default::default(),
+            instance_plugins_sort_key: Default::default(),
+            instance_plugins_sort_enabled_first: Default::default(),
             instance_resourcepacks_sort_key: Default::default(),
             instance_resourcepacks_sort_enabled_first: Default::default(),
             instance_shaders_sort_key: Default::default(),

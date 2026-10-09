@@ -16,6 +16,7 @@ use schema::{
     minecraft_profile::{MinecraftProfileCape, SkinVariant},
     pandora_update::UpdatePrompt,
     quickplay::QuickplayPreset,
+    server::{ServerPlatform, ServerProperty},
     unique_bytes::UniqueBytes,
 };
 use ustr::Ustr;
@@ -34,6 +35,7 @@ use crate::{
     meta::{MetadataRequest, MetadataResult},
     modal_action::ModalAction,
     notify_signal::KeepAliveNotifySignalHandle,
+    server_sync::ServerSyncPlan,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +273,62 @@ pub enum MessageToBackend {
         target: Arc<str>,
         is_file: bool,
         value: bool,
+    },
+    // Servers
+    CreateServerInstance {
+        name: Ustr,
+        version: Ustr,
+        platform: ServerPlatform,
+        eula_accepted: bool,
+        group: Option<Arc<str>>,
+        /// Client instance to generate the server from, if any.
+        generate_from: Option<InstanceID>,
+        modal_action: ModalAction,
+    },
+    StartServer {
+        id: InstanceID,
+        modal_action: ModalAction,
+    },
+    StopServer {
+        id: InstanceID,
+    },
+    RestartServer {
+        id: InstanceID,
+        modal_action: ModalAction,
+    },
+    SendServerCommand {
+        id: InstanceID,
+        command: Arc<str>,
+    },
+    SubscribeServerConsole {
+        id: InstanceID,
+        channel:
+            tokio::sync::oneshot::Sender<(Vec<GameOutputMsg>, tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>)>,
+    },
+    GetServerProperties {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Vec<ServerProperty>>,
+    },
+    SetServerProperties {
+        id: InstanceID,
+        properties: Arc<[ServerProperty]>,
+    },
+    SetServerEulaAccepted {
+        id: InstanceID,
+        accepted: bool,
+    },
+    SetServerAutoRestart {
+        id: InstanceID,
+        auto_restart: bool,
+    },
+    PlanServerSync {
+        server_id: InstanceID,
+        client_id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Option<ServerSyncPlan>>,
+    },
+    ApplyServerSync {
+        plan: ServerSyncPlan,
+        modal_action: ModalAction,
     },
     CleanupOldLogFiles {
         instance: InstanceID,
@@ -553,6 +611,7 @@ pub enum UrlOrFile {
     File { path: PathBuf },
 }
 
+#[derive(Clone)]
 pub struct GameOutputMsg {
     pub time: i64,
     pub level: GameOutputLogLevel,

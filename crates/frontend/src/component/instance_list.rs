@@ -47,18 +47,14 @@ impl InstanceList {
             .values()
             .filter_map(|i| {
                 let entry = i.read(cx).clone();
-                if entry.name == schema::quickplay::INSTANCE_NAME {
-                    None
-                } else {
-                    Some(entry)
-                }
+                if is_listed(&entry) { Some(entry) } else { None }
             })
             .collect();
         cx.new(|cx| {
             let _instance_added_subscription = cx.subscribe::<_, InstanceAddedEvent>(
                 &instances,
                 |table: &mut TableState<InstanceList>, _, event, cx| {
-                    if event.instance.name == schema::quickplay::INSTANCE_NAME {
+                    if !is_listed(&event.instance) {
                         return;
                     }
                     table.delegate_mut().items.insert(0, event.instance.clone());
@@ -505,6 +501,12 @@ impl TableDelegate for InstanceList {
             t::common::unknown().into_any_element()
         }
     }
+}
+
+/// The quickplay instance is managed by the quickplay page, and servers have their own page, so
+/// neither belongs in the instance list.
+fn is_listed(entry: &InstanceEntry) -> bool {
+    entry.name != schema::quickplay::INSTANCE_NAME && entry.configuration.server.is_none()
 }
 
 /// Shift-clicking skips the confirmation when the user has enabled quick deletion.

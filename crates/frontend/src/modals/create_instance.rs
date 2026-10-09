@@ -85,7 +85,7 @@ impl CreateInstanceModalState {
         };
 
         let group_input_state = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder(t::instance::group::select());
+            let mut state = InputState::new(window, cx).placeholder(t::server::create::group_placeholder());
             if let Some(preselected_group) = &preselected_group {
                 state.set_value(preselected_group.clone(), window, cx);
             }

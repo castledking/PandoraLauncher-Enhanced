@@ -202,7 +202,7 @@ impl InstanceSettingsSubpage {
         cx.subscribe(&account_items, Self::on_account_selected).detach();
 
         let loader_select_state = cx.new(|cx| {
-            let loaders = Loader::iter().map(|l| l.pretty_name()).collect();
+            let loaders = Loader::iter().filter(|l| l.is_client_loader()).map(|l| l.pretty_name()).collect();
             let mut state = SelectState::new(loaders, None, window, cx);
             state.set_selected_value(&loader.pretty_name(), window, cx);
             state
@@ -411,7 +411,7 @@ impl InstanceSettingsSubpage {
 
         let latest_str = self.loader_version_latest_string;
         let loader_versions = match self.loader {
-            Loader::Vanilla => {
+            Loader::Vanilla | Loader::Paper => {
                 vec![""]
             },
             Loader::Fabric => self.update_loader_versions_for_loader(
@@ -922,7 +922,9 @@ impl Render for InstanceSettingsSubpage {
                                 Loader::NeoForge => {
                                     format!("{}: ", t::instance::loader_version(t::modrinth::category::neoforge()))
                                 },
-                                Loader::Vanilla => format!("{}: ", t::instance::loader_version(t::instance::loader())),
+                                Loader::Vanilla | Loader::Paper => {
+                                    format!("{}: ", t::instance::loader_version(t::instance::loader()))
+                                },
                             })
                             .w_full(),
                     )

@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod change_version;
 pub mod create_instance;
+pub mod create_server;
 pub mod curseforge_install;
 pub mod delete_content;
 pub mod delete_instance;
@@ -12,6 +13,7 @@ pub mod modrinth_install;
 pub mod move_instance_to_group;
 pub mod rename_instance;
 pub mod select_icon;
+pub mod server_sync;
 pub mod unzip_modpack;
 pub mod update_prompt;
 pub mod upload_skin_modal;

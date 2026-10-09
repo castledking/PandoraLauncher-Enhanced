@@ -1439,6 +1439,55 @@ impl BackendState {
                     backend_config.jvm_binary = jvm_binary;
                 });
             },
+            MessageToBackend::CreateServerInstance {
+                name,
+                version,
+                platform,
+                eula_accepted,
+                group,
+                generate_from,
+                modal_action,
+            } => {
+                self.create_server_instance(name, version, platform, eula_accepted, group, generate_from, modal_action)
+                    .await;
+            },
+            MessageToBackend::StartServer { id, modal_action } => {
+                self.start_server(id, modal_action).await;
+            },
+            MessageToBackend::StopServer { id } => {
+                self.stop_server(id);
+            },
+            MessageToBackend::RestartServer { id, modal_action } => {
+                self.restart_server(id, modal_action).await;
+            },
+            MessageToBackend::SendServerCommand { id, command } => {
+                self.send_server_command(id, &command);
+            },
+            MessageToBackend::SubscribeServerConsole { id, channel } => {
+                self.subscribe_server_console(id, channel);
+            },
+            MessageToBackend::GetServerProperties { id, channel } => {
+                _ = channel.send(self.read_server_properties(id));
+            },
+            MessageToBackend::SetServerProperties { id, properties } => {
+                self.write_server_properties(id, &properties);
+            },
+            MessageToBackend::SetServerEulaAccepted { id, accepted } => {
+                self.accept_server_eula(id, accepted);
+            },
+            MessageToBackend::SetServerAutoRestart { id, auto_restart } => {
+                self.set_server_auto_restart(id, auto_restart);
+            },
+            MessageToBackend::PlanServerSync {
+                server_id,
+                client_id,
+                channel,
+            } => {
+                _ = channel.send(self.plan_server_sync(server_id, client_id));
+            },
+            MessageToBackend::ApplyServerSync { plan, modal_action } => {
+                self.apply_server_sync(plan, modal_action).await;
+            },
             MessageToBackend::CleanupOldLogFiles { instance: id } => {
                 let mut deleted = 0;
 

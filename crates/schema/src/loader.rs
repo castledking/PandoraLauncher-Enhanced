@@ -12,6 +12,9 @@ pub enum Loader {
     Forge,
     #[serde(alias = "NeoForge")]
     NeoForge,
+    /// Bukkit-style plugins, for Paper (and Purpur) servers. Never offered for client instances.
+    #[serde(alias = "Paper")]
+    Paper,
     #[serde(other)]
     #[serde(alias = "Vanilla")]
     Vanilla,
@@ -24,7 +27,13 @@ impl Loader {
             Loader::Fabric => "Fabric",
             Loader::Forge => "Forge",
             Loader::NeoForge => "NeoForge",
+            Loader::Paper => "Paper",
         }
+    }
+
+    /// Whether a client instance can use this loader. Paper only exists server side.
+    pub fn is_client_loader(self) -> bool {
+        !matches!(self, Loader::Paper)
     }
 
     pub fn from_name(str: &str) -> Option<Self> {
@@ -33,6 +42,7 @@ impl Loader {
             "Fabric" | "fabric" => Some(Self::Fabric),
             "Forge" | "forge" => Some(Self::Forge),
             "NeoForge" | "neoforge" => Some(Self::NeoForge),
+            "Paper" | "paper" => Some(Self::Paper),
             _ => None,
         }
     }
@@ -43,6 +53,7 @@ impl Loader {
             Loader::Fabric => ModrinthLoader::Fabric,
             Loader::Forge => ModrinthLoader::Forge,
             Loader::NeoForge => ModrinthLoader::NeoForge,
+            Loader::Paper => ModrinthLoader::Paper,
         }
     }
 
@@ -52,6 +63,8 @@ impl Loader {
             Loader::Fabric => CurseforgeModLoaderType::Fabric,
             Loader::Forge => CurseforgeModLoaderType::Forge,
             Loader::NeoForge => CurseforgeModLoaderType::NeoForge,
+            // CurseForge files Bukkit plugins under their own class rather than a loader
+            Loader::Paper => CurseforgeModLoaderType::Any,
         }
     }
 }

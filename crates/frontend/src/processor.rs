@@ -118,7 +118,10 @@ impl Processor {
                 playtime,
                 status,
             } => {
-                if status == InstanceStatus::Running {
+                // Hiding the launcher makes sense while playing, but a server is managed from the
+                // launcher, so starting one must not take the window away
+                let is_server = configuration.server.is_some();
+                if status == InstanceStatus::Running && !is_server {
                     if InterfaceConfig::get(cx).hide_main_window_on_launch {
                         if let Some(handle) = self.main_window_handle.take() {
                             self.main_window_hidden.store(true, std::sync::atomic::Ordering::SeqCst);

@@ -1987,26 +1987,6 @@ en = "Duplicate this instance"
 de = "Diese Instanz duplizieren"
 hu = "Példány másolása"
 
-[instance.group.new]
-en = "New group"
-[instance.group.select]
-en = "Select group"
-[instance.group.new_placeholder]
-en = "New group name..."
-[instance.group.instances_count]
-en = "(${count: usize} instances)"
-[instance.group.rename]
-en = "Rename"
-[instance.group.delete]
-en = "Delete"
-[instance.group.new_above]
-en = "New group above"
-[instance.group.new_below]
-en = "New group below"
-[instance.group.ungrouped]
-en = "Ungrouped"
-
-it = "Forza l'arresto dell'istanza"
 [instance.delete]
 en = "Delete this instance"
 tr = "Bu profili sil"
@@ -5234,3 +5214,247 @@ hu = "mp"
 ru = "с"
 fr = "s"
 it = "s"
+
+[server.title]
+en = "Servers"
+[server.plugins]
+en = "Plugins"
+[server.select_plugins]
+en = "Select plugins to install"
+[server.update_all_plugins]
+en = "Update all plugins (${count: usize})"
+[server.build]
+en = "build"
+[server.loader]
+en = "loader"
+
+[server.status.online]
+en = "Online"
+[server.status.offline]
+en = "Offline"
+[server.status.starting]
+en = "Starting"
+[server.status.stopping]
+en = "Stopping"
+
+[server.action.start]
+en = "Start"
+[server.action.stop]
+en = "Stop"
+[server.action.restart]
+en = "Restart"
+[server.action.force_stop]
+en = "Force stop"
+[server.action.manage]
+en = "Manage"
+[server.action.delete]
+en = "Delete server"
+[server.action.open_folder]
+en = "Open server folder"
+[server.action.start_error]
+en = "Unable to start the server"
+
+[server.tab.console]
+en = "Console"
+[server.tab.properties]
+en = "Properties"
+
+[server.platform.title]
+en = "Platform"
+[server.platform.vanilla_desc]
+en = "The official server from Mojang. No plugins or mods."
+[server.platform.paper_desc]
+en = "A fast, widely used server that runs Bukkit, Spigot and Paper plugins. The usual choice for a plugin server."
+[server.platform.purpur_desc]
+en = "A Paper fork with extra configuration options. Runs Paper plugins."
+[server.platform.fabric_desc]
+en = "Runs Fabric mods. Use this to host a Fabric modpack."
+[server.platform.forge_desc]
+en = "Runs Forge mods. Use this to host a Forge modpack."
+[server.platform.neoforge_desc]
+en = "Runs NeoForge mods. Use this to host a NeoForge modpack."
+
+[server.create.title]
+en = "New Server"
+[server.create.action]
+en = "Create Server"
+[server.create.error]
+en = "Unable to create the server"
+[server.create.name_placeholder]
+en = "Leave empty to name it after the platform and version"
+[server.create.group]
+en = "Group"
+[server.create.group_placeholder]
+en = "None"
+[server.create.source]
+en = "Based on"
+[server.create.no_source]
+en = "Nothing, start empty"
+[server.create.source_desc]
+en = "Pick one of your modded instances to build a server that matches it, with its mods copied over."
+[server.create.source_selected_desc]
+en = "Version and platform are taken from the instance. Its mods are copied, leaving out ones that only work on the client."
+
+[server.eula.agree]
+en = "I agree to the Minecraft End User License Agreement"
+[server.eula.read]
+en = "Read the EULA"
+[server.eula.accept]
+en = "Accept EULA"
+[server.eula.needed]
+en = "This server can't start until the Minecraft EULA is accepted"
+[server.eula.needed_short]
+en = "EULA not accepted"
+
+[server.list.summary]
+en = "${total: usize} total · ${running: usize} online"
+[server.list.linked_to]
+en = "Synced with ${name: &str}"
+[server.list.empty_title]
+en = "Host your own server"
+[server.list.empty_body]
+en = "Run a Minecraft server for you and your friends, managed right here alongside your instances."
+[server.list.feature_console]
+en = "Live console"
+[server.list.feature_console_desc]
+en = "Watch the server log and run commands without a terminal."
+[server.list.feature_content]
+en = "Plugins and mods"
+[server.list.feature_content_desc]
+en = "Install from Modrinth and CurseForge, with updates handled for you."
+[server.list.feature_sync]
+en = "Matches your modpack"
+[server.list.feature_sync_desc]
+en = "Generate a server from a client instance and keep their mods in step."
+[server.list.create_first]
+en = "Create your first server"
+
+[server.console.placeholder]
+en = "Type a command, e.g. op Steve"
+[server.console.send]
+en = "Send"
+[server.console.offline_title]
+en = "The server is offline"
+[server.console.offline_body]
+en = "Start it to see its console here. Output from this session stays visible after it stops."
+[server.console.quick_players]
+en = "Players"
+[server.console.quick_save]
+en = "Save world"
+[server.console.quick_day]
+en = "Set day"
+[server.console.quick_weather]
+en = "Clear weather"
+
+[server.properties.search]
+en = "Search properties"
+[server.properties.section_general]
+en = "General"
+[server.properties.section_world]
+en = "World"
+[server.properties.section_network]
+en = "Network"
+[server.properties.section_resource_pack]
+en = "Resource pack"
+[server.properties.section_other]
+en = "Other"
+[server.properties.no_match]
+en = "No properties match your search."
+[server.properties.reload]
+en = "Reload from disk"
+[server.properties.revert]
+en = "Revert"
+[server.properties.save]
+en = "Save changes (${count: usize})"
+[server.properties.saved]
+en = "Saved"
+[server.properties.restart_needed]
+en = "Restart the server to apply changes"
+[server.properties.empty_title]
+en = "No server.properties yet"
+[server.properties.empty_body]
+en = "The server writes this file the first time it starts. Start it once, then come back here to configure it."
+
+[server.settings.eula_title]
+en = "License"
+[server.settings.eula_desc]
+en = "Mojang requires every server owner to accept the EULA."
+[server.settings.memory_title]
+en = "Memory"
+[server.settings.memory_desc]
+en = "How much RAM the server may use. Modded servers usually want 4 GB or more."
+[server.settings.memory_custom]
+en = "Set memory limits"
+[server.settings.java_title]
+en = "Java"
+[server.settings.java_desc]
+en = "By default the server uses the Java version its Minecraft version needs, downloaded automatically."
+[server.settings.jvm_flags]
+en = "Custom JVM arguments"
+[server.settings.jvm_flags_placeholder]
+en = "e.g. -XX:+UseG1GC"
+[server.settings.java_custom]
+en = "Use a specific Java installation"
+[server.settings.java_none]
+en = "No Java installation selected"
+[server.settings.java_pick]
+en = "Select a Java installation"
+[server.settings.java_browse]
+en = "Browse"
+[server.settings.behaviour_title]
+en = "Behaviour"
+[server.settings.behaviour_desc]
+en = "What the launcher does when the server stops."
+[server.settings.auto_restart]
+en = "Restart on crash"
+[server.settings.auto_restart_desc]
+en = "Start the server again if it stops without being asked to."
+[server.settings.sync_title]
+en = "Sync with an instance"
+[server.settings.sync_desc]
+en = "Copy mods from a client instance so players can connect without mismatches. You review every change first."
+[server.settings.sync_pick]
+en = "Choose an instance"
+[server.settings.sync_review]
+en = "Review & sync"
+[server.settings.sync_stop_first]
+en = "Stop the server before syncing its mods."
+[server.settings.delete_title]
+en = "Delete this server"
+[server.settings.delete_desc]
+en = "Removes the server, its worlds and its configuration. This can't be undone."
+
+[server.sync.title]
+en = "Sync ${client: &str} → ${server: &str}"
+[server.sync.title_generic]
+en = "Sync mods"
+[server.sync.scanning]
+en = "Comparing mods…"
+[server.sync.failed]
+en = "Unable to sync mods"
+[server.sync.explanation]
+en = "Mods are matched by file. Ones marked client only are left out by default; tick them if you know the server needs them."
+[server.sync.version_mismatch]
+en = "These instances are on different Minecraft versions (${versions: &str}), so most mods won't work on both."
+[server.sync.loader_mismatch]
+en = "These instances use different loaders (${loaders: &str}), so the mods aren't interchangeable."
+[server.sync.to_copy]
+en = "${count: usize} to copy"
+[server.sync.to_remove]
+en = "${count: usize} to remove"
+[server.sync.skipped]
+en = "${count: usize} skipped"
+[server.sync.select_all]
+en = "Select all"
+[server.sync.select_none]
+en = "Select none"
+[server.sync.state_new]
+en = "New"
+[server.sync.state_present]
+en = "On server"
+[server.sync.state_remove]
+en = "Remove"
+[server.sync.nothing]
+en = "Neither instance has any mods."
+[server.sync.apply]
+en = "Apply sync"

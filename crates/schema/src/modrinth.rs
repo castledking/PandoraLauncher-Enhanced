@@ -185,6 +185,10 @@ pub enum ModrinthLoader {
     Canvas,
     // Datapacks
     Datapack,
+    // Plugins
+    Paper,
+    Spigot,
+    Bukkit,
     // Other
     #[serde(other)]
     Unknown,
@@ -198,6 +202,7 @@ impl ModrinthLoader {
             ModrinthLoader::Iris | ModrinthLoader::Optifine => Some("shaderpacks"),
             ModrinthLoader::Canvas => Some("resourcepacks"),
             ModrinthLoader::Datapack => Some("saves/World/datapacks"),
+            ModrinthLoader::Paper | ModrinthLoader::Spigot | ModrinthLoader::Bukkit => Some("plugins"),
             ModrinthLoader::Unknown => None,
         }
     }
@@ -212,6 +217,9 @@ impl ModrinthLoader {
             Self::Optifine => "Optifine",
             Self::Canvas => "Canvas",
             Self::Datapack => "Datapack",
+            Self::Paper => "Paper",
+            Self::Spigot => "Spigot",
+            Self::Bukkit => "Bukkit",
             Self::Unknown => "Unknown",
         }
     }
@@ -226,6 +234,9 @@ impl ModrinthLoader {
             Self::Optifine => "optifine",
             Self::Canvas => "canvas",
             Self::Datapack => "datapack",
+            Self::Paper => "paper",
+            Self::Spigot => "spigot",
+            Self::Bukkit => "bukkit",
             Self::Unknown => "unknown",
         }
     }
@@ -240,6 +251,9 @@ impl ModrinthLoader {
             "Optifine" | "optifine" => Self::Optifine,
             "Canvas" | "canvas" => Self::Canvas,
             "Datapack" | "datapack" => Self::Datapack,
+            "Paper" | "paper" => Self::Paper,
+            "Spigot" | "spigot" => Self::Spigot,
+            "Bukkit" | "bukkit" => Self::Bukkit,
             _ => Self::Unknown,
         }
     }
@@ -254,6 +268,7 @@ impl ModrinthLoader {
             ModrinthLoader::Optifine => None,
             ModrinthLoader::Canvas => None,
             ModrinthLoader::Datapack => None,
+            ModrinthLoader::Paper | ModrinthLoader::Spigot | ModrinthLoader::Bukkit => Some(Loader::Paper),
             ModrinthLoader::Unknown => None,
         }
     }

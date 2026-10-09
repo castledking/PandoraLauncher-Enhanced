@@ -11,6 +11,7 @@ use crate::{
     forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment},
     loader::Loader,
     modrinth::ModrinthVersionType,
+    server::ServerConfiguration,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -87,6 +88,13 @@ pub struct InstanceConfiguration {
         deserialize_with = "crate::try_deserialize"
     )]
     pub group: Option<Arc<str>>,
+    /// Present only on server instances; see [`crate::server::ServerConfiguration`].
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_none",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub server: Option<ServerConfiguration>,
 }
 
 impl InstanceConfiguration {
@@ -109,6 +117,7 @@ impl InstanceConfiguration {
             show_shader_tab: false,
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
             group: None,
+            server: None,
         }
     }
 }

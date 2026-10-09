@@ -6,5 +6,7 @@ pub mod modrinth_page;
 pub mod modrinth_project_page;
 pub mod page;
 pub mod quickplay;
+pub mod server;
+pub mod servers_page;
 pub mod skins_page;
 pub mod syncing_page;

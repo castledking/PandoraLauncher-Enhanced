@@ -113,6 +113,9 @@ pub enum ContentFolder {
     Mods,
     ResourcePacks,
     Shaders,
+    /// Bukkit-style server plugins. Only ever populated for server instances on a plugin
+    /// platform, so client instances simply never load it.
+    Plugins,
 }
 
 impl ContentFolder {
@@ -121,6 +124,7 @@ impl ContentFolder {
             ContentFolder::Mods => "mods",
             ContentFolder::ResourcePacks => "resourcepacks",
             ContentFolder::Shaders => "shaderpacks",
+            ContentFolder::Plugins => "plugins",
         }
     }
 }

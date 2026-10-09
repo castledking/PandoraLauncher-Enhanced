@@ -221,6 +221,7 @@ impl ModrinthSearchPage {
         > = Default::default();
         let mut all_installed_content_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
         let mut filter_version = None;
+        let mut filter_loaders = EnumSet::empty();
 
         let mut content_states = None;
         if let Some(install_for) = install_for {
@@ -232,6 +233,10 @@ impl ModrinthSearchPage {
                 let minecraft_version = instance.configuration.minecraft_version;
                 can_install_latest = true;
                 filter_version = Some(minecraft_version);
+                // A Paper server can only use plugins, so don't make the user find the filter
+                if loader == Loader::Paper {
+                    filter_loaders = EnumSet::only(Loader::Paper);
+                }
 
                 for content_folder in ContentFolder::iter() {
                     let mut specific_installed_content: FxHashMap<Arc<str>, Vec<InstalledContent>> =
@@ -337,7 +342,7 @@ impl ModrinthSearchPage {
             _search_input_subscription,
             _delayed_clear_task: Task::ready(()),
             _meta_reload_task: Task::ready(()),
-            filter_loaders: Default::default(),
+            filter_loaders,
             filter_categories: Default::default(),
             sort_option: ModrinthSearchIndex::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
@@ -498,14 +503,22 @@ impl ModrinthSearchPage {
 
             let mut first = true;
             for loader in self.filter_loaders {
-                if first {
-                    first = false;
-                } else {
-                    facets.push(',');
+                // Paper runs anything written against the Bukkit API, and most plugins only list
+                // some of these, so a Paper server searches all of them
+                let ids: &[&str] = match loader {
+                    Loader::Paper => &["paper", "spigot", "bukkit", "purpur"],
+                    _ => &[loader.as_modrinth_loader().id()],
+                };
+                for id in ids {
+                    if first {
+                        first = false;
+                    } else {
+                        facets.push(',');
+                    }
+                    facets.push_str("\"categories:");
+                    facets.push_str(id);
+                    facets.push('"');
                 }
-                facets.push_str("\"categories:");
-                facets.push_str(loader.as_modrinth_loader().id());
-                facets.push('"');
             }
             facets.push(']');
         }

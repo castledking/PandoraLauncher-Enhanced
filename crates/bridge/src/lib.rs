@@ -13,3 +13,4 @@ pub mod notify_signal;
 pub mod quit;
 pub mod safe_path;
 pub mod serial;
+pub mod server_sync;

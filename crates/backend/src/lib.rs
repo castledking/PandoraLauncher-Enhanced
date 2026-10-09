@@ -26,6 +26,8 @@ mod metadata;
 mod mod_metadata;
 mod persistent;
 mod quickplay_presets;
+mod server;
+pub use server::ServerRegistry;
 mod server_list_pinger;
 mod shortcut;
 mod skin_manager;

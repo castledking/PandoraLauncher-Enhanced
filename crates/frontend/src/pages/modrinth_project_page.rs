@@ -17,7 +17,7 @@ use gpui_component::{
 };
 use schema::{
     content::ContentSource,
-    modrinth::{ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectType},
+    modrinth::{ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectType, ModrinthSideRequirement},
 };
 use strum::IntoEnumIterator;
 
@@ -226,7 +226,11 @@ impl Render for ModrinthProjectPage {
             ))
             .with_fallback(|| Skeleton::new().rounded_lg().size_20().into_any_element());
 
-            let (env_icon, env_name) = env_display(project.client_side.unwrap(), project.server_side.unwrap());
+            let (env_icon, env_name) = env_display(
+                project.environment.as_deref(),
+                project.client_side.unwrap_or(ModrinthSideRequirement::Unknown),
+                project.server_side.unwrap_or(ModrinthSideRequirement::Unknown),
+            );
 
             let categories_el: Option<AnyElement> = {
                 let cats: Vec<_> = project

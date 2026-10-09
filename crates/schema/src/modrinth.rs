@@ -68,6 +68,7 @@ pub struct ModrinthHit {
     // pub categories: Option<Arc<[Arc<str>]>>,
     pub client_side: Option<ModrinthSideRequirement>,
     pub server_side: Option<ModrinthSideRequirement>,
+    pub environment: Option<Arc<[ModrinthEnvironment]>>,
     pub project_type: ModrinthProjectType,
     pub downloads: u64,
     pub icon_url: Option<Arc<str>>,
@@ -95,6 +96,39 @@ pub enum ModrinthSideRequirement {
     Unsupported,
     #[serde(other)]
     Unknown,
+}
+
+#[derive(PartialEq, Eq, Debug, Copy, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModrinthEnvironment {
+    ClientAndServer,
+    ClientOnly,
+    ClientOnlyServerOptional,
+    SingleplayerOnly,
+    ServerOnly,
+    ServerOnlyClientOptional,
+    DedicatedServerOnly,
+    ClientOrServer,
+    ClientOrServerPrefersBoth,
+    #[serde(other)]
+    Unknown,
+}
+
+impl ModrinthEnvironment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModrinthEnvironment::ClientAndServer => "client_and_server",
+            ModrinthEnvironment::ClientOnly => "client_only",
+            ModrinthEnvironment::ClientOnlyServerOptional => "client_only_server_optional",
+            ModrinthEnvironment::SingleplayerOnly => "singleplayer_only",
+            ModrinthEnvironment::ServerOnly => "server_only",
+            ModrinthEnvironment::ServerOnlyClientOptional => "server_only_client_optional",
+            ModrinthEnvironment::DedicatedServerOnly => "dedicated_server_only",
+            ModrinthEnvironment::ClientOrServer => "client_or_server",
+            ModrinthEnvironment::ClientOrServerPrefersBoth => "client_or_server_prefers_both",
+            ModrinthEnvironment::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -385,6 +419,7 @@ pub struct ModrinthProjectResult {
     pub icon_url: Option<Arc<str>>,
     pub client_side: Option<ModrinthSideRequirement>,
     pub server_side: Option<ModrinthSideRequirement>,
+    pub environment: Option<Arc<[ModrinthEnvironment]>>,
     pub categories: Option<Arc<[ustr::Ustr]>>,
     pub additional_categories: Option<Arc<[ustr::Ustr]>>,
     pub game_versions: Option<Arc<[Arc<str>]>>,

@@ -4,7 +4,7 @@ use bridge::{
     message::MessageToBackend,
     modal_action::ModalAction,
 };
-use gpui::{prelude::*, *};
+use gpui::{ClickEvent, prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt,
     button::{Button, ButtonVariants},
@@ -483,7 +483,7 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
                         .small()
                         .info()
                         .icon(PandoraIcon::Settings2)
-                        .label(t::server::action::manage())
+                        .label(t::instance::view())
                         .on_click({
                             let name = server.name.clone();
                             move |_, window, cx| {
@@ -546,7 +546,7 @@ impl ServerList {
 
             let server_list = Self {
                 columns: vec![
-                    Column::new("controls", "").width(150.).fixed_left().movable(false).resizable(false),
+                    Column::new("controls", "").width(190.).fixed_left().movable(false).resizable(false),
                     Column::new("name", t::instance::name())
                         .width(200.)
                         .fixed_left()
@@ -566,7 +566,7 @@ impl ServerList {
                         .width(120.)
                         .fixed_left()
                         .resizable(true),
-                    Column::new("menu", "").width(44.).fixed_left().movable(false).resizable(false),
+                    Column::new("remove", "").width(44.).fixed_left().movable(false).resizable(false),
                 ],
                 items,
                 data: data.clone(),
@@ -672,8 +672,8 @@ impl TableDelegate for ServerList {
             "controls" => h_flex()
                 .size_full()
                 .gap_2()
-                .child(power_button(id, status, &backend_handle).w_1_2().small())
-                .child(Button::new("view").w_1_2().small().info().label(t::server::action::manage()).on_click({
+                .child(power_button(id, status, &backend_handle).flex_1().small())
+                .child(Button::new("view").flex_1().small().info().label(t::instance::view()).on_click({
                     let name = server.name.clone();
                     move |_, window, cx| {
                         root::switch_page(
@@ -684,8 +684,41 @@ impl TableDelegate for ServerList {
                         );
                     }
                 }))
+                .child(Button::new("open-folder").compact().small().icon(PandoraIcon::FolderOpen).on_click({
+                    let folder = server.dot_minecraft_folder.clone();
+                    move |_, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        crate::open_folder(&folder, window, cx);
+                    }
+                }))
                 .into_any_element(),
-            "menu" => server_menu(server, &backend_handle, index).into_any_element(),
+            "remove" => h_flex()
+                .size_full()
+                .items_center()
+                .child(
+                    Button::new(("remove", index))
+                        .danger()
+                        .small()
+                        .compact()
+                        .icon(PandoraIcon::Trash2)
+                        .on_click({
+                            let name = server.name.clone();
+                            move |click: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                window.prevent_default();
+                                crate::component::instance_list::delete_instance(
+                                    id,
+                                    &name,
+                                    &backend_handle,
+                                    click.modifiers().shift,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
+                )
+                .into_any_element(),
             _ => div().into_any_element(),
         }
     }

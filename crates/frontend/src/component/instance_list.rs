@@ -77,7 +77,7 @@ impl InstanceList {
                 });
             let instance_list = Self {
                 columns: vec![
-                    Column::new("controls", "").width(150.).fixed_left().movable(false).resizable(false),
+                    Column::new("controls", "").width(190.).fixed_left().movable(false).resizable(false),
                     Column::new("name", t::instance::name())
                         .width(150.)
                         .fixed_left()
@@ -462,8 +462,8 @@ impl TableDelegate for InstanceList {
                         .size_full()
                         .gap_2()
                         .border_r_4()
-                        .child(play_button.w_1_2().small())
-                        .child(Button::new("view").w_1_2().small().info().label(t::instance::view()).on_click({
+                        .child(play_button.flex_1().small())
+                        .child(Button::new("view").flex_1().small().info().label(t::instance::view()).on_click({
                             let name = item.name.clone();
                             move |_, window, cx| {
                                 root::switch_page(
@@ -472,6 +472,14 @@ impl TableDelegate for InstanceList {
                                     window,
                                     cx,
                                 );
+                            }
+                        }))
+                        .child(Button::new("open-folder").compact().small().icon(PandoraIcon::FolderOpen).on_click({
+                            let folder = item.dot_minecraft_folder.clone();
+                            move |_, window, cx| {
+                                cx.stop_propagation();
+                                window.prevent_default();
+                                crate::open_folder(&folder, window, cx);
                             }
                         }))
                         .into_any_element()

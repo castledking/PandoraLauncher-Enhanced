@@ -5350,8 +5350,6 @@ en = "Stop"
 en = "Restart"
 [server.action.force_stop]
 en = "Force stop"
-[server.action.manage]
-en = "Manage"
 [server.action.delete]
 en = "Delete server"
 [server.action.open_folder]

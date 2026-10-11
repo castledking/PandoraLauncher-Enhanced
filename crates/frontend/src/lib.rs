@@ -137,6 +137,7 @@ pub fn start(
                 KeyBinding::new("secondary-[", Backwards, None),
                 KeyBinding::new("secondary-]", Forwards, None),
                 KeyBinding::new("enter", Confirm, None),
+                KeyBinding::new("secondary-c", game_output::CopySelection, None),
             ]);
 
             cx.on_action(|_: &Quit, cx| {

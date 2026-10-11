@@ -57,6 +57,8 @@ pub struct GameOutput {
     time_column_width: Pixels,
     level_column_width: Pixels,
     shaped_log_levels: Option<CachedShapedLogLevels>,
+    selection: Option<LogSelection>,
+    visible_lines: Vec<VisibleLine>,
     _receive_lines_task: Task<()>,
 }
 
@@ -104,13 +106,162 @@ impl GameOutput {
             time_column_width: Default::default(),
             level_column_width: Default::default(),
             shaped_log_levels: None,
+            selection: None,
+            visible_lines: Default::default(),
             _receive_lines_task: task,
         }
     }
 
+    /// Turns a point in the log's own space into a spot in it, or `None` if it isn't over
+    /// any line that was last painted.
+    ///
+    /// The point has to be in the same space as the visible lines were recorded in, which is
+    /// the log's content bounds rather than the window's, so callers pass a local point.
+    fn position_at(&self, point: Point<Pixels>, line_height: Pixels) -> Option<LogPosition> {
+        let line = self
+            .visible_lines
+            .iter()
+            .find(|line| point.y >= line.top && point.y < line.top + line_height)?;
+
+        // Monospaced, so where the point falls along the line is also where it falls among
+        // its bytes. Clamped rather than wrapped, so a point past the end selects to the end.
+        let char = if line.text_width <= px(0.0) || line.char_count == 0 {
+            0
+        } else {
+            let fraction = (point.x - line.text_left) / line.text_width;
+            (fraction.clamp(0.0, 1.0) * line.char_count as f32).round() as usize
+        };
+
+        Some(LogPosition { char, ..line.position })
+    }
+
+    /// Starts a selection, replacing any there was.
+    pub(crate) fn begin_selection(&mut self, position: LogPosition) {
+        self.selection = Some(LogSelection {
+            anchor: position,
+            focused: position,
+        });
+    }
+
+    /// Moves the end of the current selection, which is what a drag does.
+    pub(crate) fn extend_selection(&mut self, position: LogPosition) {
+        if let Some(selection) = &mut self.selection {
+            selection.focused = position;
+        }
+    }
+
+    pub(crate) fn selection(&self) -> Option<LogSelection> {
+        self.selection
+    }
+
+    pub(crate) fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    /// The selected text as it reads on screen: the wrapped lines in order, each one cut to
+    /// its selected span, with the time and level only on the first line of each message.
+    ///
+    /// Built from the wrapped lines rather than from what was painted, so a selection
+    /// copied from off screen is complete. Wrapping is recomputed here because the lines
+    /// that aren't on screen were never wrapped for painting, and a message that wraps has
+    /// more lines than it had when it arrived, so the source text can't stand in for them.
+    pub(crate) fn selected_text(&mut self, window: &mut Window) -> Option<String> {
+        let selection = self.selection?;
+        let item_state = self.item_state.as_mut()?;
+
+        let (start, end) = (selection.start(), selection.end());
+        if start >= end {
+            return None;
+        }
+        if item_state.items.is_empty() {
+            return None;
+        }
+
+        let text_style = window.text_style();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let scroll_state = self.scroll_state.borrow();
+        let text_width = scroll_state.bounds.size.width - self.time_column_width - self.level_column_width;
+        drop(scroll_state);
+        let wrap_width = text_width.max(font_size * 30.0);
+        let mut line_wrapper = window.text_system().line_wrapper(self.font.clone(), font_size);
+        let text_system = window.text_system().clone();
+        let font = self.font.clone();
+
+        let GameOutputItemState {
+            items,
+            cached_shaped_lines,
+            ..
+        } = item_state;
+
+        let mut out = String::new();
+        for item_ix in start.item..=end.item.min(items.len().saturating_sub(1)) {
+            let Some(item) = items.get_mut(item_ix) else {
+                continue;
+            };
+            if item.skip {
+                continue;
+            }
+
+            let lines = item.compute_wrapped_text(
+                wrap_width,
+                &text_system,
+                &font,
+                font_size,
+                &text_style,
+                &mut line_wrapper,
+                cached_shaped_lines,
+            );
+
+            for (line_ix, shaped) in lines.iter().enumerate() {
+                let line_position = LogPosition {
+                    item: item_ix,
+                    line: line_ix,
+                    char: 0,
+                };
+                let line_end = LogPosition {
+                    item: item_ix,
+                    line: line_ix,
+                    char: usize::MAX,
+                };
+                if line_position > end {
+                    break;
+                }
+                if line_end < start {
+                    continue;
+                }
+
+                let from = if item_ix == start.item && line_ix == start.line {
+                    start.char
+                } else {
+                    0
+                };
+                let to = if item_ix == end.item && line_ix == end.line {
+                    end.char
+                } else {
+                    shaped.text.len()
+                };
+
+                let from = from.min(shaped.text.len());
+                let to = to.min(shaped.text.len());
+                if to <= from {
+                    continue;
+                }
+
+                if out.is_empty() {
+                    out.push_str(&item.prefix);
+                    out.push(' ');
+                }
+                out.push_str(&shaped.text[from..to]);
+                out.push('\n');
+            }
+        }
+
+        (!out.is_empty()).then_some(out)
+    }
+
     /// The whole log as text, laid out the way it is on screen: one line per line of
     /// output, each carrying the time and level of the message it came from.
-    pub fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         let Some(item_state) = &self.item_state else {
             return String::new();
         };
@@ -444,9 +595,54 @@ impl GameOutputItem {
     }
 }
 
+actions!([CopySelection]);
+
 struct WrappedLines {
     wrap_width: Pixels,
     lines: Vec<ShapedLine>,
+}
+
+/// A spot in the log: which message, which wrapped line of it, and a byte offset in that
+/// line. The offset is in bytes because that is what the shaped lines index by, and the log
+/// font is monospaced so one byte is also one column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct LogPosition {
+    item: usize,
+    line: usize,
+    char: usize,
+}
+
+/// A selection runs from where it started to where it has been dragged to. The two are kept
+/// in the order they were made rather than sorted as they change, so dragging back the way
+/// it came shrinks the selection instead of growing it the other way.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LogSelection {
+    anchor: LogPosition,
+    focused: LogPosition,
+}
+
+impl LogSelection {
+    fn start(&self) -> LogPosition {
+        self.anchor.min(self.focused)
+    }
+
+    fn end(&self) -> LogPosition {
+        self.anchor.max(self.focused)
+    }
+}
+
+/// A line that was on screen during the last paint, kept so a mouse position can be turned
+/// back into a spot in the log. Only the lines that were painted are here, which is what
+/// makes finding one a search rather than a walk down the whole log.
+#[derive(Clone, Copy, Debug)]
+struct VisibleLine {
+    position: LogPosition,
+    top: Pixels,
+    /// Where the wrapped text of this line starts, past the time and level columns.
+    text_left: Pixels,
+    text_width: Pixels,
+    /// How many bytes the wrapped text runs to, for scaling a point along it.
+    char_count: usize,
 }
 
 impl InteractiveElement for GameOutputList {
@@ -565,6 +761,8 @@ impl Element for GameOutputList {
                                     &mut item_state.total_line_count,
                                     &mut line_wrapper,
                                     &mut item_state.cached_shaped_lines,
+                                    &mut game_output.visible_lines,
+                                    game_output.selection.as_ref(),
                                     window,
                                     cx,
                                 );
@@ -585,6 +783,8 @@ impl Element for GameOutputList {
                                     &mut item_state.total_line_count,
                                     &mut line_wrapper,
                                     &mut item_state.cached_shaped_lines,
+                                    &mut game_output.visible_lines,
+                                    game_output.selection.as_ref(),
                                     window,
                                     cx,
                                 );
@@ -809,6 +1009,85 @@ impl GameOutput {
     }
 }
 
+/// Paints the selected slice of one wrapped line, as a quad behind the text so nothing about
+/// the text itself changes. The font is monospaced, so a byte offset maps straight onto a
+/// distance along the line.
+///
+/// A selection that starts partway along a line only highlights from there on, which is what
+/// keeps a selection spanning several messages reading as the messages it covers rather than
+/// a block from their left edge.
+fn paint_selection_range(
+    item: &GameOutputItem,
+    line_ix: usize,
+    shaped: &ShapedLine,
+    origin: Point<Pixels>,
+    visible_lines: &[VisibleLine],
+    selection: Option<&LogSelection>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(selection) = selection else {
+        return;
+    };
+
+    let start = selection.start();
+    let end = selection.end();
+
+    let line_start = LogPosition {
+        item: item.index,
+        line: line_ix,
+        char: 0,
+    };
+    let line_end = LogPosition {
+        item: item.index,
+        line: line_ix,
+        char: usize::MAX,
+    };
+    if line_start > end || line_end < start {
+        return;
+    }
+
+    let from = if item.index == start.item && start.line == line_ix {
+        start.char
+    } else {
+        0
+    };
+    let to = if item.index == end.item && end.line == line_ix {
+        end.char
+    } else {
+        shaped.text.len()
+    };
+
+    let from = from.min(shaped.text.len());
+    let to = to.min(shaped.text.len());
+    if to <= from {
+        return;
+    }
+
+    _ = visible_lines;
+
+    // Monospaced, so the proportion of the line a byte offset sits at is also the proportion
+    // of its width
+    let char_width = if shaped.text.is_empty() {
+        px(0.0)
+    } else {
+        shaped.width / shaped.text.len().max(1) as f32
+    };
+
+    let left = origin.x + char_width * from as f32;
+    let right = origin.x + char_width * to as f32;
+
+    window.paint_quad(fill(
+        Bounds::from_corners(point(left, origin.y), point(right, origin.y + window.line_height())),
+        cx.theme().selection,
+    ));
+}
+
+/// Paints the log, recording each line as it goes so a later mouse position can be turned
+/// back into a spot in the log.
+///
+/// The visible lines are rebuilt per paint rather than kept across frames, so a selection
+/// stays anchored to the text it was made over even as the log scrolls and grows.
 fn paint_lines<'a, const REVERSE: bool>(
     items: impl Iterator<Item = &'a mut GameOutputItem>,
     visible_bounds: Bounds<Pixels>,
@@ -825,9 +1104,13 @@ fn paint_lines<'a, const REVERSE: bool>(
     total_line_count: &mut usize,
     line_wrapper: &mut LineWrapperHandle,
     cache: &mut CachedShapedLines,
+    visible_lines: &mut Vec<VisibleLine>,
+    selection: Option<&LogSelection>,
     window: &mut Window,
     cx: &mut App,
 ) {
+    visible_lines.clear();
+
     let mut text_origin = bounds.origin;
     if REVERSE {
         text_origin.y += bounds.size.height;
@@ -856,22 +1139,48 @@ fn paint_lines<'a, const REVERSE: bool>(
         let mut line_origin = text_origin;
         line_origin.x += *time_column_width + level_column_width;
         if REVERSE {
-            for shaped in lines.iter().rev() {
+            for (line_ix, shaped) in lines.iter().enumerate().rev() {
                 if line_origin.y <= visible_bounds.origin.y + visible_bounds.size.height {
                     if has_highlighted_text {
                         _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
                     }
+                    paint_selection_range(item, line_ix, shaped, line_origin, visible_lines, selection, window, cx);
                     _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
+
+                    visible_lines.push(VisibleLine {
+                        position: LogPosition {
+                            item: item.index,
+                            line: line_ix,
+                            char: 0,
+                        },
+                        top: line_origin.y,
+                        text_left: line_origin.x,
+                        text_width: shaped.width,
+                        char_count: shaped.text.len(),
+                    });
                 }
                 line_origin.y -= line_height;
             }
         } else {
-            for shaped in lines.iter() {
+            for (line_ix, shaped) in lines.iter().enumerate() {
                 if line_origin.y >= visible_bounds.origin.y - line_height {
                     if has_highlighted_text {
                         _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
                     }
+                    paint_selection_range(item, line_ix, shaped, line_origin, visible_lines, selection, window, cx);
                     _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
+
+                    visible_lines.push(VisibleLine {
+                        position: LogPosition {
+                            item: item.index,
+                            line: line_ix,
+                            char: 0,
+                        },
+                        top: line_origin.y,
+                        text_left: line_origin.x,
+                        text_width: shaped.width,
+                        char_count: shaped.text.len(),
+                    });
                 }
                 line_origin.y += line_height;
             }
@@ -1114,6 +1423,77 @@ impl GameOutputRoot {
 
     /// Copies the whole log and says so on the button for a moment, which is quicker to
     /// notice than a notification appearing over the window that is being watched.
+    /// Where in the log a mouse position lands, in the log's own coordinate space.
+    ///
+    /// The lines were recorded in the space of the log's content bounds, so a point that
+    /// arrived in window space is moved back by the scroll offset before it is matched.
+    fn selection_position(&self, position: Point<Pixels>, cx: &App) -> Option<LogPosition> {
+        let scroll_state = self.scroll_handler.state.borrow();
+        let line_height = scroll_state.line_height;
+        let content_bounds = scroll_state.bounds;
+        drop(scroll_state);
+
+        if line_height <= px(0.0) {
+            return None;
+        }
+
+        let local = point(position.x - content_bounds.origin.x, position.y - content_bounds.origin.y);
+        self.game_output.read(cx).position_at(local, line_height)
+    }
+
+    fn begin_selection_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(position) = self.selection_position(position, cx) else {
+            return;
+        };
+        self.game_output.update(cx, |game_output, _| {
+            game_output.begin_selection(position);
+        });
+        cx.notify();
+    }
+
+    fn drag_selection_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(position) = self.selection_position(position, cx) else {
+            return;
+        };
+        let changed = self
+            .game_output
+            .read(cx)
+            .selection()
+            .is_some_and(|selection| selection.focused != position);
+        if changed {
+            self.game_output.update(cx, |game_output, _| {
+                game_output.extend_selection(position);
+            });
+            cx.notify();
+        }
+    }
+
+    /// Ends a drag, leaving the selection as it stands for an instant of a click to have
+    /// collapsed it, which is how a click clears a selection.
+    fn finish_selection(&mut self, cx: &mut Context<Self>) {
+        let collapsed = self
+            .game_output
+            .read(cx)
+            .selection()
+            .is_some_and(|selection| selection.start() >= selection.end());
+        if collapsed {
+            self.game_output.update(cx, |game_output, _| game_output.clear_selection());
+            cx.notify();
+        }
+    }
+
+    fn copy_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.game_output.update(cx, |game_output, _| game_output.selected_text(window)) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn on_copy_selection(root: &mut Self, _: &CopySelection, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        root.copy_selection(window, cx);
+    }
+
     fn on_copy_log(root: &mut Self, _: &gpui::ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let text = root.game_output.read(cx).text();
         if text.is_empty() {
@@ -1332,7 +1712,23 @@ impl Render for GameOutputRoot {
                         interactivity: Interactivity::new(),
                         game_output: self.game_output.clone(),
                     })
-                    .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scroll_handler))),
+                    .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scroll_handler)))
+                    .cursor(CursorStyle::IBeam)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|root, event: &MouseDownEvent, _, cx| {
+                            root.begin_selection_at(event.position, cx);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|root, event: &MouseMoveEvent, _, cx| {
+                        root.drag_selection_to(event.position, cx);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|root, _event: &MouseUpEvent, _, cx| {
+                            root.finish_selection(cx);
+                        }),
+                    ),
             )
             .children(kill_bar)
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
@@ -1349,6 +1745,7 @@ impl Render for GameOutputRoot {
                 }
             }))
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_copy_selection))
             .on_action(|_: &CloseWindow, window, _| {
                 window.remove_window();
             })

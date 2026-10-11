@@ -1,3 +1,5 @@
+use std::{path::Path, sync::Arc};
+
 use bridge::{
     handle::BackendHandle,
     instance::{InstanceID, InstanceStatus},
@@ -104,6 +106,8 @@ impl ServerConsoleSubpage {
             channel: send,
         });
 
+        let log_folder: Arc<Path> = self.instance.read(cx).dot_minecraft_folder.join("logs").into();
+
         self._attach_task = cx.spawn_in(window, async move |this, cx| {
             let Ok((history, mut live)) = recv.await else {
                 return;
@@ -118,7 +122,7 @@ impl ServerConsoleSubpage {
 
             _ = this.update_in(cx, |this, window, cx| {
                 let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
-                this.output = Some(cx.new(|cx| GameOutputRoot::new(game_output, window, cx)));
+                this.output = Some(cx.new(|cx| GameOutputRoot::new(game_output, Some(log_folder.clone()), window, cx)));
                 cx.notify();
             });
 

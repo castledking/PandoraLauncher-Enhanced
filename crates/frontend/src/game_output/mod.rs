@@ -1,4 +1,4 @@
-use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::RefCell, num::NonZeroUsize, ops::Range, path::Path, rc::Rc, sync::Arc};
 
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
@@ -100,6 +100,25 @@ impl GameOutput {
             shaped_log_levels: None,
             _receive_lines_task: task,
         }
+    }
+
+    /// Empties the view. Only what has already been shown goes: lines the backend has sent
+    /// but that haven't been painted yet are kept, since dropping output a running game
+    /// produced isn't what someone tidying up the console is asking for.
+    pub fn clear(&mut self) {
+        if let Some(item_state) = &mut self.item_state {
+            item_state.items.clear();
+            while item_state.item_sizes.pop() {}
+            item_state.total_line_count = 0;
+            item_state.last_scrolled_item = 0;
+            // The shaped lines are cached against item indices, which start over
+            item_state.cached_shaped_lines.item_lines.clear();
+        }
+
+        let mut scroll_state = self.scroll_state.borrow_mut();
+        scroll_state.lines = 0;
+        scroll_state.active_drag = None;
+        scroll_state.scrolling = GameOutputScrolling::Bottom;
     }
 
     fn shape_log_level(
@@ -862,6 +881,9 @@ fn paint_lines<'a, const REVERSE: bool>(
 pub struct GameOutputRoot {
     scroll_handler: ScrollHandler,
     game_output: Entity<GameOutput>,
+    /// Where the log files this output came from are, so they can be opened without
+    /// hunting for them. Absent when there is no known folder behind the output.
+    log_folder: Option<Arc<Path>>,
     search_state: Entity<InputState>,
     _search_task: Task<()>,
     _search_input_subscription: Subscription,
@@ -975,7 +997,12 @@ impl ScrollbarHandle for ScrollHandler {
 }
 
 impl GameOutputRoot {
-    pub fn new(game_output: Entity<GameOutput>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        game_output: Entity<GameOutput>,
+        log_folder: Option<Arc<Path>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let scroll_state = Rc::clone(&game_output.read(cx).scroll_state);
 
         let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()).clean_on_escape());
@@ -988,6 +1015,7 @@ impl GameOutputRoot {
         Self {
             scroll_handler: ScrollHandler { state: scroll_state },
             game_output,
+            log_folder,
             search_state,
             _search_task: Task::ready(()),
             _search_input_subscription,
@@ -1094,26 +1122,49 @@ impl Render for GameOutputRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let search = Input::new(&self.search_state).prefix(Icon::new(PandoraIcon::Search).small());
 
-        let bar =
+        let mut actions =
             h_flex()
-                .w_full()
-                .rounded(cx.theme().radius)
-                .id("controls")
-                .flex_1()
-                .gap_4()
-                .child(search)
+                .gap_2()
                 .child(Button::new("top").label(t::common::nav::top()).on_click(cx.listener(|root, _, _, cx| {
                     let mut state = root.scroll_handler.state.borrow_mut();
                     state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
                     cx.notify();
                 })))
-                .child(Button::new("bottom").label(t::common::nav::bottom()).on_click(cx.listener(
-                    |root, _, _, cx| {
-                        let mut state = root.scroll_handler.state.borrow_mut();
-                        state.scrolling = GameOutputScrolling::Bottom;
+                .child(
+                    Button::new("bottom")
+                        .label(t::common::nav::bottom())
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            let mut state = root.scroll_handler.state.borrow_mut();
+                            state.scrolling = GameOutputScrolling::Bottom;
+                            cx.notify();
+                        })),
+                )
+                .child(Button::new("clear").icon(PandoraIcon::Brush).label(t::game_output::clear()).on_click(
+                    cx.listener(|root, _, _, cx| {
+                        root.game_output.update(cx, |game_output, _| game_output.clear());
                         cx.notify();
-                    },
-                )));
+                    }),
+                ));
+
+        // Only offered when there's a known folder behind this output, since opening the
+        // parent of a log we can't place would just be somewhere unhelpful
+        if let Some(log_folder) = self.log_folder.clone() {
+            actions = actions.child(
+                Button::new("open-logs")
+                    .icon(PandoraIcon::FolderOpen)
+                    .label(t::game_output::open_logs())
+                    .on_click(move |_, window, cx| crate::open_folder(&log_folder, window, cx)),
+            );
+        }
+
+        let bar = h_flex()
+            .w_full()
+            .rounded(cx.theme().radius)
+            .id("controls")
+            .gap_4()
+            .justify_between()
+            .child(search.w(px(280.0)).min_w_0())
+            .child(actions);
 
         v_flex()
             .size_full()

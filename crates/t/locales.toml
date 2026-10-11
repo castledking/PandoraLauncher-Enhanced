@@ -4751,6 +4751,13 @@ en = "downloaded"
 [settings.java.runtime.loading]
 en = "Loading runtimes"
 
+[game_output]
+en = "Game Output"
+[game_output.clear]
+en = "Clear"
+[game_output.open_logs]
+en = "Open Logs"
+
 [settings.network]
 en = "Network"
 tr = "Ağ"

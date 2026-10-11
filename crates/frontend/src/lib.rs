@@ -22,6 +22,7 @@ use crate::{
     entity::{
         DataEntities, PanicMessages, account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata,
     },
+    game_output::GameOutputRoot,
     interface_config::InterfaceConfig,
     processor::Processor,
     root::{LauncherRoot, LauncherRootGlobal},
@@ -116,33 +117,15 @@ pub fn start(
                 let main_window_hidden = main_window_hidden.clone();
                 let quit_coordinator = quit_coordinator.clone();
                 move |cx, _window| {
-                    if main_window_hidden.load(std::sync::atomic::Ordering::SeqCst) {
-                        return;
+                    // The main window is hidden while a game runs to get it out of the way,
+                    // so a window closing at that point isn't the user closing the launcher
+                    if !main_window_hidden.load(std::sync::atomic::Ordering::SeqCst)
+                        && InterfaceConfig::get(cx).quit_on_main_closed
+                    {
+                        close_windows_beside_the_main_window(cx);
                     }
 
-                    let windows = cx.windows();
-
-                    let config = InterfaceConfig::get(cx);
-                    if config.quit_on_main_closed {
-                        for window in &windows {
-                            let is_main = window
-                                .read(cx, |window: Entity<Root>, cx| {
-                                    window.read(cx).view().clone().downcast::<LauncherRoot>().is_ok()
-                                })
-                                .unwrap_or(false);
-                            if is_main {
-                                return;
-                            }
-                        }
-
-                        for window in &windows {
-                            _ = window.update(cx, |_, window, _| {
-                                window.remove_window();
-                            });
-                        }
-                    }
-
-                    quit_coordinator.set_can_quit(windows.is_empty());
+                    sync_quit_state(&quit_coordinator, &main_window_hidden, cx);
                 }
             })
             .detach();
@@ -196,6 +179,62 @@ pub fn start(
             })
             .detach();
         });
+}
+
+/// Whether a window is one the user is driving the launcher through, as opposed to a
+/// game output window. A game output window is a log tail for a process, so it isn't a
+/// reason to keep the launcher running on its own.
+fn is_game_output_window(window: AnyWindowHandle, cx: &App) -> bool {
+    window
+        .read(cx, |root: Entity<Root>, cx| {
+            root.read(cx).view().clone().downcast::<GameOutputRoot>().is_ok()
+        })
+        .unwrap_or(false)
+}
+
+/// Recomputes the frontend's half of the quit barrier from the windows that are open.
+///
+/// This is derived from the window set rather than pushed as windows open and close,
+/// because every party has to agree before the launcher exits: the backend says no
+/// processes are left running and the frontend says there's nothing left to drive it
+/// through. The two are told apart by a single bit, so a window closing used to be able
+/// to clear that bit on behalf of a window that was still open.
+///
+/// A main window that's been hidden counts as a window to stay up for even though it
+/// isn't in the set. The launcher still owes it back, and the backend learns a game has
+/// ended in the same tick it offers to quit, so a bit set here while the window is
+/// hidden would let the launcher exit instead of putting the window back.
+pub fn sync_quit_state(quit_coordinator: &QuitCoordinator, main_window_hidden: &AtomicBool, cx: &App) {
+    let main_window_is_still_owed = main_window_hidden.load(std::sync::atomic::Ordering::SeqCst);
+
+    let still_driving_the_launcher =
+        main_window_is_still_owed || cx.windows().into_iter().any(|window| !is_game_output_window(window, cx));
+
+    quit_coordinator.set_can_quit(!still_driving_the_launcher);
+}
+
+/// Closes every window that isn't the main window, for the setting where closing the
+/// launcher means quitting it outright. Does nothing while the main window is still up,
+/// since that's the window the user is closing to trigger this.
+fn close_windows_beside_the_main_window(cx: &mut App) {
+    let windows = cx.windows();
+
+    for window in &windows {
+        let is_main = window
+            .read(cx, |root: Entity<Root>, cx| {
+                root.read(cx).view().clone().downcast::<LauncherRoot>().is_ok()
+            })
+            .unwrap_or(false);
+        if is_main {
+            return;
+        }
+    }
+
+    for window in &windows {
+        _ = window.update(cx, |_, window, _| {
+            window.remove_window();
+        });
+    }
 }
 
 pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {

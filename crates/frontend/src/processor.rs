@@ -134,10 +134,13 @@ impl Processor {
                     if self.main_window_handle.is_none()
                         && self.main_window_hidden.load(std::sync::atomic::Ordering::SeqCst)
                     {
-                        self.quit_coordinator.set_can_quit(false);
                         self.main_window_handle = Some(crate::open_main_window(&self.data, cx));
                         self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                         self.process_messages_waiting_for_window(cx);
+
+                        // The game being gone is what lets the backend quit, so the window
+                        // coming back has to hold the launcher up again before that lands
+                        crate::sync_quit_state(&self.quit_coordinator, &self.main_window_hidden, cx);
                     }
                 }
 
@@ -252,13 +255,12 @@ impl Processor {
                 });
             },
             MessageToFrontend::OpenOrFocusMainWindow => {
-                self.quit_coordinator.set_can_quit(false);
-
                 if let Some(handle) = self.main_window_handle {
                     let res = handle.update(cx, |_, window, _| {
                         window.activate_window();
                     });
                     if res.is_ok() {
+                        crate::sync_quit_state(&self.quit_coordinator, &self.main_window_hidden, cx);
                         return;
                     }
                 }
@@ -266,6 +268,8 @@ impl Processor {
                 self.main_window_handle = Some(crate::open_main_window(&self.data, cx));
                 self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.process_messages_waiting_for_window(cx);
+
+                crate::sync_quit_state(&self.quit_coordinator, &self.main_window_hidden, cx);
             },
             MessageToFrontend::OpenUrl { url } => {
                 cx.open_url(&url);

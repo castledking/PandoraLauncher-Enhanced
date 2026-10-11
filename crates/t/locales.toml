@@ -5461,10 +5461,6 @@ en = "Save changes (${count: usize})"
 en = "Saved"
 [server.properties.restart_needed]
 en = "Restart the server to apply changes"
-[server.properties.foreign_title]
-en = "Foreign server properties for this version"
-[server.properties.foreign_body]
-en = "These properties aren't known for this version, so they're left as written: ${properties: &str}. The server still starts and uses them."
 [server.properties.empty_title]
 en = "No server.properties yet"
 [server.properties.empty_body]

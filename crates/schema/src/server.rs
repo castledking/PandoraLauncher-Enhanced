@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use ustr::Ustr;
 
@@ -295,18 +294,6 @@ pub fn write_server_properties(original: &str, properties: &[ServerProperty]) ->
 /// supported Minecraft versions understand.
 pub const DEFAULT_SERVER_PROPERTIES: &str = include_str!("../../../assets/server.properties");
 
-/// The set of property keys the shipped `server.properties` defines, representing what this
-/// launcher knows about for the supported Minecraft versions.
-pub fn known_server_property_keys() -> &'static FxHashSet<Arc<str>> {
-    static ONCE: std::sync::OnceLock<FxHashSet<Arc<str>>> = std::sync::OnceLock::new();
-    ONCE.get_or_init(|| {
-        parse_server_properties(DEFAULT_SERVER_PROPERTIES)
-            .into_iter()
-            .map(|property| property.key)
-            .collect()
-    })
-}
-
 /// Merges a server's `server.properties` contents over the shipped defaults, so the editor
 /// shows every key the supported versions understand, with the server's own values where it
 /// has them.
@@ -424,15 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn known_server_property_keys_contains_defaults() {
-        let keys: Vec<&str> = known_server_property_keys().iter().map(|key| key.as_ref()).collect();
-        assert!(keys.contains(&"server-port"));
-        assert!(keys.contains(&"motd"));
-        assert!(keys.contains(&"online-mode"));
-        assert!(!keys.contains(&"some-foreign-key"));
-    }
-
-    #[test]
     fn merge_server_properties_overlays_defaults() {
         let file = "server-port=25566\nunknown-key=value\n";
         let merged = merge_server_properties(file);
@@ -454,18 +432,5 @@ mod tests {
         let file = "server-port=25565\nplugin-key=custom\n";
         let merged = merge_server_properties(file);
         assert!(merged.iter().any(|property| &*property.key == "plugin-key"));
-    }
-
-    #[test]
-    fn every_default_key_is_known() {
-        // The reference file must not define a key that isn't recognised, otherwise the
-        // properties page would warn about its own defaults
-        for property in parse_server_properties(DEFAULT_SERVER_PROPERTIES) {
-            assert!(
-                known_server_property_keys().contains(&property.key),
-                "default key {} is not in the known set",
-                property.key
-            );
-        }
     }
 }

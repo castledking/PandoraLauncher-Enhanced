@@ -170,6 +170,22 @@ pub fn start_new_account_login(backend_handle: &BackendHandle, window: &mut Wind
     modals::generic::show_modal(window, cx, title.into(), t::account::add::error().into(), modal_action);
 }
 
+/// The game output window opens where it was left last time, so a crash log that needed
+/// widening to read doesn't go back to being unreadable the next launch.
+fn game_output_window_options(cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some("PandoraLauncher".into()),
+        window_min_size: Some(size(px(360.0), px(240.0))),
+        titlebar: Some(TitlebarOptions {
+            title: Some(t::system::game_output().into()),
+            ..Default::default()
+        }),
+        window_decorations: Some(WindowDecorations::Server),
+        window_bounds: crate::window_bounds_from_config(&InterfaceConfig::get(cx).game_output_window_bounds),
+        ..Default::default()
+    }
+}
+
 pub fn start_instance(
     id: InstanceID,
     name: SharedString,
@@ -207,6 +223,7 @@ pub fn start_instance(
     modals::generic::show_modal(window, cx, title, t::instance::start::error().into(), modal_action);
 
     let window_handle = window.window_handle();
+    let separate_window_options = game_output_window_options(cx);
     let data = data.clone();
     cx.spawn(async move |cx| {
         let Ok(receiver) = receiver.await else {
@@ -216,19 +233,12 @@ pub fn start_instance(
         match live_game_output_display {
             LiveGameOutputDisplay::Hidden => {},
             LiveGameOutputDisplay::SeparateWindow => {
-                let options = WindowOptions {
-                    app_id: Some("PandoraLauncher".into()),
-                    window_min_size: Some(size(px(360.0), px(240.0))),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(t::system::game_output().into()),
-                        ..Default::default()
-                    }),
-                    window_decorations: Some(WindowDecorations::Server),
-                    ..Default::default()
-                };
-                _ = cx.open_window(options, |window, cx| {
+                _ = cx.open_window(separate_window_options, |window, cx| {
                     let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
-                    let game_output_root = cx.new(|cx| GameOutputRoot::new(game_output.clone(), window, cx));
+                    let game_output_root = cx.new(|cx| {
+                        crate::observe_game_output_window_bounds(window, cx);
+                        GameOutputRoot::new(game_output.clone(), window, cx)
+                    });
                     window.activate_window();
                     cx.new(|cx| Root::new(game_output_root, window, cx))
                 });
@@ -289,24 +299,19 @@ pub fn start_quickplay(
     let title: SharedString = "Starting Minecraft".into();
     modals::generic::show_modal(window, cx, title, t::instance::start::error().into(), modal_action);
 
+    let options = game_output_window_options(cx);
+
     cx.spawn(async move |cx| {
         let Ok(receiver) = receiver.await else {
             return;
         };
 
-        let options = WindowOptions {
-            app_id: Some("PandoraLauncher".into()),
-            window_min_size: Some(size(px(360.0), px(240.0))),
-            titlebar: Some(TitlebarOptions {
-                title: Some(t::system::game_output().into()),
-                ..Default::default()
-            }),
-            window_decorations: Some(WindowDecorations::Server),
-            ..Default::default()
-        };
         _ = cx.open_window(options, |window, cx| {
             let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
-            let game_output_root = cx.new(|cx| GameOutputRoot::new(game_output.clone(), window, cx));
+            let game_output_root = cx.new(|cx| {
+                crate::observe_game_output_window_bounds(window, cx);
+                GameOutputRoot::new(game_output.clone(), window, cx)
+            });
             window.activate_window();
             cx.new(|cx| Root::new(game_output_root, window, cx))
         });

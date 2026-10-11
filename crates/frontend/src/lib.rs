@@ -237,21 +237,110 @@ fn close_windows_beside_the_main_window(cx: &mut App) {
     }
 }
 
+/// Reads a window's position and size back out of the config for opening it at the same
+/// place again.
+pub fn window_bounds_from_config(bounds: &interface_config::WindowBounds) -> Option<WindowBounds> {
+    match bounds {
+        interface_config::WindowBounds::Inherit => None,
+        interface_config::WindowBounds::Windowed { x, y, w, h } => {
+            Some(WindowBounds::Windowed(Bounds::new(Point::new(px(*x), px(*y)), Size::new(px(*w), px(*h)))))
+        },
+        interface_config::WindowBounds::Maximized { x, y, w, h } => Some(WindowBounds::Maximized(Bounds::new(
+            Point::new(px(*x), px(*y)),
+            Size::new(px(*w), px(*h)),
+        ))),
+        interface_config::WindowBounds::Fullscreen { x, y, w, h } => Some(WindowBounds::Fullscreen(Bounds::new(
+            Point::new(px(*x), px(*y)),
+            Size::new(px(*w), px(*h)),
+        ))),
+    }
+}
+
+/// Records a window's position and size as it changes, so reopening it lands where the user
+/// left it. Each window gets its own slot in the config, since they are sized independently
+/// and neither should follow the other.
+fn observe_window_bounds<T: 'static>(
+    window: &mut Window,
+    cx: &mut Context<T>,
+    get: fn(&InterfaceConfig) -> interface_config::WindowBounds,
+    set: fn(&mut InterfaceConfig, interface_config::WindowBounds),
+) {
+    cx.observe_window_bounds(window, move |_, window, cx| {
+        let origin = window.bounds().origin;
+        let size = window.viewport_size();
+        let new_bounds = (
+            origin.x.to_f64() as f32,
+            origin.y.to_f64() as f32,
+            size.width.to_f64() as f32,
+            size.height.to_f64() as f32,
+        );
+
+        let old_window_bounds = get(InterfaceConfig::get(cx));
+        let old_bounds = match old_window_bounds {
+            interface_config::WindowBounds::Inherit => new_bounds,
+            interface_config::WindowBounds::Windowed { x, y, w, h } => (x, y, w, h),
+            interface_config::WindowBounds::Maximized { x, y, w, h } => (x, y, w, h),
+            interface_config::WindowBounds::Fullscreen { x, y, w, h } => (x, y, w, h),
+        };
+
+        // Maximizing and unmaximizing keep the windowed bounds rather than the screen's,
+        // so restoring returns to the size the window was actually left at
+        let new_window_bounds = if window.is_fullscreen() {
+            interface_config::WindowBounds::Fullscreen {
+                x: old_bounds.0,
+                y: old_bounds.1,
+                w: old_bounds.2,
+                h: old_bounds.3,
+            }
+        } else if window.is_maximized() {
+            interface_config::WindowBounds::Maximized {
+                x: old_bounds.0,
+                y: old_bounds.1,
+                w: old_bounds.2,
+                h: old_bounds.3,
+            }
+        } else {
+            interface_config::WindowBounds::Windowed {
+                x: new_bounds.0,
+                y: new_bounds.1,
+                w: new_bounds.2,
+                h: new_bounds.3,
+            }
+        };
+
+        if new_window_bounds != old_window_bounds {
+            set(InterfaceConfig::get_mut(cx), new_window_bounds);
+        }
+    })
+    .detach();
+}
+
+fn main_window_bounds(config: &InterfaceConfig) -> interface_config::WindowBounds {
+    config.main_window_bounds.clone()
+}
+
+fn set_main_window_bounds(config: &mut InterfaceConfig, bounds: interface_config::WindowBounds) {
+    config.main_window_bounds = bounds;
+}
+
+/// Keeps the game output window's position and size, which is its own slot in the config
+/// rather than a share of the launcher's.
+pub fn observe_game_output_window_bounds<T: 'static>(window: &mut Window, cx: &mut Context<T>) {
+    observe_window_bounds(window, cx, game_output_window_bounds, set_game_output_window_bounds);
+}
+
+fn game_output_window_bounds(config: &InterfaceConfig) -> interface_config::WindowBounds {
+    config.game_output_window_bounds.clone()
+}
+
+fn set_game_output_window_bounds(config: &mut InterfaceConfig, bounds: interface_config::WindowBounds) {
+    config.game_output_window_bounds = bounds;
+}
+
 pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
     let config = InterfaceConfig::get(cx);
 
-    let window_bounds = match config.main_window_bounds {
-        interface_config::WindowBounds::Inherit => None,
-        interface_config::WindowBounds::Windowed { x, y, w, h } => {
-            Some(WindowBounds::Windowed(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-        },
-        interface_config::WindowBounds::Maximized { x, y, w, h } => {
-            Some(WindowBounds::Maximized(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-        },
-        interface_config::WindowBounds::Fullscreen { x, y, w, h } => {
-            Some(WindowBounds::Fullscreen(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-        },
-    };
+    let window_bounds = window_bounds_from_config(&config.main_window_bounds);
 
     let use_custom_titlebar = !config.use_os_titlebar;
     crate::root::set_should_render_custom_titlebar(use_custom_titlebar);
@@ -276,52 +365,7 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
             },
             |window, cx| {
                 let launcher_root = cx.new(|cx| {
-                    cx.observe_window_bounds(window, move |_, window, cx| {
-                        let origin = window.bounds().origin;
-                        let size = window.viewport_size();
-                        let new_bounds = (
-                            origin.x.to_f64() as f32,
-                            origin.y.to_f64() as f32,
-                            size.width.to_f64() as f32,
-                            size.height.to_f64() as f32,
-                        );
-
-                        let old_window_bounds = InterfaceConfig::get(cx).main_window_bounds.clone();
-                        let old_bounds = match old_window_bounds {
-                            interface_config::WindowBounds::Inherit => new_bounds,
-                            interface_config::WindowBounds::Windowed { x, y, w, h } => (x, y, w, h),
-                            interface_config::WindowBounds::Maximized { x, y, w, h } => (x, y, w, h),
-                            interface_config::WindowBounds::Fullscreen { x, y, w, h } => (x, y, w, h),
-                        };
-
-                        let new_window_bounds = if window.is_fullscreen() {
-                            interface_config::WindowBounds::Fullscreen {
-                                x: old_bounds.0,
-                                y: old_bounds.1,
-                                w: old_bounds.2,
-                                h: old_bounds.3,
-                            }
-                        } else if window.is_maximized() {
-                            interface_config::WindowBounds::Maximized {
-                                x: old_bounds.0,
-                                y: old_bounds.1,
-                                w: old_bounds.2,
-                                h: old_bounds.3,
-                            }
-                        } else {
-                            interface_config::WindowBounds::Windowed {
-                                x: new_bounds.0,
-                                y: new_bounds.1,
-                                w: new_bounds.2,
-                                h: new_bounds.3,
-                            }
-                        };
-
-                        if new_window_bounds != old_window_bounds {
-                            InterfaceConfig::get_mut(cx).main_window_bounds = new_window_bounds;
-                        }
-                    })
-                    .detach();
+                    observe_window_bounds(window, cx, main_window_bounds, set_main_window_bounds);
 
                     LauncherRoot::new(&data, window, cx)
                 });

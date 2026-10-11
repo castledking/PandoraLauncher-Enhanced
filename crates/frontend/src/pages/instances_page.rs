@@ -16,13 +16,13 @@ use crate::{
     },
     entity::{DataEntities, instance::InstanceEntries, metadata::FrontendMetadata},
     icon::PandoraIcon,
-    interface_config::{InstancesViewMode, InterfaceConfig},
+    interface_config::{InterfaceConfig, ViewMode},
     pages::page::Page,
 };
 
 pub struct InstancesPage {
     instance_table: Entity<TableState<InstanceList>>,
-    view_dropdown: Entity<SelectState<NamedDropdown<InstancesViewMode>>>,
+    view_dropdown: Entity<SelectState<NamedDropdown<ViewMode>>>,
 
     metadata: Entity<FrontendMetadata>,
     instances: Entity<InstanceEntries>,
@@ -34,7 +34,7 @@ impl InstancesPage {
     pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let instance_table = InstanceList::create_table(data, window, cx);
         let view_dropdown = cx.new(|cx| {
-            let items = InstancesViewMode::iter()
+            let items = ViewMode::iter()
                 .map(|view| NamedDropdownItem {
                     name: view.name(),
                     item: view,
@@ -45,7 +45,7 @@ impl InstancesPage {
             let delegate = NamedDropdown::new(items);
             SelectState::new(delegate, Some(IndexPath::new(row)), window, cx)
         });
-        cx.subscribe(&view_dropdown, |_, _, event: &SelectEvent<NamedDropdown<InstancesViewMode>>, cx| {
+        cx.subscribe(&view_dropdown, |_, _, event: &SelectEvent<NamedDropdown<ViewMode>>, cx| {
             let SelectEvent::Confirm(Some(view)) = event else {
                 return;
             };
@@ -88,8 +88,8 @@ impl Page for InstancesPage {
 
     fn scrollable(&self, cx: &App) -> bool {
         match InterfaceConfig::get(cx).instances_view_mode {
-            InstancesViewMode::Cards => true,
-            InstancesViewMode::List => false,
+            ViewMode::Cards => true,
+            ViewMode::List => false,
         }
     }
 }
@@ -97,11 +97,11 @@ impl Page for InstancesPage {
 impl Render for InstancesPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match InterfaceConfig::get(cx).instances_view_mode {
-            InstancesViewMode::Cards => {
+            ViewMode::Cards => {
                 let cards = self.instance_table.update(cx, |table, cx| table.delegate().render_cards(cx));
                 div().size_full().p_4().child(cards).into_any_element()
             },
-            InstancesViewMode::List => DataTable::new(&self.instance_table).bordered(false).into_any_element(),
+            ViewMode::List => DataTable::new(&self.instance_table).bordered(false).into_any_element(),
         }
     }
 }

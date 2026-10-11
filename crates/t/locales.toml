@@ -5319,6 +5319,12 @@ en = "build"
 [server.loader]
 en = "loader"
 
+[server.column.platform]
+en = "Platform"
+[server.column.version]
+en = "Version"
+[server.column.status]
+en = "Status"
 [server.status.online]
 en = "Online"
 [server.status.offline]

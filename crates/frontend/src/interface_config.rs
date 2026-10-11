@@ -93,7 +93,9 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub show_snapshots_in_create_instance: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub instances_view_mode: InstancesViewMode,
+    pub instances_view_mode: ViewMode,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub servers_view_mode: ViewMode,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_group_order: Vec<Arc<str>>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -387,6 +389,7 @@ impl Default for InterfaceConfig {
             hide_skins: false,
             show_snapshots_in_create_instance: Default::default(),
             instances_view_mode: Default::default(),
+            servers_view_mode: Default::default(),
             instance_group_order: Vec::new(),
             instance_groups_closed: Default::default(),
             instance_subpage: Default::default(),
@@ -430,17 +433,17 @@ pub enum WindowBounds {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
 #[serde(rename_all = "lowercase")]
-pub enum InstancesViewMode {
+pub enum ViewMode {
     #[default]
     Cards,
     List,
 }
 
-impl InstancesViewMode {
+impl ViewMode {
     pub fn name(self) -> DropdownName {
         match self {
-            InstancesViewMode::Cards => DropdownName::translated(t::common::layout::cards),
-            InstancesViewMode::List => DropdownName::translated(t::common::layout::list),
+            ViewMode::Cards => DropdownName::translated(t::common::layout::cards),
+            ViewMode::List => DropdownName::translated(t::common::layout::list),
         }
     }
 }

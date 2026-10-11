@@ -17,7 +17,9 @@ use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 use schema::{
     instance::InstanceConfiguration,
-    server::{ServerPlatform, ServerProperty, parse_server_properties, write_server_properties},
+    server::{
+        ServerPlatform, ServerProperty, merge_server_properties, parse_server_properties, write_server_properties,
+    },
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -374,7 +376,7 @@ impl BackendState {
         };
 
         let contents = std::fs::read_to_string(server_dir.join("server.properties")).unwrap_or_default();
-        parse_server_properties(&contents)
+        merge_server_properties(&contents)
     }
 
     pub fn write_server_properties(self: &Arc<Self>, id: InstanceID, properties: &[ServerProperty]) {

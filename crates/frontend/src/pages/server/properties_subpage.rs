@@ -8,6 +8,7 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt,
+    alert::Alert,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -17,7 +18,7 @@ use gpui_component::{
     switch::Switch,
     v_flex,
 };
-use schema::server::{ServerProperty, ServerPropertyKind, server_property_kind};
+use schema::server::{ServerProperty, ServerPropertyKind, known_server_property_keys, server_property_kind};
 
 use crate::{entity::instance::InstanceEntry, icon::PandoraIcon, pages::servers_page::start_server};
 
@@ -106,6 +107,9 @@ pub struct ServerPropertiesSubpage {
     instance_id: InstanceID,
     backend_handle: BackendHandle,
     rows: Vec<Row>,
+    /// Keys in the file the launcher has no widget for, which means they came from a different
+    /// version of Minecraft. They're still shown, just listed rather than edited.
+    foreign: Vec<Arc<str>>,
     state: LoadState,
     search: Entity<InputState>,
     _load_task: Task<()>,
@@ -127,6 +131,7 @@ impl ServerPropertiesSubpage {
             instance_id: instance.read(cx).id,
             backend_handle,
             rows: Vec::new(),
+            foreign: Vec::new(),
             state: LoadState::Loading,
             search,
             _load_task: Task::ready(()),
@@ -147,6 +152,11 @@ impl ServerPropertiesSubpage {
         self._load_task = cx.spawn_in(window, async move |this, cx| {
             let properties = recv.await.unwrap_or_default();
             _ = this.update_in(cx, |this, window, cx| {
+                this.foreign = properties
+                    .iter()
+                    .filter(|property| !known_server_property_keys().contains(&property.key))
+                    .map(|property| property.key.clone())
+                    .collect();
                 this.rows = properties.into_iter().map(|property| make_row(property, window, cx)).collect();
                 this.state = LoadState::Loaded;
                 cx.notify();
@@ -441,9 +451,21 @@ impl Render for ServerPropertiesSubpage {
                     .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
             );
 
-        v_flex()
-            .size_full()
-            .child(toolbar)
+        let mut layout = v_flex().size_full().child(toolbar);
+
+        // Unknown keys are worked with as they are rather than edited, so the user is told
+        // which ones they are instead of finding a switch or field missing under them
+        if !self.foreign.is_empty() {
+            layout = layout.child(
+                div().px_4().pt_3().child(
+                    Alert::warning("foreign-properties", t::server::properties::foreign_body(&self.foreign.join(", ")))
+                        .icon(PandoraIcon::TriangleAlert)
+                        .title(t::server::properties::foreign_title()),
+                ),
+            );
+        }
+
+        layout
             .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(body))
             .into_any_element()
     }

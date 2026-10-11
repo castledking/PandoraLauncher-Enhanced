@@ -3,8 +3,8 @@ use serde::Deserialize;
 
 pub mod assets_index;
 pub mod auxiliary;
-pub mod bukkit_plugin;
 pub mod backend_config;
+pub mod bukkit_plugin;
 pub mod content;
 pub mod curseforge;
 pub mod fabric_launch;

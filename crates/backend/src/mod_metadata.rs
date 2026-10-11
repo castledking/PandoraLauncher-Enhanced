@@ -332,7 +332,9 @@ impl ModMetadataManager {
             return icon.clone();
         }
 
-        let icon = std::fs::read(self.remote_icons_dir.join(format!("{key}.png"))).ok().map(UniqueBytes::from);
+        let icon = std::fs::read(self.remote_icons_dir.join(format!("{key}.png")))
+            .ok()
+            .map(UniqueBytes::from);
         self.remote_icons.write().insert(key.clone(), icon.clone());
         icon
     }
@@ -1682,9 +1684,12 @@ mod tests {
 
     use super::ModMetadataManager;
 
-    const PLUGIN_YML: &[u8] = b"name: Allium\nversion: '1.4.0'\nmain: codes.castled.allium.Allium\nauthors: [castledking, Moulberry]\n";
-    const PAPER_PLUGIN_YML: &[u8] = b"name: Karasu\nversion: 2.1\nmain: codes.castled.karasu.Karasu\napi-version: '1.21'\n";
-    const FABRIC_MOD_JSON: &[u8] = br#"{"schemaVersion": 1, "id": "griefprevention3d", "version": "18.4.8", "name": "GriefPrevention3D"}"#;
+    const PLUGIN_YML: &[u8] =
+        b"name: Allium\nversion: '1.4.0'\nmain: codes.castled.allium.Allium\nauthors: [castledking, Moulberry]\n";
+    const PAPER_PLUGIN_YML: &[u8] =
+        b"name: Karasu\nversion: 2.1\nmain: codes.castled.karasu.Karasu\napi-version: '1.21'\n";
+    const FABRIC_MOD_JSON: &[u8] =
+        br#"{"schemaVersion": 1, "id": "griefprevention3d", "version": "18.4.8", "name": "GriefPrevention3D"}"#;
 
     fn summarize(entries: &[(&str, &[u8])]) -> Arc<ContentSummary> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));

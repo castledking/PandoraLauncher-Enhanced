@@ -185,7 +185,10 @@ pub fn open(
                 let mut valid_loader = true;
                 if project_type.has_loader_and_version() {
                     valid_loader = instance_loader == Loader::Vanilla
-                        || instance_loader.compatible_modrinth_loaders().iter().any(|loader| loaders.loaders.contains(*loader));
+                        || instance_loader
+                            .compatible_modrinth_loaders()
+                            .iter()
+                            .any(|loader| loaders.loaders.contains(*loader));
                 }
                 if !valid_loader {
                     let error_message = t::instance::content::load::versions::not_found_for_loader(
@@ -240,7 +243,10 @@ pub fn open(
                             let mut valid_loader = true;
                             if project_type.has_loader_and_version() {
                                 valid_loader = instance_loader == Loader::Vanilla
-                                    || instance_loader.compatible_modrinth_loaders().iter().any(|loader| loaders.loaders.contains(*loader));
+                                    || instance_loader
+                                        .compatible_modrinth_loaders()
+                                        .iter()
+                                        .any(|loader| loaders.loaders.contains(*loader));
                             }
                             if valid_loader {
                                 return Some(instance.clone());

@@ -305,9 +305,13 @@ impl ContentType {
             ContentType::ShaderPack => [ModrinthLoader::Iris, ModrinthLoader::Optifine, ModrinthLoader::Canvas].into(),
             // A Bukkit plugin runs on anything implementing the Bukkit API, and plenty only list
             // Spigot or Bukkit, so updates are looked up across all of them
-            ContentType::BukkitPlugin => {
-                [ModrinthLoader::Paper, ModrinthLoader::Spigot, ModrinthLoader::Bukkit, ModrinthLoader::Purpur].into()
-            },
+            ContentType::BukkitPlugin => [
+                ModrinthLoader::Paper,
+                ModrinthLoader::Spigot,
+                ModrinthLoader::Bukkit,
+                ModrinthLoader::Purpur,
+            ]
+            .into(),
             // `paper-plugin.yml` plugins use Paper-only API, so Spigot and Bukkit builds won't do
             ContentType::PaperPlugin => [ModrinthLoader::Paper, ModrinthLoader::Purpur].into(),
             ContentType::Unknown
@@ -334,7 +338,11 @@ impl ContentType {
     /// The CurseForge loader to check for files of this content on an instance using `loader`.
     /// Plugin files on CurseForge have no loader at all.
     pub fn curseforge_loader_for(&self, loader: Loader) -> Option<CurseforgeModLoaderType> {
-        if loader == Loader::Paper { None } else { self.curseforge_loader() }
+        if loader == Loader::Paper {
+            None
+        } else {
+            self.curseforge_loader()
+        }
     }
 
     pub fn curseforge_loader(&self) -> Option<CurseforgeModLoaderType> {

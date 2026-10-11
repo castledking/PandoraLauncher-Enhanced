@@ -68,12 +68,15 @@ pub(crate) fn after_content_loaded(
                 if let Some(entry) = unlinked.get_mut(&hash) {
                     entry.paths.push(summary.path.clone());
                 } else if manager.claim_identify_attempt(hash) {
-                    unlinked.insert(hash, Unlinked {
+                    unlinked.insert(
                         hash,
-                        source: summary.content_source.clone(),
-                        has_icon,
-                        paths: vec![summary.path.clone()],
-                    });
+                        Unlinked {
+                            hash,
+                            source: summary.content_source.clone(),
+                            has_icon,
+                            paths: vec![summary.path.clone()],
+                        },
+                    );
                 }
             },
             source => {
@@ -86,10 +89,13 @@ pub(crate) fn after_content_loaded(
                 if let Some(entry) = missing_icons.get_mut(&key) {
                     entry.paths.push(summary.path.clone());
                 } else if manager.claim_remote_icon_attempt(&key) {
-                    missing_icons.insert(key, MissingIcon {
-                        source: source.clone(),
-                        paths: vec![summary.path.clone()],
-                    });
+                    missing_icons.insert(
+                        key,
+                        MissingIcon {
+                            source: source.clone(),
+                            paths: vec![summary.path.clone()],
+                        },
+                    );
                 }
             },
         }
@@ -132,10 +138,13 @@ async fn link_content(
         if let Some(entry) = missing_icons.get_mut(&key) {
             entry.paths.extend(file.paths);
         } else if manager.claim_remote_icon_attempt(&key) {
-            missing_icons.insert(key, MissingIcon {
-                source,
-                paths: file.paths,
-            });
+            missing_icons.insert(
+                key,
+                MissingIcon {
+                    source,
+                    paths: file.paths,
+                },
+            );
         }
     }
 
@@ -276,7 +285,13 @@ async fn fetch_icons(backend: &BackendState, missing_icons: FxHashMap<Arc<str>, 
                 let icon_url = match &missing.source {
                     ContentSource::ModrinthProject { project_id } => modrinth_icon_urls.get(project_id).cloned(),
                     ContentSource::CurseforgeProject { project_id } => {
-                        match backend.meta.fetch(CurseforgeProjectItem { project_id: *project_id }).await {
+                        match backend
+                            .meta
+                            .fetch(CurseforgeProjectItem {
+                                project_id: *project_id,
+                            })
+                            .await
+                        {
                             Ok(project) => project.logo.as_ref().map(|logo| logo.thumbnail_url.clone()),
                             Err(error) => {
                                 log::warn!("Unable to fetch CurseForge project {project_id} for its icon: {error}");

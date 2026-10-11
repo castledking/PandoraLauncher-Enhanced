@@ -216,7 +216,9 @@ pub fn env_display(
 
 fn environment_display(environment: ModrinthEnvironment) -> (PandoraIcon, SharedString) {
     match environment {
-        ModrinthEnvironment::ClientAndServer => (PandoraIcon::Globe, t::modrinth::environment::client_and_server().into()),
+        ModrinthEnvironment::ClientAndServer => {
+            (PandoraIcon::Globe, t::modrinth::environment::client_and_server().into())
+        },
         ModrinthEnvironment::ClientOnly => (PandoraIcon::Computer, t::modrinth::environment::client_only().into()),
         ModrinthEnvironment::ClientOnlyServerOptional => {
             (PandoraIcon::Computer, t::modrinth::environment::client_only_server_optional().into())
@@ -231,7 +233,9 @@ fn environment_display(environment: ModrinthEnvironment) -> (PandoraIcon, Shared
         ModrinthEnvironment::DedicatedServerOnly => {
             (PandoraIcon::Router, t::modrinth::environment::dedicated_server_only().into())
         },
-        ModrinthEnvironment::ClientOrServer => (PandoraIcon::Globe, t::modrinth::environment::client_or_server().into()),
+        ModrinthEnvironment::ClientOrServer => {
+            (PandoraIcon::Globe, t::modrinth::environment::client_or_server().into())
+        },
         ModrinthEnvironment::ClientOrServerPrefersBoth => {
             (PandoraIcon::Globe, t::modrinth::environment::client_or_server_prefers_both().into())
         },
@@ -723,8 +727,7 @@ impl ModrinthSearchPage {
                 let client_side = hit.client_side.unwrap_or(ModrinthSideRequirement::Unknown);
                 let server_side = hit.server_side.unwrap_or(ModrinthSideRequirement::Unknown);
 
-                let (env_icon, env_name) =
-                    env_display(hit.environment.as_deref(), client_side, server_side);
+                let (env_icon, env_name) = env_display(hit.environment.as_deref(), client_side, server_side);
 
                 let environment = h_flex().gap_1().child(env_icon).child(env_name);
 

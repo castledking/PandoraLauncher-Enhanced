@@ -1206,8 +1206,9 @@ impl Render for CurseforgeSearchPage {
                 })
                 .into_any_element();
 
-        let filter_version_toggle =
-            if filter_project_type.has_loader_and_version() && let Some(filter_version) = self.filter_version {
+        let filter_version_toggle = if filter_project_type.has_loader_and_version()
+            && let Some(filter_version) = self.filter_version
+        {
             let title = format!("{}: {}", t::instance::version(), filter_version);
             Some(
                 selection_button("filter_version", InterfaceConfig::get(cx).content_filter_version)

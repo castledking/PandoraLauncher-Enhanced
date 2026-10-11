@@ -196,41 +196,32 @@ commands:
 
         assert_eq!(descriptor.name.as_deref(), Some("GriefPrevention3D"));
         assert_eq!(descriptor.version.as_deref(), Some("18.4.9"));
-        assert_eq!(
-            descriptor.authors_string().as_deref(),
-            Some("By castledking, RoboMWM, BigScary")
-        );
+        assert_eq!(descriptor.authors_string().as_deref(), Some("By castledking, RoboMWM, BigScary"));
     }
 
     #[test]
     fn reads_single_author() {
         let descriptor = parse_bukkit_plugin_descriptor("name: CraftServerManager\nauthor: CraftServerManager Team\n")
             .expect("parsed");
-        assert_eq!(
-            descriptor.authors_string().as_deref(),
-            Some("By CraftServerManager Team")
-        );
+        assert_eq!(descriptor.authors_string().as_deref(), Some("By CraftServerManager Team"));
     }
 
     #[test]
     fn single_entry_author_list_is_not_wrapped_in_brackets() {
-        let descriptor =
-            parse_bukkit_plugin_descriptor("name: Solo\nauthors: [nisovin]\n").expect("parsed");
+        let descriptor = parse_bukkit_plugin_descriptor("name: Solo\nauthors: [nisovin]\n").expect("parsed");
         assert_eq!(descriptor.authors_string().as_deref(), Some("By nisovin"));
     }
 
     #[test]
     fn keeps_urls_containing_hashes() {
         let descriptor =
-            parse_bukkit_plugin_descriptor("name: Site\nwebsite: https://example.com/page#anchor\n")
-                .expect("parsed");
+            parse_bukkit_plugin_descriptor("name: Site\nwebsite: https://example.com/page#anchor\n").expect("parsed");
         assert_eq!(descriptor.website.as_deref(), Some("https://example.com/page#anchor"));
     }
 
     #[test]
     fn strips_trailing_comments() {
-        let descriptor =
-            parse_bukkit_plugin_descriptor("name: Commented # trailing note\n").expect("parsed");
+        let descriptor = parse_bukkit_plugin_descriptor("name: Commented # trailing note\n").expect("parsed");
         assert_eq!(descriptor.name.as_deref(), Some("Commented"));
     }
 

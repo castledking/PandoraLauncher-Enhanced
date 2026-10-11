@@ -65,7 +65,12 @@ impl Loader {
             Loader::Fabric => &[ModrinthLoader::Fabric],
             Loader::Forge => &[ModrinthLoader::Forge],
             Loader::NeoForge => &[ModrinthLoader::NeoForge],
-            Loader::Paper => &[ModrinthLoader::Paper, ModrinthLoader::Spigot, ModrinthLoader::Bukkit, ModrinthLoader::Purpur],
+            Loader::Paper => &[
+                ModrinthLoader::Paper,
+                ModrinthLoader::Spigot,
+                ModrinthLoader::Bukkit,
+                ModrinthLoader::Purpur,
+            ],
         }
     }
 

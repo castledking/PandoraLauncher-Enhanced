@@ -5,6 +5,7 @@ pub mod generic_title_bar;
 pub mod horizontal_sections;
 pub mod instance_dropdown;
 pub mod instance_list;
+pub mod java_runtime_picker;
 pub mod main_title_bar;
 pub mod menu;
 pub mod mod_action_dropdown;

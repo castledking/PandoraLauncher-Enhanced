@@ -278,6 +278,13 @@ impl BackendState {
                     });
                 }
             },
+            MessageToBackend::SetInstanceJavaRuntime { id, java_runtime } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.java_runtime = Some(java_runtime);
+                    });
+                }
+            },
             MessageToBackend::SetInstanceLinuxWrapper { id, linux_wrapper } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
@@ -1432,12 +1439,18 @@ impl BackendState {
                 memory,
                 jvm_flags,
                 jvm_binary,
+                java_runtime,
             } => {
                 self.config.lock().modify(|backend_config| {
                     backend_config.memory = memory;
                     backend_config.jvm_flags = jvm_flags;
                     backend_config.jvm_binary = jvm_binary;
+                    backend_config.java_runtime = java_runtime;
                 });
+            },
+            MessageToBackend::GetJavaRuntimes { channel } => {
+                let runtimes = self.launcher.list_java_runtimes(&self.meta).await;
+                _ = channel.send(runtimes);
             },
             MessageToBackend::CreateServerInstance {
                 name,

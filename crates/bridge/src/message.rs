@@ -8,9 +8,9 @@ use std::{
 use schema::{
     backend_config::{BackendConfig, ProxyConfig},
     instance::{
-        InstanceConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
-        InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration, InstanceSystemLibrariesConfiguration,
-        InstanceWrapperCommandConfiguration, UpdateChannel,
+        InstanceConfiguration, InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration,
+        InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration,
+        InstanceSystemLibrariesConfiguration, InstanceWrapperCommandConfiguration, UpdateChannel,
     },
     loader::Loader,
     minecraft_profile::{MinecraftProfileCape, SkinVariant},
@@ -31,6 +31,7 @@ use crate::{
         ContentFolder, InstanceContentID, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary,
         InstanceStatus, InstanceWorldSummary,
     },
+    java_runtime::JavaRuntimeEntry,
     manual_download::ManualCurseforgeDownloadRequest,
     meta::{MetadataRequest, MetadataResult},
     modal_action::ModalAction,
@@ -151,6 +152,10 @@ pub enum MessageToBackend {
         id: InstanceID,
         jvm_binary: InstanceJvmBinaryConfiguration,
     },
+    SetInstanceJavaRuntime {
+        id: InstanceID,
+        java_runtime: InstanceJavaRuntimeConfiguration,
+    },
     SetInstanceLinuxWrapper {
         id: InstanceID,
         linux_wrapper: InstanceLinuxWrapperConfiguration,
@@ -268,6 +273,13 @@ pub enum MessageToBackend {
         memory: Option<InstanceMemoryConfiguration>,
         jvm_flags: Option<InstanceJvmFlagsConfiguration>,
         jvm_binary: Option<InstanceJvmBinaryConfiguration>,
+        java_runtime: Option<InstanceJavaRuntimeConfiguration>,
+    },
+    /// The Java runtimes Mojang publishes for this platform, for the runtime override
+    /// picker. Answers with every runtime rather than an error, since having none is not
+    /// a failure worth reporting.
+    GetJavaRuntimes {
+        channel: tokio::sync::oneshot::Sender<Vec<JavaRuntimeEntry>>,
     },
     SetSyncing {
         target: Arc<str>,

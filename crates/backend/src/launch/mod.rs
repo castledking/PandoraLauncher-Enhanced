@@ -12,6 +12,7 @@ use std::{
 
 use bridge::{
     handle::FrontendHandle,
+    java_runtime::JavaRuntimeEntry,
     message::{MessageToFrontend, QuickPlayLaunch},
     modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType},
     safe_path::SafePath,
@@ -996,6 +997,67 @@ impl Launcher {
         Some(mirror.url.clone())
     }
 
+    /// Lists the Java runtimes Mojang publishes for this platform, for the runtime override
+    /// picker. Marks the ones already unpacked on disk so the picker can show what picking
+    /// a runtime will cost.
+    pub async fn list_java_runtimes(&self, meta: &MetadataManager) -> Vec<JavaRuntimeEntry> {
+        let runtimes = match meta.fetch(MojangJavaRuntimesMetadataItem).await {
+            Ok(runtimes) => runtimes,
+            Err(err) => {
+                log::error!("Unable to list the available Java runtimes: {err:?}");
+                return Vec::new();
+            },
+        };
+
+        // An arm64 mac can run the x86 runtimes through Rosetta, which is how the launch
+        // path treats a runtime that isn't published for it. They belong in the list too,
+        // otherwise the picker would only offer what the launch path would refuse
+        let platforms = mojang_runtime_platform_candidates();
+
+        let mut entries: Vec<JavaRuntimeEntry> = Vec::new();
+        for platform in &platforms {
+            let Some(runtime_platform) = runtimes.platforms.get(platform) else {
+                continue;
+            };
+
+            for (component, versions) in &runtime_platform.components {
+                // A component already offered by an earlier platform keeps its own listing,
+                // since that's the one that would be used at launch
+                if entries.iter().any(|entry| &*entry.component == &**component) {
+                    continue;
+                }
+
+                let Some(version) = versions.first() else { continue };
+
+                entries.push(JavaRuntimeEntry {
+                    component: component.to_string().into(),
+                    version: version.version.name.to_string().into(),
+                    downloaded: self.runtime_is_downloaded(component, platform),
+                });
+            }
+        }
+
+        // Newest Java first, so the runtimes worth reaching for aren't below the fold
+        entries.sort_by(|a, b| {
+            java_major_version(&b.version)
+                .cmp(&java_major_version(&a.version))
+                .then_with(|| a.component.cmp(&b.component))
+        });
+        entries
+    }
+
+    /// Whether a runtime has already been unpacked for this platform. An unpacked runtime
+    /// is a directory holding the manifest that was fetched for it, which is what
+    /// distinguishes a finished download from an empty directory.
+    fn runtime_is_downloaded(&self, component: &Ustr, platform: &Ustr) -> bool {
+        self.directories
+            .runtime_base_dir
+            .join(component)
+            .join(platform)
+            .join("manifest.json")
+            .exists()
+    }
+
     /// Resolves the Java runtime for a server, downloading the managed runtime if needed.
     ///
     /// Servers have no modal to report progress into, so this takes none; the caller surfaces
@@ -1067,23 +1129,18 @@ impl Launcher {
             ));
         }
 
-        let mut platform: Ustr = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("linux", "x86_64") => "linux".into(),
-            ("linux", "x86") => "linux-i386".into(),
-            ("macos", "x86_64") => "mac-os".into(),
-            ("macos", "aarch64") => "mac-os-arm64".into(),
-            ("windows", "aarch64") => "windows-arm64".into(),
-            ("windows", "x86_64") => "windows-x64".into(),
-            ("windows", "x86") => "windows-x86".into(),
-            ("macos", b) => format!("mac-os-{b}").into(),
-            (a, b) => format!("{a}-{b}").into(),
-        };
+        let mut platform = mojang_runtime_platform();
 
-        let jre_component = if let Some(java_version) = &version_info.java_version {
-            java_version.component
-        } else {
-            "jre-legacy".into()
-        };
+        // An instance can be pinned to a runtime other than the one its version asks for,
+        // which is the whole point of the override: the version's choice is only used when
+        // the instance hasn't made one of its own
+        let jre_component = configuration
+            .java_runtime
+            .as_ref()
+            .filter(|java_runtime| java_runtime.enabled)
+            .and_then(|java_runtime| java_runtime.component)
+            .or_else(|| version_info.java_version.as_ref().map(|java_version| java_version.component))
+            .unwrap_or_else(|| "jre-legacy".into());
 
         let runtimes = meta.fetch(MojangJavaRuntimesMetadataItem).await?;
 
@@ -1513,6 +1570,36 @@ fn calculate_natives_dirname(artifacts: &[GameLibraryArtifact]) -> String {
         }
     }
     hex::encode(combined)
+}
+
+/// The Java major version a runtime ships, read off the front of its version name.
+///
+/// Ordering by this rather than by the name is what keeps Java 17 above Java 9, which
+/// sorting the names as text would get backwards.
+fn java_major_version(version: &str) -> u32 {
+    version.split_once('.').map_or(version, |(major, _)| major).parse().unwrap_or(0)
+}
+
+/// The key Mojang's runtime manifest uses for the platform this is running on.
+fn mojang_runtime_platform() -> Ustr {
+    mojang_runtime_platform_candidates().remove(0)
+}
+
+/// The platform keys worth looking at, most specific first. Only arm64 macOS has a second
+/// entry: it can run the x86 runtimes through Rosetta, which the launch path relies on when
+/// a runtime isn't published for arm64 at all.
+fn mojang_runtime_platform_candidates() -> Vec<Ustr> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => vec!["linux".into()],
+        ("linux", "x86") => vec!["linux-i386".into()],
+        ("macos", "x86_64") => vec!["mac-os".into()],
+        ("macos", "aarch64") => vec!["mac-os-arm64".into(), "mac-os".into()],
+        ("windows", "aarch64") => vec!["windows-arm64".into()],
+        ("windows", "x86_64") => vec!["windows-x64".into()],
+        ("windows", "x86") => vec!["windows-x86".into()],
+        ("macos", b) => vec![format!("mac-os-{b}").into()],
+        (a, b) => vec![format!("{a}-{b}").into()],
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -2682,4 +2769,31 @@ fn expand_forge_argument<'a>(argument: &'a str, map: &FxHashMap<String, OsString
         return Cow::Owned(builder);
     }
     Cow::Borrowed(OsStr::new(argument))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::java_major_version;
+
+    #[test]
+    fn reads_the_major_version_off_a_runtime_version() {
+        assert_eq!(java_major_version("17.0.8"), 17);
+        assert_eq!(java_major_version("8"), 8);
+        assert_eq!(java_major_version("21.0.2"), 21);
+    }
+
+    #[test]
+    fn version_names_sort_numerically_rather_than_as_text() {
+        // Sorting the names directly would put 9 above 17, since "9" sorts after "1"
+        let mut names = vec!["9.0.4", "17.0.8", "21.0.2", "25.0.1"];
+        names.sort_by(|a, b| java_major_version(b).cmp(&java_major_version(a)));
+
+        assert_eq!(names, vec!["25.0.1", "21.0.2", "17.0.8", "9.0.4"]);
+    }
+
+    #[test]
+    fn a_version_name_without_a_number_sorts_last_rather_than_panicking() {
+        assert_eq!(java_major_version("ea"), 0);
+        assert_eq!(java_major_version(""), 0);
+    }
 }

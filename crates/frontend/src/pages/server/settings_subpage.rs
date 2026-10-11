@@ -14,12 +14,18 @@ use gpui_component::{
     v_flex,
 };
 use schema::{
-    instance::{InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration, InstanceMemoryConfiguration},
+    instance::{
+        InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
+        InstanceMemoryConfiguration,
+    },
     loader::Loader,
 };
 
 use crate::{
-    component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
+    component::{
+        java_runtime_picker::{self, JavaRuntimeChoice, JavaRuntimeSelect},
+        named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
+    },
     entity::{DataEntities, instance::InstanceEntry},
     icon::PandoraIcon,
 };
@@ -40,8 +46,11 @@ pub struct ServerSettingsSubpage {
     jvm_flags: Entity<InputState>,
     java_enabled: bool,
     java_path: Option<Arc<Path>>,
+    java_runtime_enabled: bool,
+    java_runtime_select: Entity<JavaRuntimeSelect>,
     sync_source: Entity<SelectState<NamedDropdown<Option<InstanceID>>>>,
     _select_java_task: Task<()>,
+    _java_runtimes_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -74,6 +83,7 @@ impl ServerSettingsSubpage {
         });
 
         let jvm_binary = configuration.jvm_binary.clone().unwrap_or_default();
+        let java_runtime = configuration.java_runtime.clone().unwrap_or_default();
 
         // Client instances on the same loader are the only sensible things to sync mods from
         let linked = configuration.server.as_ref().and_then(|server| server.linked_instance.clone());
@@ -108,6 +118,13 @@ impl ServerSettingsSubpage {
         let sync_source =
             cx.new(|cx| SelectState::new(NamedDropdown::new(sources), Some(IndexPath::new(preselected)), window, cx));
 
+        let java_runtime_select = NamedDropdown::create_and_select(
+            vec![java_runtime_picker::default_choice_item()],
+            java_runtime.component,
+            window,
+            cx,
+        );
+
         let subscriptions = vec![
             cx.subscribe_in(&memory_min, window, Self::on_memory_step),
             cx.subscribe_in(&memory_max, window, Self::on_memory_step),
@@ -129,6 +146,12 @@ impl ServerSettingsSubpage {
             cx.subscribe(&sync_source, |_, _, _: &SelectEvent<NamedDropdown<Option<InstanceID>>>, cx| {
                 cx.notify();
             }),
+            cx.subscribe(&java_runtime_select, |this, _, event: &SelectEvent<_>, _cx| {
+                let SelectEvent::Confirm(Some(component)) = event else {
+                    return;
+                };
+                this.send_java_runtime(*component);
+            }),
             cx.observe(instance, |_, _, cx| cx.notify()),
         ];
 
@@ -143,10 +166,31 @@ impl ServerSettingsSubpage {
             jvm_flags: jvm_flags_input,
             java_enabled: jvm_binary.enabled,
             java_path: jvm_binary.path.clone(),
+            java_runtime_enabled: java_runtime.enabled,
+            java_runtime_select,
             sync_source,
             _select_java_task: Task::ready(()),
+            _java_runtimes_task: Task::ready(()),
             _subscriptions: subscriptions,
         }
+        .load_java_runtimes(window, cx)
+    }
+
+    /// Fills the runtime picker with what the backend has to offer. Done once when the page
+    /// opens, since the list only changes when Mojang publishes a new runtime.
+    fn load_java_runtimes(mut self, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let state = self.java_runtime_select.clone();
+        let backend_handle = self.backend_handle.clone();
+        let window_handle = window.window_handle();
+
+        self._java_runtimes_task = cx.spawn(async move |_, cx| {
+            let runtimes = java_runtime_picker::request_runtimes(&backend_handle).await.unwrap_or_default();
+            _ = cx.update_window(window_handle, |_, window, cx| {
+                java_runtime_picker::fill_select(&state, &runtimes, window, cx);
+            });
+        });
+
+        self
     }
 
     fn on_memory_step(
@@ -197,6 +241,16 @@ impl ServerSettingsSubpage {
             jvm_binary: InstanceJvmBinaryConfiguration {
                 enabled: self.java_enabled,
                 path: self.java_path.clone(),
+            },
+        });
+    }
+
+    fn send_java_runtime(&self, component: JavaRuntimeChoice) {
+        self.backend_handle.send(MessageToBackend::SetInstanceJavaRuntime {
+            id: self.instance_id,
+            java_runtime: InstanceJavaRuntimeConfiguration {
+                enabled: self.java_runtime_enabled,
+                component,
             },
         });
     }
@@ -341,6 +395,7 @@ impl Render for ServerSettingsSubpage {
 
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let java_enabled = self.java_enabled;
+        let java_runtime_enabled = self.java_runtime_enabled;
         let java_label: SharedString = match &self.java_path {
             Some(path) => path.to_string_lossy().into_owned().into(),
             None => t::server::settings::java_none().into(),
@@ -397,7 +452,28 @@ impl Render for ServerSettingsSubpage {
                         .label(t::server::settings::java_browse())
                         .on_click(cx.listener(|this, _, window, cx| this.pick_java(window, cx))),
                 ),
-        );
+        )
+        .child(
+            Checkbox::new("java-runtime-enabled")
+                .label(t::server::settings::java_runtime())
+                .checked(java_runtime_enabled)
+                .on_click(cx.listener(|this, value: &bool, _, cx| {
+                    this.java_runtime_enabled = *value;
+                    let component = this.java_runtime_select.read(cx).selected_value().copied().flatten();
+                    this.send_java_runtime(component);
+                    cx.notify();
+                })),
+        )
+        .child(
+            div().flex_1().min_w_0().child(
+                Select::new(&self.java_runtime_select)
+                    .small()
+                    .w_full()
+                    .placeholder(t::settings::java::runtime::loading())
+                    .disabled(!java_runtime_enabled),
+            ),
+        )
+        .child(div().text_xs().opacity(0.6).child(t::server::settings::java_runtime_desc()));
 
         let behaviour = card(
             PandoraIcon::RefreshCcw,

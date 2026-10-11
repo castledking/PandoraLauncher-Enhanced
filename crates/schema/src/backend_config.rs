@@ -4,8 +4,9 @@ use enumset::{EnumSet, EnumSetType};
 use serde::{Deserialize, Serialize};
 
 use crate::instance::{
-    InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration, InstanceMemoryConfiguration,
-    is_default_jvm_binary_configuration, is_default_jvm_flags_configuration, is_default_memory_configuration,
+    InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
+    InstanceMemoryConfiguration, is_default_java_runtime_configuration, is_default_jvm_binary_configuration,
+    is_default_jvm_flags_configuration, is_default_memory_configuration,
 };
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
@@ -52,6 +53,12 @@ pub struct BackendConfig {
         skip_serializing_if = "is_default_jvm_binary_configuration"
     )]
     pub jvm_binary: Option<InstanceJvmBinaryConfiguration>,
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "is_default_java_runtime_configuration"
+    )]
+    pub java_runtime: Option<InstanceJavaRuntimeConfiguration>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]

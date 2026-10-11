@@ -13,7 +13,10 @@ use gpui_component::{
 };
 use schema::{
     backend_config::{BackendConfig, ProxyConfig},
-    instance::{InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration, InstanceMemoryConfiguration},
+    instance::{
+        InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
+        InstanceMemoryConfiguration,
+    },
 };
 
 use crate::{
@@ -43,6 +46,7 @@ struct SettingsRoot {
     temp_backend_config: Option<BackendConfig>,
     on_receive_backend_config: OnReceiveBackendConfig,
     _select_file_task: Task<()>,
+    _java_runtimes_task: Task<()>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +85,7 @@ impl SettingsRoot {
         memory: Option<InstanceMemoryConfiguration>,
         jvm_flags: Option<InstanceJvmFlagsConfiguration>,
         jvm_binary: Option<InstanceJvmBinaryConfiguration>,
+        java_runtime: Option<InstanceJavaRuntimeConfiguration>,
         cx: &mut Context<Self>,
     ) {
         if self.actual_backend_config.is_some() {
@@ -95,12 +100,14 @@ impl SettingsRoot {
             pending.memory = memory.clone();
             pending.jvm_flags = jvm_flags.clone();
             pending.jvm_binary = jvm_binary.clone();
+            pending.java_runtime = java_runtime.clone();
         }
 
         self.backend_handle.send(MessageToBackend::SetLaunchDefaults {
             memory,
             jvm_flags,
             jvm_binary,
+            java_runtime,
         });
 
         self.update_backend_configuration(cx);
@@ -796,6 +803,7 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
                 temp_backend_config: None,
                 on_receive_backend_config: OnReceiveBackendConfig::DoNothing,
                 _select_file_task: Task::ready(()),
+                _java_runtimes_task: Task::ready(()),
             };
 
             root.update_backend_configuration(cx);

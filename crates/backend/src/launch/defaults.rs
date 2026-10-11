@@ -22,6 +22,15 @@ pub fn apply_global_launch_defaults(instance: &mut InstanceConfiguration, global
         }
     }
 
+    let instance_runtime_enabled = instance.java_runtime.as_ref().is_some_and(|java_runtime| java_runtime.enabled);
+    if !instance_runtime_enabled {
+        if let Some(java_runtime) = &global.java_runtime
+            && java_runtime.enabled
+        {
+            instance.java_runtime = Some(java_runtime.clone());
+        }
+    }
+
     let global_flags = global
         .jvm_flags
         .as_ref()

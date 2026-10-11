@@ -8,7 +8,10 @@ use bridge::{import::ImportFromOtherLauncherJob, modal_action::ModalAction};
 use chrono::DateTime;
 use log::debug;
 use schema::{
-    instance::{InstanceConfiguration, InstanceMemoryConfiguration, InstanceWrapperCommandConfiguration},
+    instance::{
+        InstanceConfiguration, InstanceJavaRuntimeConfiguration, InstanceMemoryConfiguration,
+        InstanceWrapperCommandConfiguration,
+    },
     loader::Loader,
 };
 use serde::Deserialize;
@@ -69,6 +72,9 @@ struct Launcher {
     maximum_memory: Option<usize>,
     enable_commands: Option<bool>,
     wrapper_command: Option<String>,
+    /// A Minecraft runtime to use instead of the one this version asks for, by component
+    /// id. Only takes effect over there when the instance also uses Mojang's Java.
+    java_runtime_override: Option<String>,
     // use_system_glfw: Option<bool>,
     // use_system_open_al: Option<bool>,
     account: Option<Uuid>,
@@ -406,6 +412,16 @@ fn try_load_from_atlauncher(
         } else {
             None
         };
+
+    // Carried over verbatim, since it names a runtime out of Mojang's own manifest and
+    // means the same thing here. ATLauncher only reads it while the instance is on its own
+    // Mojang Java, which is what this launcher uses unless a JVM binary is set anyway.
+    if let Some(java_runtime_override) = instance_cfg.launcher.java_runtime_override.as_ref() {
+        configuration.java_runtime = Some(InstanceJavaRuntimeConfiguration {
+            enabled: true,
+            component: Some(java_runtime_override.as_str().into()),
+        });
+    }
 
     if let Some(enable_commands) = instance_cfg.launcher.enable_commands
         && enable_commands

@@ -23,9 +23,10 @@ use schema::{
     fabric_loader_manifest::FabricLoaderManifest,
     forge::{ForgeMavenManifest, NeoforgeMavenManifest},
     instance::{
-        AUTO_LIBRARY_PATH_GLFW, AUTO_LIBRARY_PATH_OPENAL, InstanceJvmBinaryConfiguration,
-        InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration,
-        InstanceSystemLibrariesConfiguration, InstanceWrapperCommandConfiguration, LwjglLibraryPath, UpdateChannel,
+        AUTO_LIBRARY_PATH_GLFW, AUTO_LIBRARY_PATH_OPENAL, InstanceJavaRuntimeConfiguration,
+        InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration,
+        InstanceMemoryConfiguration, InstanceSystemLibrariesConfiguration, InstanceWrapperCommandConfiguration,
+        LwjglLibraryPath, UpdateChannel,
     },
     loader::Loader,
     version_manifest::MinecraftVersionManifest,
@@ -36,6 +37,7 @@ use uuid::Uuid;
 use crate::{
     component::{
         horizontal_sections::HorizontalSections,
+        java_runtime_picker::{self, JavaRuntimeSelect},
         named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
         path_label::PathLabel,
     },
@@ -88,6 +90,9 @@ pub struct InstanceSettingsSubpage {
     jvm_flags_input_state: Entity<TextareaState>,
     jvm_binary_enabled: bool,
     jvm_binary_path: Option<PathLabel>,
+    java_runtime_enabled: bool,
+    java_runtime_select: Entity<JavaRuntimeSelect>,
+    _java_runtimes_task: Task<()>,
 
     instance_root_label: PathLabel,
 
@@ -151,6 +156,7 @@ impl InstanceSettingsSubpage {
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
         let jvm_flags = entry.configuration.jvm_flags.clone().unwrap_or_default();
         let jvm_binary = entry.configuration.jvm_binary.clone().unwrap_or_default();
+        let java_runtime = entry.configuration.java_runtime.clone().unwrap_or_default();
         #[cfg(target_os = "linux")]
         let linux_wrapper = entry.configuration.linux_wrapper.unwrap_or_default();
         let system_libraries = entry.configuration.system_libraries.clone().unwrap_or_default();
@@ -297,6 +303,13 @@ impl InstanceSettingsSubpage {
             jvm_flags_input_state,
             jvm_binary_enabled: jvm_binary.enabled,
             jvm_binary_path: jvm_binary.path.clone().map(|path| PathLabel::new(path, false)),
+            java_runtime_enabled: java_runtime.enabled,
+            java_runtime_select: NamedDropdown::create_and_select(
+                vec![java_runtime_picker::default_choice_item()],
+                java_runtime.component,
+                window,
+                cx,
+            ),
             override_glfw_enabled: system_libraries.override_glfw,
             override_glfw_path: glfw_path.map(|path| PathLabel::new(path, false)),
             override_openal_enabled: system_libraries.override_openal,
@@ -323,9 +336,11 @@ impl InstanceSettingsSubpage {
             _observe_loader_version_subscription: None,
             _loader_version_retry_task: Task::ready(()),
             _select_file_task: Task::ready(()),
+            _java_runtimes_task: Task::ready(()),
         };
         page.update_minecraft_versions(window, cx);
         page.update_loader_versions(window, cx);
+        page.load_java_runtimes(window, cx);
         page
     }
 }
@@ -719,6 +734,48 @@ impl InstanceSettingsSubpage {
         }
     }
 
+    fn get_java_runtime_configuration(&self, cx: &App) -> InstanceJavaRuntimeConfiguration {
+        InstanceJavaRuntimeConfiguration {
+            enabled: self.java_runtime_enabled,
+            component: self.java_runtime_select.read(cx).selected_value().copied().flatten(),
+        }
+    }
+
+    /// Fills the runtime picker with what the backend has to offer. Done once when the page
+    /// opens, since the list only changes when Mojang publishes a new runtime.
+    fn load_java_runtimes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.java_runtime_select.clone();
+        let backend_handle = self.backend_handle.clone();
+        let window_handle = window.window_handle();
+
+        self._java_runtimes_task = cx.spawn(async move |_, cx| {
+            let runtimes = java_runtime_picker::request_runtimes(&backend_handle).await.unwrap_or_default();
+            _ = cx.update_window(window_handle, |_, window, cx| {
+                java_runtime_picker::fill_select(&state, &runtimes, window, cx);
+            });
+        });
+
+        cx.subscribe(&self.java_runtime_select, |this, _, event: &SelectEvent<_>, cx| {
+            let SelectEvent::Confirm(Some(component)) = event else {
+                return;
+            };
+            let java_runtime = this.get_java_runtime_configuration(cx);
+            if java_runtime.enabled && java_runtime.component == *component {
+                return;
+            }
+            // Turning the override on isn't choosing a runtime, so an unchanged component
+            // leaves the checkbox wherever the user had it
+            this.backend_handle.send(MessageToBackend::SetInstanceJavaRuntime {
+                id: this.instance_id,
+                java_runtime: InstanceJavaRuntimeConfiguration {
+                    component: *component,
+                    ..java_runtime
+                },
+            });
+        })
+        .detach();
+    }
+
     fn get_system_libraries_configuration(&self) -> InstanceSystemLibrariesConfiguration {
         InstanceSystemLibrariesConfiguration {
             override_glfw: self.override_glfw_enabled,
@@ -805,6 +862,7 @@ impl Render for InstanceSettingsSubpage {
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
+        let java_runtime_enabled = self.java_runtime_enabled;
 
         let icon_element: Option<AnyElement> = self.icon.clone().map(|icon| match icon {
             EmbeddedOrRaw::Embedded(path) => Icon::default().path(path).size_8().min_w_8().min_h_8().into_any_element(),
@@ -1090,6 +1148,34 @@ impl Render for InstanceSettingsSubpage {
                                 );
                             })),
                     ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Checkbox::new("java_runtime")
+                            .label(t::instance::java_runtime())
+                            .checked(java_runtime_enabled)
+                            .on_click(cx.listener(|page, value, _, cx| {
+                                if page.java_runtime_enabled != *value {
+                                    page.java_runtime_enabled = *value;
+                                    let java_runtime = page.get_java_runtime_configuration(cx);
+                                    page.backend_handle.send(MessageToBackend::SetInstanceJavaRuntime {
+                                        id: page.instance_id,
+                                        java_runtime,
+                                    });
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .child(
+                        Select::new(&self.java_runtime_select)
+                            .small()
+                            .w_full()
+                            .placeholder(t::settings::java::runtime::loading())
+                            .disabled(!java_runtime_enabled),
+                    )
+                    .child(div().text_xs().opacity(0.6).child(t::instance::java_runtime_desc())),
             )
             .child(
                 v_flex()

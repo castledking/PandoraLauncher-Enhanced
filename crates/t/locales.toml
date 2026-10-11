@@ -2578,6 +2578,14 @@ sv = "Välj JVM programfil"
 ru = "Выбрать исполняемый файл JVM"
 fr = "Sélectionner le fichier binaire JVM"
 it = "Seleziona il binario JVM"
+[instance.java_runtime]
+en = "Override Java Runtime"
+[instance.java_runtime_desc]
+en = "Run on one of Minecraft's own Java runtimes instead of the one this version asks for. The runtime is downloaded on first use."
+[server.settings.java_runtime]
+en = "Override Java Runtime"
+[server.settings.java_runtime_desc]
+en = "Run on one of Minecraft's own Java runtimes instead of the one this version asks for. The runtime is downloaded on first use."
 [instance.glfw_lib]
 en = "Use System GLFW"
 tr = "Sistem GLFW'sini Kullan"
@@ -4726,6 +4734,22 @@ en = "JVM Binary"
 en = "Path to the default Java executable"
 [settings.java.defaults.select_jvm_binary]
 en = "Select JVM Binary"
+[settings.java.defaults.enable_java_runtime]
+en = "Default Java Runtime"
+[settings.java.defaults.enable_java_runtime_desc]
+en = "Run every instance on one of Minecraft's own Java runtimes"
+[settings.java.defaults.java_runtime]
+en = "Java Runtime"
+[settings.java.defaults.java_runtime_desc]
+en = "Which of Minecraft's Java runtimes to use, instead of the one the version asks for"
+[settings.java.runtime]
+en = "Java Runtime"
+[settings.java.runtime.use_version_default]
+en = "Use the version's default"
+[settings.java.runtime.downloaded]
+en = "downloaded"
+[settings.java.runtime.loading]
+en = "Loading runtimes"
 
 [settings.network]
 en = "Network"

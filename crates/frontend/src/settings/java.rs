@@ -4,12 +4,13 @@ use gpui::*;
 use gpui_component::{
     Disableable,
     input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
+    select::{Select, SelectEvent},
     switch::Switch,
 };
 use schema::instance::InstanceJvmBinaryConfiguration;
 
 use crate::{
-    component::path_label::PathLabel,
+    component::{java_runtime_picker, path_label::PathLabel},
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
 };
 
@@ -39,6 +40,7 @@ pub(super) fn create_page() -> SettingPage {
                                     Some(memory),
                                     backend.jvm_flags.clone(),
                                     backend.jvm_binary.clone(),
+                                    backend.java_runtime.clone(),
                                     cx,
                                 );
                             }))
@@ -78,6 +80,7 @@ pub(super) fn create_page() -> SettingPage {
                                     backend.memory.clone(),
                                     Some(jvm_flags),
                                     backend.jvm_binary.clone(),
+                                    backend.java_runtime.clone(),
                                     cx,
                                 );
                             }))
@@ -111,6 +114,7 @@ pub(super) fn create_page() -> SettingPage {
                                     backend.memory.clone(),
                                     backend.jvm_flags.clone(),
                                     Some(jvm_binary),
+                                    backend.java_runtime.clone(),
                                     cx,
                                 );
                             }))
@@ -122,6 +126,40 @@ pub(super) fn create_page() -> SettingPage {
                     title: t::settings::java::defaults::jvm_binary,
                     description: t::settings::java::defaults::jvm_binary_desc,
                     widget: create_jvm_binary_widget(),
+                    ..Default::default()
+                },
+                SettingItem {
+                    title: t::settings::java::defaults::enable_java_runtime,
+                    description: t::settings::java::defaults::enable_java_runtime_desc,
+                    widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
+                        let enabled = backend.java_runtime.as_ref().is_some_and(|java_runtime| java_runtime.enabled);
+                        Switch::new("enable-default-java-runtime")
+                            .checked(enabled)
+                            .on_click(cx.listener(|root, val, _, cx| {
+                                let Some(backend) = root.backend_config().cloned() else {
+                                    return;
+                                };
+                                let mut java_runtime = backend.java_runtime.unwrap_or_default();
+                                if java_runtime.enabled == *val {
+                                    return;
+                                }
+                                java_runtime.enabled = *val;
+                                root.set_launch_defaults(
+                                    backend.memory.clone(),
+                                    backend.jvm_flags.clone(),
+                                    backend.jvm_binary.clone(),
+                                    Some(java_runtime),
+                                    cx,
+                                );
+                            }))
+                            .into_any_element()
+                    })),
+                    ..Default::default()
+                },
+                SettingItem {
+                    title: t::settings::java::defaults::java_runtime,
+                    description: t::settings::java::defaults::java_runtime_desc,
+                    widget: create_java_runtime_widget(),
                     ..Default::default()
                 },
             ]
@@ -161,7 +199,13 @@ fn create_memory_min_widget() -> SettingItemWidget {
                     return;
                 }
                 memory.min = min;
-                root.set_launch_defaults(Some(memory), backend.jvm_flags.clone(), backend.jvm_binary.clone(), cx);
+                root.set_launch_defaults(
+                    Some(memory),
+                    backend.jvm_flags.clone(),
+                    backend.jvm_binary.clone(),
+                    backend.java_runtime.clone(),
+                    cx,
+                );
             })
             .detach();
         } else {
@@ -204,7 +248,13 @@ fn create_memory_max_widget() -> SettingItemWidget {
                     return;
                 }
                 memory.max = max;
-                root.set_launch_defaults(Some(memory), backend.jvm_flags.clone(), backend.jvm_binary.clone(), cx);
+                root.set_launch_defaults(
+                    Some(memory),
+                    backend.jvm_flags.clone(),
+                    backend.jvm_binary.clone(),
+                    backend.java_runtime.clone(),
+                    cx,
+                );
             })
             .detach();
         } else {
@@ -257,7 +307,13 @@ fn create_jvm_flags_widget() -> SettingItemWidget {
                     return;
                 }
                 jvm_flags.flags = value.into();
-                root.set_launch_defaults(backend.memory.clone(), Some(jvm_flags), backend.jvm_binary.clone(), cx);
+                root.set_launch_defaults(
+                    backend.memory.clone(),
+                    Some(jvm_flags),
+                    backend.jvm_binary.clone(),
+                    backend.java_runtime.clone(),
+                    cx,
+                );
             })
             .detach();
         } else {
@@ -296,6 +352,7 @@ fn create_jvm_binary_widget() -> SettingItemWidget {
                             backend.memory.clone(),
                             backend.jvm_flags.clone(),
                             Some(jvm_binary),
+                            backend.java_runtime.clone(),
                             cx,
                         );
                     },
@@ -303,6 +360,66 @@ fn create_jvm_binary_widget() -> SettingItemWidget {
                     cx,
                 );
             }))
+            .into_any_element()
+    }))
+}
+
+/// The launcher-wide default Minecraft Java runtime. The picker is filled from the backend
+/// once, the first time the row renders, since the list only changes when Mojang publishes
+/// a new runtime and reopening the settings window is enough to pick that up.
+fn create_java_runtime_widget() -> SettingItemWidget {
+    SettingItemWidget::Backend(Rc::new(|backend, window, cx| {
+        let java_runtime = backend.java_runtime.clone().unwrap_or_default();
+        let selected = java_runtime.component.clone();
+
+        let entity = cx.entity();
+        let mut created = false;
+        let state = window.use_keyed_state("default-java-runtime", cx, |window, cx| {
+            created = true;
+            java_runtime_picker::empty_select(selected, window, cx)
+        });
+
+        if created {
+            let backend_handle = cx.update_entity(&entity, |root, _| root.backend_handle.clone());
+            let window_handle = window.window_handle();
+
+            let task = cx.spawn({
+                let state = state.clone();
+                async move |_, cx| {
+                    let runtimes = java_runtime_picker::request_runtimes(&backend_handle).await.unwrap_or_default();
+                    _ = cx.update_window(window_handle, |_, window, cx| {
+                        java_runtime_picker::fill_select(&state, &runtimes, window, cx);
+                    });
+                }
+            });
+
+            // The task has to outlive this render, since dropping one cancels it
+            cx.update_entity(&entity, |root, _| root._java_runtimes_task = task);
+
+            cx.subscribe(&state, |root, _, event: &SelectEvent<_>, cx| {
+                let SelectEvent::Confirm(Some(component)) = event else {
+                    return;
+                };
+                let Some(backend) = root.backend_config().cloned() else {
+                    return;
+                };
+                let mut java_runtime = backend.java_runtime.clone().unwrap_or_default();
+                if java_runtime.enabled && java_runtime.component == *component {
+                    return;
+                }
+                // Turning the row on isn't the user picking a runtime, so an unchanged
+                // component leaves the switch wherever the user had it
+                java_runtime.component = *component;
+                root.set_launch_defaults(backend.memory, backend.jvm_flags, backend.jvm_binary, Some(java_runtime), cx);
+            })
+            .detach();
+        } else if state.read(cx).selected_value() != Some(&selected) {
+            state.update(cx, |state, cx| state.set_selected_value(&selected, window, cx));
+        }
+
+        Select::new(&state)
+            .menu_width(px(280.0))
+            .disabled(!java_runtime.enabled)
             .into_any_element()
     }))
 }

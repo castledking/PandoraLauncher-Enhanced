@@ -55,6 +55,12 @@ pub struct InstanceConfiguration {
     #[serde(
         default,
         deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "is_default_java_runtime_configuration"
+    )]
+    pub java_runtime: Option<InstanceJavaRuntimeConfiguration>,
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
         skip_serializing_if = "is_default_linux_wrapper_configuration"
     )]
     pub linux_wrapper: Option<InstanceLinuxWrapperConfiguration>,
@@ -109,6 +115,7 @@ impl InstanceConfiguration {
             wrapper_command: None,
             jvm_flags: None,
             jvm_binary: None,
+            java_runtime: None,
             linux_wrapper: None,
             system_libraries: None,
             instance_fallback_icon: None,
@@ -318,6 +325,25 @@ pub struct InstanceJvmBinaryConfiguration {
 pub fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfiguration>) -> bool {
     if let Some(config) = config {
         !config.enabled && config.path.is_none()
+    } else {
+        true
+    }
+}
+
+/// Picks one of the Java runtimes Mojang publishes instead of the one the Minecraft version
+/// asks for, so an instance can be run on a different Java than the version defaults to.
+///
+/// The component is the id from Mojang's runtime manifest, such as `java-runtime-gamma`.
+/// Nothing is written down when this is off, which leaves the version's own choice in place.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct InstanceJavaRuntimeConfiguration {
+    pub enabled: bool,
+    pub component: Option<Ustr>,
+}
+
+pub fn is_default_java_runtime_configuration(config: &Option<InstanceJavaRuntimeConfiguration>) -> bool {
+    if let Some(config) = config {
+        !config.enabled && config.component.is_none()
     } else {
         true
     }

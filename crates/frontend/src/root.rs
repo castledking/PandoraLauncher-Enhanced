@@ -21,7 +21,7 @@ use ustr::Ustr;
 use crate::{
     Backwards, CloseWindow, Forwards, OpenSettings,
     entity::DataEntities,
-    game_output::{GameOutput, GameOutputRoot},
+    game_output::{GameOutput, GameOutputRoot, GameOutputTarget},
     interface_config::{InterfaceConfig, LiveGameOutputDisplay},
     modals,
     pages::instance::instance_page::InstanceSubpageType,
@@ -225,14 +225,12 @@ pub fn start_instance(
     let window_handle = window.window_handle();
     let separate_window_options = game_output_window_options(cx);
 
-    // Resolved up front since the folder is what the output window offers to open, and
-    // the instance it belongs to is only reachable from the app before the spawn
-    let log_folder: Option<Arc<Path>> = data
-        .instances
-        .read(cx)
-        .entries
-        .get(&id)
-        .map(|entry| entry.read(cx).dot_minecraft_folder.join("logs").into());
+    // Resolved up front since the entry is what the output window acts on, and the app
+    // is only reachable for it before the spawn
+    let target = data.instances.read(cx).entries.get(&id).map(|instance| GameOutputTarget {
+        instance: Some(instance.clone()),
+        backend_handle: data.backend_handle.clone(),
+    });
 
     let data = data.clone();
     cx.spawn(async move |cx| {
@@ -247,7 +245,7 @@ pub fn start_instance(
                     let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
                     let game_output_root = cx.new(|cx| {
                         crate::observe_game_output_window_bounds(window, cx);
-                        GameOutputRoot::new(game_output.clone(), log_folder.clone(), window, cx)
+                        GameOutputRoot::new(game_output.clone(), target.clone(), window, cx)
                     });
                     window.activate_window();
                     cx.new(|cx| Root::new(game_output_root, window, cx))
@@ -257,7 +255,7 @@ pub fn start_instance(
                 _ = cx.update_window(window_handle, |_, window, cx| {
                     let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
                     let game_output_root =
-                        cx.new(|cx| GameOutputRoot::new(game_output.clone(), log_folder.clone(), window, cx));
+                        cx.new(|cx| GameOutputRoot::new(game_output.clone(), target.clone(), window, cx));
 
                     let Some(instance_entry) = data.instances.read(cx).entries.get(&id).cloned() else {
                         return;
@@ -319,7 +317,7 @@ pub fn start_quickplay(
 
         _ = cx.open_window(options, |window, cx| {
             let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
-            // No folder to offer, since a quickplay launch has no instance to point at yet
+            // Nothing to act on, since a quickplay launch has no instance to point at yet
             let game_output_root = cx.new(|cx| {
                 crate::observe_game_output_window_bounds(window, cx);
                 GameOutputRoot::new(game_output.clone(), None, window, cx)

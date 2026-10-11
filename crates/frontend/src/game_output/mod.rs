@@ -1,21 +1,27 @@
-use std::{cell::RefCell, num::NonZeroUsize, ops::Range, path::Path, rc::Rc, sync::Arc};
+use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, Sizable,
-    button::Button,
+    ActiveTheme as _, Disableable, Icon, Sizable, WindowExt,
+    button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    notification::{Notification, NotificationType},
     scroll::{Scrollbar, ScrollbarHandle},
     v_flex,
 };
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 
-use bridge::{game_output::GameOutputLogLevel, message::GameOutputMsg};
+use bridge::{
+    game_output::GameOutputLogLevel,
+    handle::BackendHandle,
+    instance::InstanceStatus,
+    message::{GameOutputMsg, MessageToBackend},
+};
 
-use crate::{CloseWindow, icon::PandoraIcon};
+use crate::{CloseWindow, entity::instance::InstanceEntry, icon::PandoraIcon};
 
 struct CachedShapedLogLevels {
     fatal: Arc<ShapedLine>,
@@ -102,6 +108,33 @@ impl GameOutput {
         }
     }
 
+    /// The whole log as text, laid out the way it is on screen: one line per line of
+    /// output, each carrying the time and level of the message it came from.
+    pub fn text(&self) -> String {
+        let Some(item_state) = &self.item_state else {
+            return String::new();
+        };
+
+        let mut out = String::new();
+        for item in &item_state.items {
+            // Items the search skipped aren't shown, so they aren't copied either
+            if item.skip {
+                continue;
+            }
+
+            for (line_ix, line) in item.text.iter().enumerate() {
+                if line_ix == 0 {
+                    out.push_str(&item.prefix);
+                    out.push(' ');
+                }
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+
+        out
+    }
+
     /// Empties the view. Only what has already been shown goes: lines the backend has sent
     /// but that haven't been painted yet are kept, since dropping output a running game
     /// produced isn't what someone tidying up the console is asking for.
@@ -147,37 +180,55 @@ impl GameOutput {
             let text_system = window.text_system();
 
             let levels = CachedShapedLogLevels {
-                fatal: self.shape_log_level("FATAL", hsla(0.0, 0.737, 0.418, 1.0), text_system, &text_style, font_size), // red-700
-                error: self.shape_log_level("ERROR", hsla(0.0, 0.842, 0.602, 1.0), text_system, &text_style, font_size), // red-500
+                fatal: self.shape_log_level(
+                    GameOutputLogLevel::Fatal.name(),
+                    hsla(0.0, 0.737, 0.418, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ), // red-700
+                error: self.shape_log_level(
+                    GameOutputLogLevel::Error.name(),
+                    hsla(0.0, 0.842, 0.602, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ), // red-500
                 warn: self.shape_log_level(
-                    "WARN",
+                    GameOutputLogLevel::Warn.name(),
                     hsla(24.6 / 360.0, 0.95, 0.531, 1.0),
                     text_system,
                     &text_style,
                     font_size,
                 ), // orange-500
                 info: self.shape_log_level(
-                    "INFO",
+                    GameOutputLogLevel::Info.name(),
                     hsla(83.7 / 360.0, 0.805, 0.443, 1.0),
                     text_system,
                     &text_style,
                     font_size,
                 ), // lime-500
                 debug: self.shape_log_level(
-                    "DEBUG",
+                    GameOutputLogLevel::Debug.name(),
                     hsla(258.3 / 360.0, 0.895, 0.663, 1.0),
                     text_system,
                     &text_style,
                     font_size,
                 ), // violet-500
                 trace: self.shape_log_level(
-                    "TRACE",
+                    GameOutputLogLevel::Trace.name(),
                     hsla(198.6 / 360.0, 0.887, 0.484, 1.0),
                     text_system,
                     &text_style,
                     font_size,
                 ), // sky-500
-                other: self.shape_log_level("OTHER", hsla(0.0, 0.5, 0.5, 1.0), text_system, &text_style, font_size),
+                other: self.shape_log_level(
+                    GameOutputLogLevel::Other.name(),
+                    hsla(0.0, 0.5, 0.5, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ),
             };
 
             self.level_column_width = levels
@@ -222,6 +273,7 @@ impl GameOutput {
                     item_state.items.push(GameOutputItem {
                         time: TimeShapedLine::Timestamp(msg.time),
                         level: shaped_level.clone(),
+                        prefix: item_prefix(&msg),
                         text: msg.text.clone(),
                         index: item_state.items.len(),
                         backup_total_lines_while_skipped,
@@ -239,6 +291,7 @@ impl GameOutput {
             item_state.items.push(GameOutputItem {
                 time: TimeShapedLine::Timestamp(msg.time),
                 level: shaped_level.clone(),
+                prefix: item_prefix(&msg),
                 text: msg.text.clone(),
                 index: item_state.items.len(),
                 backup_total_lines_while_skipped: total_lines,
@@ -263,6 +316,9 @@ enum TimeShapedLine {
 struct GameOutputItem {
     time: TimeShapedLine,
     level: Arc<ShapedLine>,
+    /// The time and level as written out, since the columns beside the text are only kept
+    /// shaped and copying the log needs them back as text
+    prefix: Arc<str>,
 
     text: Arc<[Arc<str>]>,
     index: usize,
@@ -270,6 +326,16 @@ struct GameOutputItem {
     total_lines: usize,
     highlighted_text: Option<(usize, Range<usize>)>,
     skip: bool,
+}
+
+/// The time and level of a line as it is copied out, in the same order and formatting the
+/// columns use so a copied line reads the same as the one on screen.
+fn item_prefix(msg: &GameOutputMsg) -> Arc<str> {
+    let time = chrono::DateTime::from_timestamp_millis(msg.time)
+        .unwrap_or_default()
+        .with_timezone(&chrono::Local);
+
+    format!("{} {}", time.time().format("%H:%M:%S%.3f"), msg.level.name()).into()
 }
 
 impl GameOutputItem {
@@ -878,15 +944,22 @@ fn paint_lines<'a, const REVERSE: bool>(
     }
 }
 
+/// The instance an output belongs to, for the actions that act on it. Absent for a
+/// quickplay launch, which has no instance to act on until it has made one.
+#[derive(Clone)]
+pub struct GameOutputTarget {
+    pub instance: Option<Entity<InstanceEntry>>,
+    pub backend_handle: BackendHandle,
+}
+
 pub struct GameOutputRoot {
     scroll_handler: ScrollHandler,
     game_output: Entity<GameOutput>,
-    /// Where the log files this output came from are, so they can be opened without
-    /// hunting for them. Absent when there is no known folder behind the output.
-    log_folder: Option<Arc<Path>>,
+    target: Option<GameOutputTarget>,
     search_state: Entity<InputState>,
     _search_task: Task<()>,
     _search_input_subscription: Subscription,
+    _instance_subscription: Option<Subscription>,
     focus_handle: FocusHandle,
 }
 
@@ -999,11 +1072,18 @@ impl ScrollbarHandle for ScrollHandler {
 impl GameOutputRoot {
     pub fn new(
         game_output: Entity<GameOutput>,
-        log_folder: Option<Arc<Path>>,
+        target: Option<GameOutputTarget>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let scroll_state = Rc::clone(&game_output.read(cx).scroll_state);
+
+        // Killing is only offered while there's something to kill, which the instance's
+        // status decides, so the row follows it as it changes
+        let instance_subscription = target
+            .as_ref()
+            .and_then(|target| target.instance.clone())
+            .map(|instance| cx.observe(&instance, |_, _, cx| cx.notify()));
 
         let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()).clean_on_escape());
 
@@ -1015,10 +1095,11 @@ impl GameOutputRoot {
         Self {
             scroll_handler: ScrollHandler { state: scroll_state },
             game_output,
-            log_folder,
+            target,
             search_state,
             _search_task: Task::ready(()),
             _search_input_subscription,
+            _instance_subscription: instance_subscription,
             focus_handle,
         }
     }
@@ -1139,6 +1220,21 @@ impl Render for GameOutputRoot {
                             cx.notify();
                         })),
                 )
+                .child(
+                    Button::new("copy-log")
+                        .icon(PandoraIcon::Copy)
+                        .label(t::game_output::copy_log())
+                        .on_click(cx.listener(|root, _, window, cx| {
+                            let text = root.game_output.read(cx).text();
+                            if text.is_empty() {
+                                return;
+                            }
+                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            let notification: Notification =
+                                (NotificationType::Success, t::game_output::copied()).into();
+                            window.push_notification(notification, cx);
+                        })),
+                )
                 .child(Button::new("clear").icon(PandoraIcon::Brush).label(t::game_output::clear()).on_click(
                     cx.listener(|root, _, _, cx| {
                         root.game_output.update(cx, |game_output, _| game_output.clear());
@@ -1146,14 +1242,18 @@ impl Render for GameOutputRoot {
                     }),
                 ));
 
+        // Read once here rather than per button, since the instance entity is what both
+        // the folder and whether killing is on the table come from
+        let instance = self.target.as_ref().and_then(|target| target.instance.clone());
+
         // Only offered when there's a known folder behind this output, since opening the
         // parent of a log we can't place would just be somewhere unhelpful
-        if let Some(log_folder) = self.log_folder.clone() {
+        if let Some(log_folder) = instance.as_ref().map(|instance| instance.read(cx).dot_minecraft_folder.clone()) {
             actions = actions.child(
                 Button::new("open-logs")
                     .icon(PandoraIcon::FolderOpen)
                     .label(t::game_output::open_logs())
-                    .on_click(move |_, window, cx| crate::open_folder(&log_folder, window, cx)),
+                    .on_click(move |_, window, cx| crate::open_folder(&log_folder.join("logs"), window, cx)),
             );
         }
 
@@ -1166,6 +1266,29 @@ impl Render for GameOutputRoot {
             .child(search.w(px(280.0)).min_w_0())
             .child(actions);
 
+        // Killing lives under the output rather than beside the search, since it is the
+        // one action here that stops the thing producing the output
+        let kill_bar = self.target.as_ref().map(|target| {
+            let id = instance.as_ref().map(|instance| instance.read(cx).id);
+            let running = instance.as_ref().is_some_and(|instance| {
+                matches!(instance.read(cx).status, InstanceStatus::Running | InstanceStatus::Stopping)
+            });
+            let backend_handle = target.backend_handle.clone();
+
+            h_flex().w_full().gap_2().justify_end().child(
+                Button::new("kill")
+                    .danger()
+                    .icon(PandoraIcon::Close)
+                    .label(t::game_output::kill())
+                    .disabled(!running || id.is_none())
+                    .on_click(move |_, _, _| {
+                        if let Some(id) = id {
+                            backend_handle.send(MessageToBackend::KillInstance { id });
+                        }
+                    }),
+            )
+        });
+
         v_flex()
             .size_full()
             .border_12()
@@ -1173,7 +1296,8 @@ impl Render for GameOutputRoot {
             .child(bar)
             .child(
                 h_flex()
-                    .size_full()
+                    .flex_1()
+                    .min_h_0()
                     .rounded(cx.theme().radius)
                     .border_1()
                     .border_color(cx.theme().border)
@@ -1183,6 +1307,7 @@ impl Render for GameOutputRoot {
                     })
                     .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scroll_handler))),
             )
+            .children(kill_bar)
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
                 let state = root.scroll_handler.state.borrow();
                 let delta = event.delta.pixel_delta(state.line_height).y;

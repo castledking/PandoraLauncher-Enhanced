@@ -4757,6 +4757,12 @@ en = "Game Output"
 en = "Clear"
 [game_output.open_logs]
 en = "Open Logs"
+[game_output.kill]
+en = "Kill"
+[game_output.copy_log]
+en = "Copy Log"
+[game_output.copied]
+en = "Log copied to the clipboard"
 
 [settings.network]
 en = "Network"

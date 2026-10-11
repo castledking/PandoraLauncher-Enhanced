@@ -1,4 +1,4 @@
-use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc, time::Duration};
 
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
@@ -957,6 +957,12 @@ pub struct GameOutputRoot {
     game_output: Entity<GameOutput>,
     target: Option<GameOutputTarget>,
     search_state: Entity<InputState>,
+    /// Whether the log was just copied, which the button reports before going back to
+    /// offering it again.
+    copied: bool,
+    /// Replaces itself on every copy, so a second one restarts the wait rather than the
+    /// first one's timer cutting it short.
+    _copied_task: Option<Task<()>>,
     _search_task: Task<()>,
     _search_input_subscription: Subscription,
     _instance_subscription: Option<Subscription>,
@@ -1097,11 +1103,35 @@ impl GameOutputRoot {
             game_output,
             target,
             search_state,
+            copied: false,
+            _copied_task: None,
             _search_task: Task::ready(()),
             _search_input_subscription,
             _instance_subscription: instance_subscription,
             focus_handle,
         }
+    }
+
+    /// Copies the whole log and says so on the button for a moment, which is quicker to
+    /// notice than a notification appearing over the window that is being watched.
+    fn on_copy_log(root: &mut Self, _: &gpui::ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let text = root.game_output.read(cx).text();
+        if text.is_empty() {
+            return;
+        }
+
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let notification: Notification = (NotificationType::Success, t::game_output::copied()).into();
+        window.push_notification(notification, cx);
+
+        root.copied = true;
+        root._copied_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            _ = this.update(cx, |this, cx| {
+                this.copied = false;
+                cx.notify();
+            });
+        }));
     }
 
     fn on_search_input_event(
@@ -1220,21 +1250,18 @@ impl Render for GameOutputRoot {
                             cx.notify();
                         })),
                 )
-                .child(
+                .child(if self.copied {
+                    Button::new("copy-log")
+                        .success()
+                        .icon(PandoraIcon::Check)
+                        .label(t::game_output::copied_short())
+                        .disabled(true)
+                } else {
                     Button::new("copy-log")
                         .icon(PandoraIcon::Copy)
                         .label(t::game_output::copy_log())
-                        .on_click(cx.listener(|root, _, window, cx| {
-                            let text = root.game_output.read(cx).text();
-                            if text.is_empty() {
-                                return;
-                            }
-                            cx.write_to_clipboard(ClipboardItem::new_string(text));
-                            let notification: Notification =
-                                (NotificationType::Success, t::game_output::copied()).into();
-                            window.push_notification(notification, cx);
-                        })),
-                )
+                        .on_click(cx.listener(Self::on_copy_log))
+                })
                 .child(Button::new("clear").icon(PandoraIcon::Brush).label(t::game_output::clear()).on_click(
                     cx.listener(|root, _, _, cx| {
                         root.game_output.update(cx, |game_output, _| game_output.clear());

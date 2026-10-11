@@ -4763,6 +4763,8 @@ en = "Kill"
 en = "Copy Log"
 [game_output.copied]
 en = "Log copied to the clipboard"
+[game_output.copied_short]
+en = "Copied"
 
 [settings.network]
 en = "Network"

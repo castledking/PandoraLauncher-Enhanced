@@ -211,7 +211,6 @@ impl SkinThumbnailCache {
                         THUMB_PITCH,
                         true,
                         true,
-                        false,
                     );
                     let _ = tx.send(result);
                 }

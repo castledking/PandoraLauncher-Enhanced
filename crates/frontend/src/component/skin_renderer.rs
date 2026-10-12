@@ -467,20 +467,11 @@ impl SkinRenderer {
         pitch: f32,
         is_static: bool,
     ) -> Option<Arc<RenderImage>> {
-        self.render_to_buffer_with_params_ext(width, height, yaw, pitch, is_static, false, false)
+        self.render_to_buffer_with_params_ext(width, height, yaw, pitch, is_static, false)
     }
 
     /// Renders to buffer. When `for_cape_thumbnail` is true, uses a wider view to fit
     /// the whole player (except lower legs) and show the full cape.
-    /// Renders just the head, standing still.
-    ///
-    /// For a list of players, where the whole point is the face and a body that never
-    /// moves is just noise beside it. The angle is turned a little off square, which
-    /// reads better than dead-on at this size.
-    pub fn render_head_to_buffer(&self, width: u32, height: u32) -> Option<Arc<RenderImage>> {
-        self.render_to_buffer_with_params_ext(width, height, 25.0, -8.0, true, false, true)
-    }
-
     pub fn render_to_buffer_with_params_ext(
         &self,
         width: u32,
@@ -489,7 +480,6 @@ impl SkinRenderer {
         pitch: f32,
         is_static: bool,
         for_cape_thumbnail: bool,
-        head_only: bool,
     ) -> Option<Arc<RenderImage>> {
         let tex = self.parsed_image.as_ref()?;
         let is_64x32 = tex.height() == 32;
@@ -503,12 +493,6 @@ impl SkinRenderer {
             self.start_time.elapsed().as_secs_f32()
         };
         let mut parts = build_parts(self.slim);
-
-        // Everything but the head is dropped before anything is drawn, rather than after,
-        // so the head isn't left sitting oddly inside a body that was going to be hidden
-        if head_only {
-            parts.retain(|part| part.limb == Limb::Head);
-        }
 
         // Animations - slightly more complex to mimic Modrinth
         let breathe = if is_static { 0.0 } else { (time * 1.8).sin() * 0.4 };

@@ -5340,11 +5340,9 @@ en = "Operators"
 [server.lists.user_cache]
 en = "User Cache"
 [server.lists.display.head_2d]
-en = "Show the head"
+en = "Show thumbnails"
 [server.lists.display.thumbnail]
-en = "Show the whole skin"
-[server.lists.display.head_3d]
-en = "Show the head in 3D"
+en = "Show heads"
 [server.lists.search]
 en = "Search..."
 [server.lists.raw]

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    component::skin_renderer::SkinRenderer,
     entity::instance::InstanceEntry,
     icon::PandoraIcon,
     png_render_cache::{self, ImageTransformation},
@@ -51,16 +50,13 @@ pub enum ServerListDisplay {
     Head2d,
     /// The whole skin texture, flat, the way the skins page shows one.
     Thumbnail,
-    /// Just the head, in three dimensions and still.
-    Head3d,
 }
 
 impl ServerListDisplay {
     fn next(self) -> Self {
         match self {
             ServerListDisplay::Head2d => ServerListDisplay::Thumbnail,
-            ServerListDisplay::Thumbnail => ServerListDisplay::Head3d,
-            ServerListDisplay::Head3d => ServerListDisplay::Head2d,
+            ServerListDisplay::Thumbnail => ServerListDisplay::Head2d,
         }
     }
 }
@@ -81,8 +77,6 @@ pub struct ServerListSubpage {
     /// Skins already fetched, by the UUID on the entry. A name with no UUID, or a UUID
     /// Mojang has nothing for, simply never turns up here and is shown by name alone.
     skins: FxHashMap<Uuid, UniqueBytes>,
-    /// Heads rendered in 3D, kept per skin since rendering one costs far more than a crop.
-    heads: FxHashMap<UniqueBytes, Arc<RenderImage>>,
     requested: FxHashSet<Uuid>,
     _load_task: Task<()>,
     _skin_tasks: Vec<Task<()>>,
@@ -128,7 +122,6 @@ impl ServerListSubpage {
             display: ServerListDisplay::default(),
             thumbnails,
             skins: FxHashMap::default(),
-            heads: FxHashMap::default(),
             requested: FxHashSet::default(),
             _load_task: Task::ready(()),
             _skin_tasks: Vec::new(),
@@ -251,22 +244,6 @@ impl ServerListSubpage {
                         .object_fit(gpui::ObjectFit::Contain)
                         .into_any_element()
                 })
-            },
-            ServerListDisplay::Head3d => {
-                if let Some(head) = self.heads.get(&skin) {
-                    return Some(gpui::img(head.clone()).w(px(32.0)).h(px(32.0)).into_any_element());
-                }
-
-                // Rendered here and handed back on the next pass through, since a head
-                // costs real work and a list redraws often
-                let rendered = SkinRenderer::new(Some(Arc::from(skin.to_vec().into_boxed_slice())), false)
-                    .render_head_to_buffer(64, 64);
-                if let Some(rendered) = rendered {
-                    self.heads.insert(skin, rendered.clone());
-                    Some(gpui::img(rendered).w(px(32.0)).h(px(32.0)).into_any_element())
-                } else {
-                    None
-                }
             },
         }
     }
@@ -512,12 +489,10 @@ impl Render for ServerListSubpage {
                         .icon(match self.display {
                             ServerListDisplay::Head2d => PandoraIcon::Image,
                             ServerListDisplay::Thumbnail => PandoraIcon::PackageOpen,
-                            ServerListDisplay::Head3d => PandoraIcon::Box,
                         })
                         .tooltip(match self.display {
                             ServerListDisplay::Head2d => t::server::lists::display::head_2d(),
                             ServerListDisplay::Thumbnail => t::server::lists::display::thumbnail(),
-                            ServerListDisplay::Head3d => t::server::lists::display::head_3d(),
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.display = this.display.next();

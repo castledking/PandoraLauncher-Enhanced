@@ -17,6 +17,7 @@ use schema::{
     pandora_update::UpdatePrompt,
     quickplay::QuickplayPreset,
     server::{ServerPlatform, ServerProperty},
+    server_list::{ServerListAddOutcome, ServerListEntry, ServerListFile},
     unique_bytes::UniqueBytes,
 };
 use ustr::Ustr;
@@ -320,6 +321,48 @@ pub enum MessageToBackend {
     GetServerProperties {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Vec<ServerProperty>>,
+    },
+    /// The entries of one of a server's own list files, read fresh. The file is created if
+    /// it isn't there yet, so a server that has never run can still be listed and edited.
+    GetServerList {
+        id: InstanceID,
+        file: ServerListFile,
+        channel: tokio::sync::oneshot::Sender<Arc<[ServerListEntry]>>,
+    },
+    /// Adds players to one of a server's own list files. Names that no account resolves are
+    /// dropped rather than written blind, since a server matches bans on the UUID.
+    AddServerListEntries {
+        id: InstanceID,
+        file: ServerListFile,
+        names: Arc<[Arc<str>]>,
+        reason: Option<Arc<str>>,
+        channel: tokio::sync::oneshot::Sender<ServerListAddOutcome>,
+    },
+    /// Takes one entry back out, matched on the name or UUID the entry was added under.
+    RemoveServerListEntry {
+        id: InstanceID,
+        file: ServerListFile,
+        name: Arc<str>,
+        uuid: Option<Uuid>,
+    },
+    /// Reads a list file exactly as it is on disk, for the raw view.
+    GetServerListRaw {
+        id: InstanceID,
+        file: ServerListFile,
+        channel: tokio::sync::oneshot::Sender<Arc<str>>,
+    },
+    /// Writes a list file back exactly as given, for the raw view. Replaces the file whole.
+    SetServerListRaw {
+        id: InstanceID,
+        file: ServerListFile,
+        contents: Arc<str>,
+    },
+    /// Resolves player names to the UUIDs a server matches them on. Names that no account
+    /// answers for come back unresolved rather than failing the whole batch, since one
+    /// typo shouldn't lose the rest of the list.
+    ResolvePlayerNames {
+        names: Arc<[Arc<str>]>,
+        channel: tokio::sync::oneshot::Sender<Arc<[Option<Uuid>]>>,
     },
     SetServerProperties {
         id: InstanceID,

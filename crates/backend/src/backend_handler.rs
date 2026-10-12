@@ -1482,6 +1482,34 @@ impl BackendState {
             MessageToBackend::GetServerProperties { id, channel } => {
                 _ = channel.send(self.read_server_properties(id));
             },
+            MessageToBackend::GetServerList { id, file, channel } => {
+                _ = channel.send(self.read_server_list(id, file));
+            },
+            MessageToBackend::AddServerListEntries {
+                id,
+                file,
+                names,
+                reason,
+                channel,
+            } => {
+                let outcome = self.add_server_list_entries(id, file, names, reason).await;
+                _ = channel.send(outcome);
+            },
+            MessageToBackend::RemoveServerListEntry { id, file, name, uuid } => {
+                self.remove_server_list_entry(id, file, name, uuid);
+            },
+            MessageToBackend::GetServerListRaw { id, file, channel } => {
+                _ = channel.send(self.read_server_list_raw(id, file));
+            },
+            MessageToBackend::SetServerListRaw { id, file, contents } => {
+                if !self.write_server_list_raw(id, file, contents) {
+                    self.send.send_error(format!("{} is not valid JSON", file.file_name()));
+                }
+            },
+            MessageToBackend::ResolvePlayerNames { names, channel } => {
+                let uuids = self.resolve_player_names(&names).await;
+                _ = channel.send(Arc::from(uuids));
+            },
             MessageToBackend::SetServerProperties { id, properties } => {
                 self.write_server_properties(id, &properties);
             },
@@ -2530,6 +2558,38 @@ impl BackendState {
             }
         }
         None
+    }
+
+    /// Turns player names into the UUIDs a server matches them on.
+    ///
+    /// A name no account answers for comes back as `None` rather than failing the batch, so
+    /// one typo in a list of names doesn't cost the rest of them.
+    pub async fn resolve_player_names(&self, names: &[Arc<str>]) -> Vec<Option<Uuid>> {
+        let client = self.http_client_provider.client();
+
+        let mut resolved = Vec::with_capacity(names.len());
+        for name in names {
+            let url = format!("https://api.mojang.com/minecraft/profile/lookup/name/{name}");
+            let uuid = match client.get(&url).send().await {
+                Ok(response) if response.status().is_success() => response
+                    .text()
+                    .await
+                    .ok()
+                    .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+                    .and_then(|profile| profile["id"].as_str().and_then(|id| Uuid::parse_str(id).ok())),
+                Ok(response) => {
+                    log::debug!("No account for player '{name}': status {}", response.status());
+                    None
+                },
+                Err(err) => {
+                    log::error!("Unable to look up player '{name}': {err:?}");
+                    None
+                },
+            };
+            resolved.push(uuid);
+        }
+
+        resolved
     }
 
     pub async fn get_minecraft_profile(&self, account: Uuid) -> Option<MinecraftProfileResponse> {

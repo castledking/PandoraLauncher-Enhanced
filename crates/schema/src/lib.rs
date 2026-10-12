@@ -25,6 +25,7 @@ pub mod pandora_update;
 pub mod quickplay;
 pub mod resourcepack;
 pub mod server;
+pub mod server_list;
 pub mod server_status;
 pub mod text_component;
 pub mod unique_bytes;

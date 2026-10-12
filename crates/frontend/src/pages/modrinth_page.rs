@@ -243,6 +243,20 @@ fn environment_display(environment: ModrinthEnvironment) -> (PandoraIcon, Shared
     }
 }
 
+/// What the search box says, which has to follow the project type rather than staying on
+/// whatever the page happened to open with.
+fn search_placeholder(project_type: ModrinthProjectType) -> &'static str {
+    match project_type {
+        ModrinthProjectType::Mod => t::instance::content::search::mod_(),
+        ModrinthProjectType::Plugin => t::instance::content::search::plugin(),
+        ModrinthProjectType::Modpack => t::instance::content::search::modpack(),
+        ModrinthProjectType::Resourcepack => t::instance::content::search::resourcepack(),
+        ModrinthProjectType::Shader => t::instance::content::search::shader(),
+        ModrinthProjectType::Datapack => "Search datapacks...",
+        ModrinthProjectType::Other => t::common::search(),
+    }
+}
+
 impl ModrinthSearchPage {
     pub fn new(
         install_for: Option<InstanceID>,
@@ -250,9 +264,12 @@ impl ModrinthSearchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // The page opens on whatever project type was last looked at, so the search box has
+        // to say what that one is searching rather than assuming mods
+        let project_type = InterfaceConfig::get(cx).modrinth_page_project_type;
         let search_state = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(t::instance::content::search::mod_())
+                .placeholder(search_placeholder(project_type))
                 .clean_on_escape()
         });
 
@@ -432,18 +449,8 @@ impl ModrinthSearchPage {
         }
         InterfaceConfig::get_mut(cx).modrinth_page_project_type = project_type;
         self.filter_categories.clear();
-        self.search_state.update(cx, |state, cx| {
-            let placeholder = match project_type {
-                ModrinthProjectType::Mod => t::instance::content::search::mod_(),
-                ModrinthProjectType::Plugin => t::instance::content::search::plugin(),
-                ModrinthProjectType::Modpack => t::instance::content::search::modpack(),
-                ModrinthProjectType::Resourcepack => t::instance::content::search::resourcepack(),
-                ModrinthProjectType::Shader => t::instance::content::search::shader(),
-                ModrinthProjectType::Datapack => "Search datapacks...",
-                ModrinthProjectType::Other => t::common::search(),
-            };
-            state.set_placeholder(placeholder, window, cx)
-        });
+        self.search_state
+            .update(cx, |state, cx| state.set_placeholder(search_placeholder(project_type), window, cx));
         self.reload(cx);
     }
 

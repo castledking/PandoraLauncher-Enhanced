@@ -364,6 +364,13 @@ pub enum MessageToBackend {
         names: Arc<[Arc<str>]>,
         channel: tokio::sync::oneshot::Sender<Arc<[Option<Uuid>]>>,
     },
+    /// As above, but reported per name so a name that could not be looked up is told
+    /// apart from one Mojang says doesn't exist. Used when filling in a list of players
+    /// where saying "no such account" about a real one would be a lie.
+    ResolvePlayerNamesDetailed {
+        names: Arc<[Arc<str>]>,
+        channel: tokio::sync::oneshot::Sender<Arc<[PlayerLookupResult]>>,
+    },
     SetServerProperties {
         id: InstanceID,
         properties: Arc<[ServerProperty]>,
@@ -671,4 +678,18 @@ pub struct GameOutputMsg {
     pub time: i64,
     pub level: GameOutputLogLevel,
     pub text: Arc<[Arc<str>]>,
+}
+
+/// What came of looking one name up against the Mojang API.
+///
+/// The last case is the one worth being careful about. Mojang answers 429 when it is rate
+/// limiting, which says nothing about whether the account exists, and treating that as
+/// "no such account" is how someone gets told their own username isn't real.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum PlayerLookupResult {
+    Found(Uuid),
+    /// Mojang answered, and there is no account by that name.
+    NoSuchPlayer,
+    /// The API could not be asked, or would not answer. Nothing was learned.
+    Unavailable,
 }

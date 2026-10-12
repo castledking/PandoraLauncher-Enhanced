@@ -41,6 +41,8 @@ use tokio::{
 use ustr::Ustr;
 use uuid::Uuid;
 
+use bridge::message::PlayerLookupResult;
+
 use crate::{
     BackendState, CachedMinecraftProfile, LoginError,
     account::BackendAccount,
@@ -1494,15 +1496,42 @@ impl BackendState {
             } => {
                 let outcome = self.add_server_list_entries(id, file, names, reason).await;
 
-                // A name that no Mojang account matched still gets written, since the server
-                // resolves it when that player next joins. Worth saying out loud though, as
-                // otherwise it looks like every single one worked.
+                // A name with no UUID is still written, since the server resolves it when
+                // that player next joins. Worth saying out loud, as otherwise it looks
+                // like every single one worked.
+                let mut notes = Vec::new();
                 if !outcome.unresolved.is_empty() {
+                    notes.push(format!(
+                        "{} {} no Mojang account. A server matches the name alone until it sees the player, so these are saved without a UUID: {}",
+                        outcome.unresolved.len(),
+                        if outcome.unresolved.len() == 1 { "name has" } else { "names have" },
+                        outcome.unresolved.join(", "),
+                    ));
+                }
+                if !outcome.lookup_failed.is_empty() {
+                    // Not the same thing. Mojang was rate limiting, so nothing at all is
+                    // known about these, and saying they have no account would be a lie.
+                    notes.push(format!(
+                        "{} {} looked up, because Mojang is rate limiting requests right now. Nothing is known about these either way, so they are saved without a UUID: {}",
+                        outcome.lookup_failed.len(),
+                        if outcome.lookup_failed.len() == 1 { "could not be" } else { "could not be" },
+                        outcome.lookup_failed.join(", "),
+                    ));
+                }
+
+                if outcome.via_console {
+                    notes.push(
+                        "The server is running, so these were sent to its console rather than written to its files."
+                            .into(),
+                    );
+                }
+
+                if !notes.is_empty() {
                     self.send.send_warning(format!(
-                        "{} {} added. These didn't match a Mojang account and will be resolved when they next join: {}",
+                        "{} {} added. {}",
                         outcome.added.len(),
                         if outcome.added.len() == 1 { "player" } else { "players" },
-                        outcome.unresolved.join(", "),
+                        notes.join(" "),
                     ));
                 }
 
@@ -1520,6 +1549,17 @@ impl BackendState {
                 }
             },
             MessageToBackend::ResolvePlayerNames { names, channel } => {
+                let uuids = self.resolve_player_names(&names).await;
+                let uuids: Vec<Option<Uuid>> = uuids
+                    .iter()
+                    .map(|lookup| match lookup {
+                        PlayerLookupResult::Found(uuid) => Some(*uuid),
+                        _ => None,
+                    })
+                    .collect();
+                _ = channel.send(Arc::from(uuids));
+            },
+            MessageToBackend::ResolvePlayerNamesDetailed { names, channel } => {
                 let uuids = self.resolve_player_names(&names).await;
                 _ = channel.send(Arc::from(uuids));
             },
@@ -2575,34 +2615,94 @@ impl BackendState {
 
     /// Turns player names into the UUIDs a server matches them on.
     ///
-    /// A name no account answers for comes back as `None` rather than failing the batch, so
-    /// one typo in a list of names doesn't cost the rest of them.
-    pub async fn resolve_player_names(&self, names: &[Arc<str>]) -> Vec<Option<Uuid>> {
+    /// A name no account answers for comes back as `Lookup::NoSuchPlayer` rather than
+    /// failing the batch, so one typo in a list of names doesn't cost the rest of them.
+    ///
+    /// Mojang rate limits this endpoint aggressively and answers 429 well before the
+    /// account is genuinely unknown, so those are retried and then reported as
+    /// `Lookup::Unavailable`. Conflating the two told people their own account didn't
+    /// exist.
+    pub async fn resolve_player_names(&self, names: &[Arc<str>]) -> Vec<PlayerLookupResult> {
         let client = self.http_client_provider.client();
 
         let mut resolved = Vec::with_capacity(names.len());
         for name in names {
-            let url = format!("https://api.mojang.com/minecraft/profile/lookup/name/{name}");
-            let uuid = match client.get(&url).send().await {
-                Ok(response) if response.status().is_success() => response
-                    .text()
-                    .await
-                    .ok()
-                    .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-                    .and_then(|profile| profile["id"].as_str().and_then(|id| Uuid::parse_str(id).ok())),
-                Ok(response) => {
-                    log::debug!("No account for player '{name}': status {}", response.status());
-                    None
-                },
-                Err(err) => {
-                    log::error!("Unable to look up player '{name}': {err:?}");
-                    None
-                },
-            };
-            resolved.push(uuid);
+            resolved.push(self.lookup_player_name(&client, name).await);
         }
 
         resolved
+    }
+
+    async fn lookup_player_name(&self, client: &reqwest::Client, name: &str) -> PlayerLookupResult {
+        // Names are interpolated into the path, so anything that isn't a plain Minecraft
+        // name would change the request rather than just miss
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || name.is_empty() {
+            return PlayerLookupResult::NoSuchPlayer;
+        }
+
+        let url = format!("https://api.mojang.com/minecraft/profile/lookup/name/{name}");
+        const ATTEMPTS: u32 = 3;
+
+        for attempt in 1..=ATTEMPTS {
+            let response = match client.get(&url).send().await {
+                Ok(response) => response,
+                Err(err) => {
+                    log::error!("Unable to look up player '{name}': {err:?}");
+                    return PlayerLookupResult::Unavailable;
+                },
+            };
+
+            let status = response.status();
+
+            if status.is_success() {
+                let body = match response.text().await {
+                    Ok(body) => body,
+                    Err(err) => {
+                        log::error!("Unable to read the profile for '{name}': {err:?}");
+                        return PlayerLookupResult::Unavailable;
+                    },
+                };
+
+                return match serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .and_then(|profile| profile["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()))
+                {
+                    Some(uuid) => PlayerLookupResult::Found(uuid),
+                    None => {
+                        log::debug!("No UUID in the profile Mojang returned for '{name}'");
+                        PlayerLookupResult::NoSuchPlayer
+                    },
+                };
+            }
+
+            // 404 is the only answer that actually means the account isn't there. Anything
+            // else, including a rate limit, leaves it unknown.
+            if status == reqwest::StatusCode::NOT_FOUND {
+                log::debug!("No account for player '{name}'");
+                return PlayerLookupResult::NoSuchPlayer;
+            }
+
+            let rate_limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+            if !rate_limited || attempt == ATTEMPTS {
+                log::debug!("Lookup of '{name}' answered {status}");
+                return PlayerLookupResult::Unavailable;
+            }
+
+            log::debug!("Mojang is rate limiting the lookup of '{name}', trying again");
+            // Long enough to be worth it, short enough that a small batch doesn't stall.
+            // The header is a whole number of seconds when Mojang sends one at all.
+            let wait = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Duration::from_secs)
+                .unwrap_or_else(|| Duration::from_millis(750 * u64::from(attempt)));
+
+            tokio::time::sleep(wait).await;
+        }
+
+        PlayerLookupResult::Unavailable
     }
 
     pub async fn get_minecraft_profile(&self, account: Uuid) -> Option<MinecraftProfileResponse> {

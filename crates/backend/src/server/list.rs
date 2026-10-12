@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use bridge::instance::InstanceID;
+use bridge::message::PlayerLookupResult;
 use schema::server_list::{
     BannedIp, BannedPlayer, CachedUser, Operator, ServerListAddOutcome, ServerListEntry, ServerListFile,
     WhitelistedPlayer,
@@ -16,6 +17,12 @@ impl BackendState {
     /// server that has never run still has the file when it first starts. One that won't
     /// parse is reported and left alone, since overwriting it would throw away real bans
     /// over a stray comma.
+    /// Whether a server is up right now, which decides whether these files can be written
+    /// directly or have to go through the console.
+    fn server_is_running(&self, id: InstanceID) -> bool {
+        self.servers.with(id, |_| ()).is_some()
+    }
+
     pub fn read_server_list(self: &Arc<Self>, id: InstanceID, file: ServerListFile) -> Arc<[ServerListEntry]> {
         let Some(server_dir) = self.server_dir(id) else {
             return Arc::new([]);
@@ -93,11 +100,47 @@ impl BackendState {
             return outcome;
         }
 
+        // A running server keeps these files in memory and rewrites them itself, so
+        // writing one behind its back is undone the moment it next saves. Ask it over the
+        // console instead, which also means the server does the name resolution and
+        // doesn't need the Mojang API at all.
+        if self.server_is_running(id) {
+            for name in &wanted {
+                if let Some(command) = console_command(file, name, reason.as_deref(), Direction::Add) {
+                    self.send_server_command(id, &command);
+                }
+            }
+
+            outcome.added = wanted;
+            outcome.via_console = true;
+            return outcome;
+        }
+
         let uuids = self.resolve_player_names(&wanted).await;
         let created = schema::server_list::now_timestamp();
 
         let mut updated: Vec<ServerListEntry> = existing.to_vec();
-        for (name, uuid) in wanted.iter().zip(uuids) {
+        for (name, lookup) in wanted.iter().zip(uuids) {
+            let uuid = match lookup {
+                PlayerLookupResult::Found(uuid) => Some(uuid),
+                // Mojang says there is no such account. The entry is still written, since a
+                // server matches a ban on the name alone until it sees the player, which is
+                // the case that matters: banning someone before they have ever joined is
+                // the whole reason to do this without starting the server. This is also
+                // every name on an offline-mode server.
+                PlayerLookupResult::NoSuchPlayer => {
+                    outcome.unresolved.push(name.clone());
+                    None
+                },
+                // The API wouldn't answer. Nothing is known about this name, so it is
+                // written without a UUID too, but it's kept apart from the ones above
+                // rather than reported as though the account didn't exist.
+                PlayerLookupResult::Unavailable => {
+                    outcome.lookup_failed.push(name.clone());
+                    None
+                },
+            };
+
             let entry = match file {
                 ServerListFile::BannedPlayers => ServerListEntry::BannedPlayer(BannedPlayer {
                     name: name.clone(),
@@ -129,16 +172,6 @@ impl BackendState {
             };
 
             outcome.added.push(name.clone());
-
-            // Still written without a UUID. The server matches a ban on name alone until the
-            // player is seen, which is the case that matters here: banning someone before
-            // they have ever joined is the whole reason to do this without starting the
-            // server. It can't be resolved for a name Mojang has no account for, such as
-            // anyone on an offline-mode server.
-            if entry.uuid().is_none() {
-                outcome.unresolved.push(name.clone());
-            }
-
             updated.push(entry);
         }
 
@@ -157,6 +190,14 @@ impl BackendState {
         uuid: Option<Uuid>,
     ) {
         if !file.is_editable() {
+            return;
+        }
+
+        // Same as adding: a running server would rewrite the file over the top of this
+        if self.server_is_running(id) {
+            if let Some(command) = console_command(file, &name, None, Direction::Remove) {
+                self.send_server_command(id, &command);
+            }
             return;
         }
 
@@ -249,5 +290,124 @@ fn write_server_list_file(path: &std::path::Path, file: ServerListFile, entries:
 
     if let Err(err) = crate::fs::write_safe(path, contents.as_bytes()) {
         log::error!("Unable to write {}: {err}", file.file_name());
+    }
+}
+
+/// Whether a name is going onto a list or coming off it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Add,
+    Remove,
+}
+
+/// The console command a running server would do this with.
+///
+/// Whitelist and ban-ip take a verb to say which way, while bans, operators and addresses
+/// have a different command for each direction. A reason is only passed where the command
+/// takes one, since the others have nowhere to put it and would read it as a second name.
+fn console_command(file: ServerListFile, name: &str, reason: Option<&str>, direction: Direction) -> Option<String> {
+    // A reason only goes on a command that has somewhere to put it
+    let reason = reason.map(str::trim).filter(|reason| !reason.is_empty());
+
+    Some(match (file, direction) {
+        // A ban is lifted with pardon, which takes no reason
+        (ServerListFile::BannedPlayers, Direction::Add) => match reason {
+            Some(reason) => format!("/ban {name} {reason}"),
+            None => format!("/ban {name}"),
+        },
+        (ServerListFile::BannedPlayers, Direction::Remove) => format!("/pardon {name}"),
+
+        (ServerListFile::BannedIps, Direction::Add) => match reason {
+            Some(reason) => format!("/ban-ip {name} {reason}"),
+            None => format!("/ban-ip {name}"),
+        },
+        (ServerListFile::BannedIps, Direction::Remove) => format!("/ban-ip remove {name}"),
+
+        (ServerListFile::Whitelist, Direction::Add) => format!("/whitelist add {name}"),
+        (ServerListFile::Whitelist, Direction::Remove) => format!("/whitelist remove {name}"),
+
+        (ServerListFile::Operators, Direction::Add) => format!("/op {name}"),
+        (ServerListFile::Operators, Direction::Remove) => format!("/deop {name}"),
+
+        // The server writes this one itself as it sees players
+        (ServerListFile::UserCache, _) => return None,
+    })
+}
+
+#[cfg(test)]
+mod console_commands {
+    use super::*;
+
+    fn command(file: ServerListFile, name: &str, reason: Option<&str>, direction: Direction) -> String {
+        console_command(file, name, reason, direction).expect("this file has a command")
+    }
+
+    #[test]
+    fn a_ban_carries_its_reason() {
+        assert_eq!(
+            command(ServerListFile::BannedPlayers, "steve", Some("griefing"), Direction::Add),
+            "/ban steve griefing"
+        );
+    }
+
+    #[test]
+    fn a_ban_without_a_reason_stops_at_the_name() {
+        assert_eq!(command(ServerListFile::BannedPlayers, "steve", None, Direction::Add), "/ban steve");
+        // A blank reason is the same as none, rather than a trailing space
+        assert_eq!(command(ServerListFile::BannedPlayers, "steve", Some("   "), Direction::Add), "/ban steve");
+    }
+
+    #[test]
+    fn a_ban_is_lifted_with_pardon() {
+        assert_eq!(
+            command(ServerListFile::BannedPlayers, "steve", Some("griefing"), Direction::Remove),
+            "/pardon steve"
+        );
+    }
+
+    #[test]
+    fn the_whitelist_takes_a_verb() {
+        assert_eq!(command(ServerListFile::Whitelist, "steve", None, Direction::Add), "/whitelist add steve");
+        assert_eq!(
+            command(ServerListFile::Whitelist, "steve", None, Direction::Remove),
+            "/whitelist remove steve"
+        );
+    }
+
+    #[test]
+    fn a_banned_address_is_removed_by_verb_too() {
+        assert_eq!(command(ServerListFile::BannedIps, "10.0.0.1", None, Direction::Add), "/ban-ip 10.0.0.1");
+        assert_eq!(
+            command(ServerListFile::BannedIps, "10.0.0.1", None, Direction::Remove),
+            "/ban-ip remove 10.0.0.1"
+        );
+    }
+
+    #[test]
+    fn an_address_can_carry_a_reason() {
+        assert_eq!(
+            command(ServerListFile::BannedIps, "10.0.0.1", Some("flooding"), Direction::Add),
+            "/ban-ip 10.0.0.1 flooding"
+        );
+    }
+
+    #[test]
+    fn an_operator_is_promoted_and_demoted() {
+        assert_eq!(command(ServerListFile::Operators, "steve", None, Direction::Add), "/op steve");
+        assert_eq!(command(ServerListFile::Operators, "steve", None, Direction::Remove), "/deop steve");
+    }
+
+    #[test]
+    fn a_reason_is_not_passed_where_there_is_nowhere_for_it() {
+        // The whitelist command would read a reason as a second player name
+        assert_eq!(
+            command(ServerListFile::Whitelist, "steve", Some("a reason"), Direction::Add),
+            "/whitelist add steve"
+        );
+    }
+
+    #[test]
+    fn the_user_cache_has_no_command() {
+        assert!(console_command(ServerListFile::UserCache, "steve", None, Direction::Add).is_none());
     }
 }

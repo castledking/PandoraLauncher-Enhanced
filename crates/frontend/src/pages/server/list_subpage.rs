@@ -131,12 +131,40 @@ impl ServerListSubpage {
     /// afterwards which ones didn't match an account.
     fn open_add_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let file = self.file;
-        let instance_id = self.instance_id;
-        let backend_handle = self.backend_handle.clone();
+        let body = cx.new(|cx| AddNamesDialog::new(file, self.instance_id, &self.backend_handle, window, cx));
 
-        // Built here rather than inside the dialog. The dialog rebuilds its contents on
-        // every frame, so an input made in there was thrown away as fast as anything could
-        // be typed into it, and typing into it did nothing at all.
+        // Only the frame and the title live here. The contents are a view of their own, so
+        // that typing redraws them.
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.title(dialog_title(file)).overlay_closable(true).child(body.clone())
+        });
+    }
+}
+
+/// The body of the add dialog: a name box, the batch being built up, and the buttons.
+///
+/// Its own view rather than part of the dialog's own layout, so that typing redraws it.
+/// The dialog is drawn by the root, and the root is not told when an input inside a dialog
+/// changes, so a button worked out from what had been typed sat greyed out until
+/// something else happened to redraw it.
+struct AddNamesDialog {
+    file: ServerListFile,
+    instance_id: InstanceID,
+    backend_handle: BackendHandle,
+    draft: Entity<NameDraft>,
+    name_input: Entity<InputState>,
+    reason_input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl AddNamesDialog {
+    fn new(
+        file: ServerListFile,
+        instance_id: InstanceID,
+        backend_handle: &BackendHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let draft = cx.new(|_| NameDraft::default());
         let name_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -146,124 +174,143 @@ impl ServerListSubpage {
         let reason_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::server::lists::dialog::reason_placeholder()));
 
-        // The contents are rebuilt each frame, so this runs over and over. The cursor only
-        // goes into the name box the first time round.
-        let focused = std::rc::Rc::new(std::cell::Cell::new(false));
+        // Redraw on anything that changes what the buttons should be doing
+        let subscriptions = vec![
+            cx.subscribe(&name_input, |_, _, _: &InputEvent, cx| cx.notify()),
+            cx.subscribe(&reason_input, |_, _, _: &InputEvent, cx| cx.notify()),
+            cx.observe(&draft, |_, _, cx| cx.notify()),
+        ];
 
-        window.open_dialog(cx, move |dialog, window, cx| {
-            if !focused.replace(true) {
-                name_input.update(cx, |input, cx| input.focus(window, cx));
-            }
+        Self {
+            file,
+            instance_id,
+            backend_handle: backend_handle.clone(),
+            draft,
+            name_input,
+            reason_input,
+            _subscriptions: subscriptions,
+        }
+    }
+}
 
-            // The dialog lays out its own content, so the spacing comes from a column
-            // inside it rather than styles set on the dialog, which it draws over.
-            dialog.title(dialog_title(file)).overlay_closable(true).child(
-                v_flex()
-                    .gap_3()
-                    .child(h_flex().gap_2().child(Input::new(&name_input).flex_1()).child(
-                        Button::new("add-name").icon(PandoraIcon::Plus).on_click({
-                            let draft = draft.clone();
-                            let name_input = name_input.clone();
-                            move |_, window, cx| {
-                                let value: Arc<str> = name_input.read(cx).value().trim().into();
-                                if value.is_empty() {
-                                    return;
-                                }
+impl Render for AddNamesDialog {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let file = self.file;
+        let typed = self.name_input.read(cx).value();
+        let pending = pending_names(&self.draft.read(cx), &typed);
 
-                                let added = draft.update(cx, |draft, cx| {
-                                    if draft.names.contains(&value) {
-                                        return false;
-                                    }
-                                    draft.names.push(value);
-                                    cx.notify();
-                                    true
-                                });
+        let draft = self.draft.clone();
+        let name_input = self.name_input.clone();
 
-                                if added {
-                                    name_input.update(cx, |input, cx| {
-                                        input.set_value(String::new(), window, cx);
-                                    });
-                                }
+        v_flex()
+            .gap_3()
+            .child(h_flex().gap_2().child(Input::new(&self.name_input).flex_1()).child(
+                Button::new("add-name").icon(PandoraIcon::Plus).on_click({
+                    let draft = draft.clone();
+                    let name_input = name_input.clone();
+                    move |_, window, cx| {
+                        let value: Arc<str> = name_input.read(cx).value().trim().into();
+                        if value.is_empty() {
+                            return;
+                        }
+
+                        let added = draft.update(cx, |draft, cx| {
+                            if draft.names.contains(&value) {
+                                return false;
                             }
-                        }),
-                    ))
-                    .child(v_flex().gap_1().max_h(px(160.0)).overflow_y_scrollbar().children(
-                        draft.read(cx).names.iter().enumerate().map(|(index, name)| {
-                            h_flex()
-                                .gap_2()
-                                .text_sm()
-                                .child(
-                                    div()
-                                        .w_5()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(format!("{}.", index + 1)),
-                                )
-                                .child(div().flex_1().truncate().child(name.to_string()))
-                                .child(
-                                    Button::new(("remove-name", index))
-                                        .ghost()
-                                        .small()
-                                        .compact()
-                                        .icon(PandoraIcon::Close)
-                                        .on_click({
-                                            let draft = draft.clone();
-                                            let name = name.clone();
-                                            move |_, _, cx| {
-                                                draft.update(cx, |draft, cx| {
-                                                    draft.names.retain(|existing| existing != &name);
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                )
-                        }),
-                    ))
-                    .when(file != ServerListFile::BannedIps, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_2()
-                                .items_center()
-                                .child(div().w(px(112.0)).text_sm().child(t::server::lists::dialog::reason()))
-                                .child(Input::new(&reason_input).flex_1()),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .mt_2()
-                            .justify_end()
-                            .child(
-                                Button::new("cancel")
-                                    .label(t::common::cancel())
-                                    .on_click(|_, window, cx| window.close_dialog(cx)),
-                            )
-                            .child(confirm_button(file).disabled(draft.read(cx).names.is_empty()).on_click({
-                                let draft = draft.clone();
-                                let reason_input = reason_input.clone();
-                                let backend_handle = backend_handle.clone();
-                                move |_, window, cx| {
-                                    let names = Arc::from(draft.read(cx).names.as_slice());
-                                    let reason: Arc<str> = reason_input.read(cx).value().into();
-                                    let reason = reason.trim();
-                                    let reason = (!reason.is_empty()).then(|| Arc::from(reason));
+                            draft.names.push(value);
+                            cx.notify();
+                            true
+                        });
 
-                                    // The outcome isn't waited on here. The backend
-                                    // warns about names it couldn't resolve, which
-                                    // is the only part worth interrupting for.
-                                    let (send, _recv) = tokio::sync::oneshot::channel();
-                                    backend_handle.send(MessageToBackend::AddServerListEntries {
-                                        id: instance_id,
-                                        file,
-                                        names,
-                                        reason,
-                                        channel: send,
-                                    });
-                                    window.close_dialog(cx);
-                                }
-                            })),
-                    ),
+                        if added {
+                            name_input.update(cx, |input, cx| {
+                                input.set_value(String::new(), window, cx);
+                            });
+                        }
+                    }
+                }),
+            ))
+            .child(v_flex().gap_1().max_h(px(160.0)).overflow_y_scrollbar().children(
+                self.draft.read(cx).names.iter().enumerate().map(|(index, name)| {
+                    h_flex()
+                        .gap_2()
+                        .text_sm()
+                        .child(div().w_5().text_color(theme.muted_foreground).child(format!("{}.", index + 1)))
+                        .child(div().flex_1().truncate().child(name.to_string()))
+                        .child(
+                            Button::new(("remove-name", index))
+                                .ghost()
+                                .small()
+                                .compact()
+                                .icon(PandoraIcon::Close)
+                                .on_click({
+                                    let draft = draft.clone();
+                                    let name = name.clone();
+                                    move |_, _, cx| {
+                                        draft.update(cx, |draft, cx| {
+                                            draft.names.retain(|existing| existing != &name);
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                        )
+                }),
+            ))
+            // Only a ban has anywhere to put a reason. Whitelist and operator entries have
+            // no such field, so the box was asking for something that got thrown away.
+            .when(file == ServerListFile::BannedPlayers, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(div().w(px(112.0)).text_sm().child(t::server::lists::dialog::reason()))
+                        .child(Input::new(&self.reason_input).flex_1()),
+                )
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .mt_2()
+                    .justify_end()
+                    .child(
+                        Button::new("cancel")
+                            .label(t::common::cancel())
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(confirm_button(file).disabled(pending.is_empty()).on_click({
+                        let draft = draft.clone();
+                        let name_input = name_input.clone();
+                        let reason_input = self.reason_input.clone();
+                        let backend_handle = self.backend_handle.clone();
+                        let instance_id = self.instance_id;
+                        move |_, window, cx| {
+                            // Anything still sitting in the box counts as one more
+                            // name, so banning a single player is typing a name and
+                            // pressing the button, rather than two steps.
+                            let names =
+                                Arc::from(pending_names(&draft.read(cx), &name_input.read(cx).value()).as_slice());
+
+                            let reason: Arc<str> = reason_input.read(cx).value().into();
+                            let reason = reason.trim();
+                            let reason = (!reason.is_empty()).then(|| Arc::from(reason));
+
+                            // The outcome isn't waited on here. The backend warns
+                            // about names it couldn't resolve, which is the only
+                            // part worth interrupting for.
+                            let (send, _recv) = tokio::sync::oneshot::channel();
+                            backend_handle.send(MessageToBackend::AddServerListEntries {
+                                id: instance_id,
+                                file,
+                                names,
+                                reason,
+                                channel: send,
+                            });
+                            window.close_dialog(cx);
+                        }
+                    })),
             )
-        });
     }
 }
 
@@ -490,6 +537,19 @@ fn confirm_button(file: ServerListFile) -> Button {
         ServerListFile::Whitelist | ServerListFile::Operators => button.success(),
         ServerListFile::UserCache => button.primary(),
     }
+}
+
+/// The names a confirm would submit: the ones already added to the batch, plus whatever is
+/// still sitting in the box and hasn't been added yet.
+fn pending_names(draft: &NameDraft, typed: &str) -> Vec<Arc<str>> {
+    let typed: Arc<str> = typed.trim().into();
+
+    let mut names = draft.names.clone();
+    if !typed.is_empty() && !names.contains(&typed) {
+        names.push(typed);
+    }
+
+    names
 }
 
 /// An Add button for this file, coloured by what adding a name to it does: refusing

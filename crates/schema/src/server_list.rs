@@ -348,15 +348,21 @@ mod tests {
     }
 }
 
-/// What came of adding a batch of names to a list. Resolving a name needs the Mojang API,
-/// so some of them can come back having no account, and those can't be written since a
-/// server matches on the UUID.
+/// What came of adding a batch of names to a list.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerListAddOutcome {
-    /// The names that were resolved and written.
+    /// The names that were written.
     pub added: Vec<Arc<str>>,
-    /// The names no account answered for.
+    /// The names Mojang has no account for. A server matches a ban on the name alone until
+    /// it sees the player, so these are written without a UUID.
     pub unresolved: Vec<Arc<str>>,
+    /// The names that could not be looked up at all, because the API was rate limiting or
+    /// unreachable. Kept apart from `unresolved` since nothing was learned about these
+    /// ones, and saying "no such account" about a real account would be a lie.
+    pub lookup_failed: Vec<Arc<str>>,
+    /// Whether this went through the server's console rather than its files, which is what
+    /// happens when the server is up. The files are left alone in that case.
+    pub via_console: bool,
 }
 
 /// The timestamp format Minecraft writes into these files, which is not ISO 8601 but
@@ -423,5 +429,15 @@ mod unknown_field_checks {
             "expiresOn": "2026-01-01T00:00:00Z",
             "someFutureField": 1.5,
         }));
+    }
+}
+
+#[cfg(test)]
+mod mojang_id_format {
+    #[test]
+    fn tmp_unhyphenated_id_parses() {
+        let raw = "b5a7864d41d441f59e6b64f934b3ad4e";
+        println!("parse_str -> {:?}", uuid::Uuid::parse_str(raw));
+        assert!(uuid::Uuid::parse_str(raw).is_ok(), "Mojang returns ids with no hyphens");
     }
 }

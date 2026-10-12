@@ -1425,20 +1425,20 @@ impl GameOutputRoot {
     /// notice than a notification appearing over the window that is being watched.
     /// Where in the log a mouse position lands, in the log's own coordinate space.
     ///
-    /// The lines were recorded in the space of the log's content bounds, so a point that
-    /// arrived in window space is moved back by the scroll offset before it is matched.
+    /// The lines were recorded where they were painted, which is absolute window space: the
+    /// top of the log area, already carrying however far it is scrolled. A mouse position
+    /// arrives in that same space, so it is matched against them as it stands.
+    ///
+    /// Taking the top of the log area back off first, as this used to, left every point that
+    /// far too high, which put the selection on lines above the cursor by that whole
+    /// distance however far down the log it was.
     fn selection_position(&self, position: Point<Pixels>, cx: &App) -> Option<LogPosition> {
-        let scroll_state = self.scroll_handler.state.borrow();
-        let line_height = scroll_state.line_height;
-        let content_bounds = scroll_state.bounds;
-        drop(scroll_state);
-
+        let line_height = self.scroll_handler.state.borrow().line_height;
         if line_height <= px(0.0) {
             return None;
         }
 
-        let local = point(position.x - content_bounds.origin.x, position.y - content_bounds.origin.y);
-        self.game_output.read(cx).position_at(local, line_height)
+        self.game_output.read(cx).position_at(position, line_height)
     }
 
     fn begin_selection_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
@@ -1451,7 +1451,14 @@ impl GameOutputRoot {
         cx.notify();
     }
 
-    fn drag_selection_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// Moves the end of a selection. Only while the button is actually down: a move that
+    /// arrives after the button has been let go is the mouse being waved about, and taking
+    /// it as a drag left the highlight still growing with nothing held.
+    fn drag_selection_to(&mut self, position: Point<Pixels>, pressed: Option<MouseButton>, cx: &mut Context<Self>) {
+        if pressed != Some(MouseButton::Left) {
+            return;
+        }
+
         let Some(position) = self.selection_position(position, cx) else {
             return;
         };
@@ -1721,7 +1728,7 @@ impl Render for GameOutputRoot {
                         }),
                     )
                     .on_mouse_move(cx.listener(|root, event: &MouseMoveEvent, _, cx| {
-                        root.drag_selection_to(event.position, cx);
+                        root.drag_selection_to(event.position, event.pressed_button, cx);
                     }))
                     .on_mouse_up(
                         MouseButton::Left,

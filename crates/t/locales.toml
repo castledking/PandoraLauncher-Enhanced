@@ -4756,11 +4756,11 @@ en = "Game Output"
 [game_output.clear]
 en = "Clear"
 [game_output.open_logs]
-en = "Open Logs"
+en = "Open"
 [game_output.kill]
 en = "Kill"
 [game_output.copy_log]
-en = "Copy Log"
+en = "Copy"
 [game_output.copied]
 en = "Log copied to the clipboard"
 [game_output.copied_short]

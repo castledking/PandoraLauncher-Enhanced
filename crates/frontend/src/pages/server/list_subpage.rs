@@ -134,21 +134,29 @@ impl ServerListSubpage {
         let instance_id = self.instance_id;
         let backend_handle = self.backend_handle.clone();
 
+        // Built here rather than inside the dialog. The dialog rebuilds its contents on
+        // every frame, so an input made in there was thrown away as fast as anything could
+        // be typed into it, and typing into it did nothing at all.
+        let draft = cx.new(|_| NameDraft::default());
+        let name_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t::server::lists::dialog::name_placeholder())
+                .clean_on_escape()
+        });
+        let reason_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::server::lists::dialog::reason_placeholder()));
+
+        // The contents are rebuilt each frame, so this runs over and over. The cursor only
+        // goes into the name box the first time round.
+        let focused = std::rc::Rc::new(std::cell::Cell::new(false));
+
         window.open_dialog(cx, move |dialog, window, cx| {
-            let draft = cx.new(|_| NameDraft::default());
-            let name_input = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(t::server::lists::dialog::name_placeholder())
-                    .clean_on_escape()
-            });
-            let reason_input =
-                cx.new(|cx| InputState::new(window, cx).placeholder(t::server::lists::dialog::reason_placeholder()));
+            if !focused.replace(true) {
+                name_input.update(cx, |input, cx| input.focus(window, cx));
+            }
 
-            // Put the cursor in the name box, since the whole dialog is about typing one
-            name_input.update(cx, |input, cx| input.focus(window, cx));
-
-            // The dialog lays out its own content, so the spacing comes from a column inside
-            // it rather than from styles set on the dialog, which it draws over.
+            // The dialog lays out its own content, so the spacing comes from a column
+            // inside it rather than styles set on the dialog, which it draws over.
             dialog.title(dialog_title(file)).overlay_closable(true).child(
                 v_flex()
                     .gap_3()

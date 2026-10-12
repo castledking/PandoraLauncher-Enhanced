@@ -260,9 +260,19 @@ fn main() {
             // Fallback to primary: remove stale lock and retry as primary
             _ = std::fs::remove_file(&lockfile_path);
             _ = std::fs::remove_file(&socket);
-            let _ = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(std::env::args_os().skip(1))
-                .exec();
+            #[cfg(unix)]
+            {
+                let _ = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(std::env::args_os().skip(1))
+                    .exec();
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(std::env::args_os().skip(1))
+                    .spawn();
+                std::process::exit(0);
+            }
         }
     }
 }

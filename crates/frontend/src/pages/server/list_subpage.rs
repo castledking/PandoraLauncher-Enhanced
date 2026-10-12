@@ -43,6 +43,8 @@ pub struct ServerListSubpage {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<AddNamesDialogEvent> for ServerListSubpage {}
+
 impl ServerListSubpage {
     pub fn new(
         instance: &Entity<InstanceEntry>,
@@ -133,6 +135,15 @@ impl ServerListSubpage {
         let file = self.file;
         let body = cx.new(|cx| AddNamesDialog::new(file, self.instance_id, &self.backend_handle, window, cx));
 
+        // The dialog sits in its own window on top of this page, so nothing here is told
+        // when it closes. Without this the list kept showing what it was showing until
+        // something else happened to redraw the page, which meant a ban you had just made
+        // only appeared after going to another tab and back.
+        self._subscriptions
+            .push(cx.subscribe_in(&body, window, |this, _, _: &AddNamesDialogEvent, window, cx| {
+                this.reload(window, cx);
+            }));
+
         // Only the frame and the title live here. The contents are a view of their own, so
         // that typing redraws them.
         window.open_dialog(cx, move |dialog, _, _| {
@@ -140,6 +151,9 @@ impl ServerListSubpage {
         });
     }
 }
+
+/// The dialog saying it sent something, so the page behind it can go and look again.
+struct AddNamesDialogEvent;
 
 /// The body of the add dialog: a name box, the batch being built up, and the buttons.
 ///
@@ -192,6 +206,8 @@ impl AddNamesDialog {
         }
     }
 }
+
+impl EventEmitter<AddNamesDialogEvent> for AddNamesDialog {}
 
 impl Render for AddNamesDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

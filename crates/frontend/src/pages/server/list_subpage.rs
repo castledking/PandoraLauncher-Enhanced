@@ -5,6 +5,7 @@ use crate::{
     entity::instance::InstanceEntry,
     icon::PandoraIcon,
     png_render_cache::{self, ImageTransformation},
+    skin_thumbnail_cache::SkinThumbnailCache,
 };
 use bridge::{
     handle::BackendHandle,
@@ -24,6 +25,7 @@ use gpui_component::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{
+    minecraft_profile::SkinVariant,
     server_list::{ServerListEntry, ServerListFile},
     unique_bytes::UniqueBytes,
 };
@@ -41,12 +43,14 @@ enum LoadState {
     Loaded,
 }
 
-/// How an entry's head is drawn beside its name.
+/// How an entry is drawn beside its name. All three come off the same skin.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServerListDisplay {
     /// The head, flat, cropped out of the skin the way the account list shows one.
     #[default]
     Head2d,
+    /// The whole skin texture, flat, the way the skins page shows one.
+    Thumbnail,
     /// Just the head, in three dimensions and still.
     Head3d,
 }
@@ -54,7 +58,8 @@ pub enum ServerListDisplay {
 impl ServerListDisplay {
     fn next(self) -> Self {
         match self {
-            ServerListDisplay::Head2d => ServerListDisplay::Head3d,
+            ServerListDisplay::Head2d => ServerListDisplay::Thumbnail,
+            ServerListDisplay::Thumbnail => ServerListDisplay::Head3d,
             ServerListDisplay::Head3d => ServerListDisplay::Head2d,
         }
     }
@@ -72,6 +77,7 @@ pub struct ServerListSubpage {
     raw_input: Entity<TextareaState>,
     raw_dirty: bool,
     display: ServerListDisplay,
+    thumbnails: Entity<SkinThumbnailCache>,
     /// Skins already fetched, by the UUID on the entry. A name with no UUID, or a UUID
     /// Mojang has nothing for, simply never turns up here and is shown by name alone.
     skins: FxHashMap<Uuid, UniqueBytes>,
@@ -96,12 +102,17 @@ impl ServerListSubpage {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(t::server::lists::search()));
         let raw_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 12));
 
+        let thumbnails = SkinThumbnailCache::new(cx);
+
         let subscriptions = vec![
             cx.subscribe(&search, |_, _, _: &InputEvent, cx| cx.notify()),
             cx.subscribe(&raw_input, |this, _, _: &InputEvent, cx| {
                 this.raw_dirty = true;
                 cx.notify();
             }),
+            // The cache isn't an event emitter, but it does redraw itself when a render
+            // lands, and watching for that is what puts the thumbnail on screen
+            cx.observe(&thumbnails, |_, _, cx| cx.notify()),
         ];
 
         let mut this = Self {
@@ -115,6 +126,7 @@ impl ServerListSubpage {
             raw_input,
             raw_dirty: false,
             display: ServerListDisplay::default(),
+            thumbnails,
             skins: FxHashMap::default(),
             heads: FxHashMap::default(),
             requested: FxHashSet::default(),
@@ -227,6 +239,18 @@ impl ServerListSubpage {
                         .h(px(28.0))
                         .into_any_element(),
                 )
+            },
+            ServerListDisplay::Thumbnail => {
+                let variant = SkinVariant::Classic;
+                let thumbnails = self.thumbnails.update(cx, |cache, cx| cache.get_or_queue(&skin, variant, cx));
+
+                thumbnails.map(|(front, _)| {
+                    gpui::img(front)
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .into_any_element()
+                })
             },
             ServerListDisplay::Head3d => {
                 if let Some(head) = self.heads.get(&skin) {
@@ -487,10 +511,12 @@ impl Render for ServerListSubpage {
                         .compact()
                         .icon(match self.display {
                             ServerListDisplay::Head2d => PandoraIcon::Image,
+                            ServerListDisplay::Thumbnail => PandoraIcon::PackageOpen,
                             ServerListDisplay::Head3d => PandoraIcon::Box,
                         })
                         .tooltip(match self.display {
                             ServerListDisplay::Head2d => t::server::lists::display::head_2d(),
+                            ServerListDisplay::Thumbnail => t::server::lists::display::thumbnail(),
                             ServerListDisplay::Head3d => t::server::lists::display::head_3d(),
                         })
                         .on_click(cx.listener(|this, _, _, cx| {

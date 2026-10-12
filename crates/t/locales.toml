@@ -5327,6 +5327,80 @@ en = "build"
 [server.loader]
 en = "loader"
 
+[server.lists]
+en = "Server Lists"
+[server.lists.banned_players]
+en = "Bans"
+[server.lists.banned_ips]
+en = "IP Bans"
+[server.lists.whitelist]
+en = "Whitelist"
+[server.lists.operators]
+en = "Operators"
+[server.lists.user_cache]
+en = "User Cache"
+[server.lists.search]
+en = "Search..."
+[server.lists.raw]
+en = "Raw File"
+[server.lists.formatted]
+en = "Formatted"
+[server.lists.add_ban]
+en = "Ban Player"
+[server.lists.add_whitelist]
+en = "Add Player"
+[server.lists.add_operator]
+en = "Add Operator"
+[server.lists.add_ip]
+en = "Ban Address"
+[server.lists.unban]
+en = "Unban"
+[server.lists.remove]
+en = "Remove"
+[server.lists.empty_title]
+en = "Nothing here yet"
+[server.lists.empty_bans]
+en = "Nobody is banned"
+[server.lists.empty_ips]
+en = "No addresses are banned"
+[server.lists.empty_whitelist]
+en = "Nobody is whitelisted"
+[server.lists.empty_operators]
+en = "There are no operators"
+[server.lists.empty_user_cache]
+en = "The server has not seen anyone yet"
+[server.lists.empty_who_can_join]
+en = "Anyone can join right now. That changes as soon as you add someone here."
+[server.lists.empty_read_only]
+en = "The server writes this itself as players join, so it is shown rather than edited"
+[server.lists.no_match]
+en = "Nothing matches that"
+[server.lists.read_only]
+en = "Shown, not edited"
+[server.lists.save_raw]
+en = "Save File"
+[server.lists.dialog.title_ban]
+en = "Ban Players"
+[server.lists.dialog.title_whitelist]
+en = "Whitelist Players"
+[server.lists.dialog.title_operator]
+en = "Add Operators"
+[server.lists.dialog.title_ip]
+en = "Ban Addresses"
+[server.lists.dialog.name_placeholder]
+en = "Player name"
+[server.lists.dialog.reason]
+en = "Reason"
+[server.lists.dialog.reason_placeholder]
+en = "Why they are being banned"
+[server.lists.dialog.confirm_ban]
+en = "Ban"
+[server.lists.dialog.confirm_whitelist]
+en = "Add"
+[server.lists.dialog.confirm_operator]
+en = "Add"
+[server.lists.dialog.confirm_ip]
+en = "Ban"
 [server.column.platform]
 en = "Platform"
 [server.column.version]

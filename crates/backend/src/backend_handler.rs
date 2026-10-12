@@ -1493,6 +1493,19 @@ impl BackendState {
                 channel,
             } => {
                 let outcome = self.add_server_list_entries(id, file, names, reason).await;
+
+                // A name that no Mojang account matched still gets written, since the server
+                // resolves it when that player next joins. Worth saying out loud though, as
+                // otherwise it looks like every single one worked.
+                if !outcome.unresolved.is_empty() {
+                    self.send.send_warning(format!(
+                        "{} {} added. These didn't match a Mojang account and will be resolved when they next join: {}",
+                        outcome.added.len(),
+                        if outcome.added.len() == 1 { "player" } else { "players" },
+                        outcome.unresolved.join(", "),
+                    ));
+                }
+
                 _ = channel.send(outcome);
             },
             MessageToBackend::RemoveServerListEntry { id, file, name, uuid } => {

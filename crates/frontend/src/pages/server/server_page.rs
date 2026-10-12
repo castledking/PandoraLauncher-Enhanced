@@ -16,7 +16,7 @@ use crate::{
         instance::content_subpage::{ContentType, InstanceContentSubpage},
         page::Page,
         server::{
-            console_subpage::ServerConsoleSubpage, properties_subpage::ServerPropertiesSubpage,
+            console_subpage::ServerConsoleSubpage, properties_nav::ServerPropertiesNav,
             settings_subpage::ServerSettingsSubpage,
         },
         servers_page::{build_label, platform_icon, power_button, status_pill},
@@ -35,7 +35,7 @@ enum ServerTab {
 enum ServerSubpage {
     Console(Entity<ServerConsoleSubpage>),
     Content(Entity<InstanceContentSubpage>),
-    Properties(Entity<ServerPropertiesSubpage>),
+    Properties(Entity<ServerPropertiesNav>),
     Settings(Entity<ServerSettingsSubpage>),
 }
 
@@ -128,9 +128,9 @@ impl ServerPage {
                     None => Self::create_subpage(ServerTab::Console, instance, data, window, cx),
                 }
             },
-            ServerTab::Properties => ServerSubpage::Properties(
-                cx.new(|cx| ServerPropertiesSubpage::new(instance, backend_handle, window, cx)),
-            ),
+            ServerTab::Properties => {
+                ServerSubpage::Properties(cx.new(|cx| ServerPropertiesNav::new(instance, backend_handle, window, cx)))
+            },
             ServerTab::Settings => {
                 ServerSubpage::Settings(cx.new(|cx| ServerSettingsSubpage::new(instance, data, window, cx)))
             },

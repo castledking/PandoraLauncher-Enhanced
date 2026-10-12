@@ -431,6 +431,9 @@ impl Render for AddNamesDialog {
                         let reason_input = self.reason_input.clone();
                         let backend_handle = self.backend_handle.clone();
                         let instance_id = self.instance_id;
+                        // A handle to this view, so the event can be sent from here rather
+                        // than from whoever opened the dialog
+                        let dialog = cx.entity();
                         move |_, window, cx| {
                             // Anything still sitting in the box counts as one more
                             // name, so banning a single player is typing a name and
@@ -453,6 +456,12 @@ impl Render for AddNamesDialog {
                                 reason,
                                 channel: send,
                             });
+
+                            // Says the list behind this has changed. The dialog closes
+                            // itself straight after, and the page has no other way of
+                            // hearing about it, so without this it went on showing what it
+                            // had until something else redrew it.
+                            cx.update_entity(&dialog, |_, cx| cx.emit(AddNamesDialogEvent));
                             window.close_dialog(cx);
                         }
                     })),

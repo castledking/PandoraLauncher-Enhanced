@@ -542,25 +542,28 @@ impl RenderOnce for Button {
                         Size::Size(px) => this.size(px),
                         Size::XSmall => this.size_5(),
                         Size::Small => this.size_6(),
-                        Size::Large | Size::Medium => this.size_8(),
+                        Size::Large | Size::Medium => this.size_10(),
                     }
                 } else {
                     // Normal Button
                     match self.size {
                         Size::Size(size) => this.px(size * 0.2),
-                        Size::XSmall => this.h_5().px_1().when(self.compact, |this| this.min_w_5()),
-                        Size::Small => this
+                        Size::XSmall => this
                             .h_6()
+                            .px_1p5()
+                            .when(self.compact, |this| this.min_w_6()),
+                        Size::Small => this
+                            .h_8()
                             .px_2()
-                            .when(self.compact, |this| this.min_w_6().px_1p5()),
+                            .when(self.compact, |this| this.min_w_7().px_1p5()),
                         Size::Medium => this
-                            .h_8()
-                            .px_2p5()
-                            .when(self.compact, |this| this.min_w_8().px_2()),
-                        Size::Large => this
-                            .h_8()
+                            .h_10()
                             .px_3()
-                            .when(self.compact, |this| this.min_w_8().px_2()),
+                            .when(self.compact, |this| this.min_w_10().px_2p5()),
+                        Size::Large => this
+                            .h_11()
+                            .px_3p5()
+                            .when(self.compact, |this| this.min_w_11().px_3()),
                     }
                 }
             })
@@ -635,7 +638,11 @@ impl RenderOnce for Button {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .truncate()
-                        .line_height(relative(1.))
+                        // This box clips its own text, and `relative(1.)` makes it
+                        // exactly one em tall while Inter needs 1.21em of ascent and
+                        // descent, so descenders were cut off mid-glyph. Keep the
+                        // line box taller than the font's own line height instead.
+                        .line_height(relative(1.25))
                         .child(label),
                 )
             })

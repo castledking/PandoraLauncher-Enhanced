@@ -6,7 +6,7 @@ default-members = ["crates/pandora_launcher"]
 
 [workspace.package]
 edition = "2024"
-version = "3.0.19"
+version = "3.0.20"
 
 [profile.release]
 debug = "limited"
@@ -21,6 +21,9 @@ opt-level = 3
 [patch.crates-io]
 zbus-lockstep = { path = "patches/zbus-lockstep" }
 zbus-lockstep-macros = { path = "patches/zbus-lockstep-macros" }
+
+[patch."git+https://github.com/longbridge/gpui-component.git"]
+gpui-component = { path = "patches/gpui-component" }
 
 [workspace.dependencies]
 auth = { path = "crates/auth" }

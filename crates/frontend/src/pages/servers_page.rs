@@ -552,12 +552,12 @@ impl ServerList {
                         .fixed_left()
                         .sortable()
                         .resizable(true),
-                    Column::new("platform", t::server::column::platform())
+                    Column::new("version", t::server::column::version())
                         .width(120.)
                         .fixed_left()
                         .sortable()
                         .resizable(true),
-                    Column::new("version", t::server::column::version())
+                    Column::new("platform", t::server::column::platform())
                         .width(120.)
                         .fixed_left()
                         .sortable()

@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use bridge::handle::{BackendHandle, FrontendHandle};
 use bridge::message::{MessageToBackend, MessageToFrontend};
 use bridge::quit::QuitCoordinator;
@@ -215,20 +218,23 @@ fn main() {
             .build()
             .expect("Failed to initialize Tokio runtime");
 
-        runtime.block_on(async {
+        let connected = runtime.block_on(async {
             #[cfg(unix)]
             let connect = PlatformClientStream::connect(&socket).await;
             #[cfg(windows)]
             let connect = PlatformClientStream::connect(std::ffi::OsStr::new("pandora-launcher-socket")).await;
 
-            let mut conn = match connect {
-                Ok(conn) => conn,
+            match connect {
+                Ok(conn) => Some(conn),
                 Err(err) => {
-                    show_error_eprintln(format!("Error connecting to local socket: {err}"));
-                    return;
+                    // Socket doesn't exist (stale lock), fall back to primary
+                    eprintln!("Socket connection failed: {err}. Falling back to primary instance.");
+                    None
                 },
-            };
+            }
+        });
 
+        if let Some(mut conn) = connected {
             let argc = std::env::args_os().len();
             if argc >= u8::MAX as usize {
                 show_error_eprintln(format!("Too many arguments"));
@@ -242,12 +248,22 @@ fn main() {
                 bytes.push(0);
             }
 
-            use tokio::io::AsyncWriteExt;
-            if let Err(err) = conn.write_all(&bytes).await {
+            let write_result = runtime.block_on(async {
+                use tokio::io::AsyncWriteExt;
+                conn.write_all(&bytes).await
+            });
+            if let Err(err) = write_result {
                 show_error_eprintln(format!("Error sending request to local socket: {err}"));
                 return;
             }
-        });
+        } else {
+            // Fallback to primary: remove stale lock and retry as primary
+            _ = std::fs::remove_file(&lockfile_path);
+            _ = std::fs::remove_file(&socket);
+            let _ = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(std::env::args_os().skip(1))
+                .exec();
+        }
     }
 }
 

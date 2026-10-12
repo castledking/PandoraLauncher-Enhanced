@@ -58,7 +58,7 @@ impl PlayerModelWidget {
             animating_yaw: false,
             animating_pitch_positive: true,
             animating_pitch: false,
-            animating_animation: true,
+            animating_animation: InterfaceConfig::get(cx).player_model_animate,
             variant,
             last_drag: None,
             last_render: Instant::now(),
@@ -126,6 +126,7 @@ impl PlayerModelWidget {
             return;
         };
         self.animating_animation = false;
+        InterfaceConfig::get_mut(cx).player_model_animate = false;
         self.player_model_state.update(cx, |state, cx| {
             state.animation = change.start() as f64;
             cx.notify();
@@ -357,12 +358,13 @@ impl Render for PlayerModelWidget {
                                         Button::new("play-anim")
                                             .compact()
                                             .small()
-                                            .icon(PandoraIcon::pause_play(self.animating_animation))
-                                            .on_click(cx.listener(|widget, _, _, cx| {
-                                                widget.animating_animation = !widget.animating_animation;
-                                                widget.last_render = Instant::now();
-                                                cx.notify();
-                                            })),
+.icon(PandoraIcon::pause_play(self.animating_animation))
+                            .on_click(cx.listener(|widget, _, _, cx| {
+                                widget.animating_animation = !widget.animating_animation;
+                                InterfaceConfig::get_mut(cx).player_model_animate = widget.animating_animation;
+                                widget.last_render = Instant::now();
+                                cx.notify();
+                            })),
                                     ),
                             )
                             .child(Slider::new(&self.animation_slider_state)),

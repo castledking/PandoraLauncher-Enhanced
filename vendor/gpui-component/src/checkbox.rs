@@ -320,7 +320,9 @@ impl RenderOnce for Checkbox {
                                         .when(self.disabled, |this| {
                                             this.text_color(cx.theme().muted_foreground)
                                         })
-                                        .line_height(relative(1.))
+                                        // Inter's ascent and descent add up to 1.21em, so a
+                                        // 1em line box here cut the bottom off every 'y' and 'g'.
+                                        .line_height(relative(1.25))
                                         .child(label),
                                 )
                             } else {

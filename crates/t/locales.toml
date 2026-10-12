@@ -4521,6 +4521,12 @@ hu = "Rejtett"
 ru = "Не показывать"
 it = "Nascosto"
 
+[settings.general.general.show_quickplay_page]
+en = "Show quickplay page"
+
+[settings.general.general.show_quickplay_page_desc]
+en = "Show the quickplay page in the sidebar"
+
 [settings.general.privacy]
 en = "Privacy"
 tr = "Gizlilik"
@@ -4695,10 +4701,6 @@ en = "Sidebar"
 en = "Show sidebar icons"
 [settings.appearance.sidebar.show_sidebar_icons_desc]
 en = "Show icons on the sidebar next to the text"
-[settings.appearance.sidebar.show_quickplay_page]
-en = "Show quickplay page"
-[settings.appearance.sidebar.show_quickplay_page_desc]
-en = "Show the quickplay page in the sidebar"
 
 [settings.java]
 en = "Java"

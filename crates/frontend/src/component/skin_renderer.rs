@@ -348,10 +348,10 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool, cape_is_optifine_hd: bool
         (u + d + w + d, v + d, w, h)
     };
     add_face(p110, p010, p000, p100, back_u, back_v, back_w, back_h);
-    // Right face
-    add_face(p111, p110, p100, p101, u, v + d, d, h);
-    // Left face
-    add_face(p010, p011, p001, p000, u + d + w, v + d, d, h);
+    // Right face (player's right, -X) - texture runs from its back edge (u) to its front edge (u + d)
+    add_face(p010, p011, p001, p000, u, v + d, d, h);
+    // Left face (player's left, +X) - texture runs from its front edge (u + d + w) to its back edge (u + 2d + w)
+    add_face(p111, p110, p100, p101, u + d + w, v + d, d, h);
     // Top face
     add_face(p010, p110, p111, p011, u + d, v, w, d);
     // Bottom face

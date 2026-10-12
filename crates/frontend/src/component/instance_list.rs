@@ -386,17 +386,23 @@ impl InstanceList {
                     .child(v_flex().truncate().w_full().child(item.name.clone()).child(loader_and_version).pr_6()),
             )
             .child(h_flex().gap_2().child(play_button.flex_1().small()).child(
-                Button::new(("view", index)).flex_1().small().info().label(t::instance::view()).on_click({
-                    let name = item.name.clone();
-                    move |_, window, cx| {
-                        root::switch_page(
-                            ui::PageType::InstancePage { name: name.clone() },
-                            &[ui::PageType::Instances],
-                            window,
-                            cx,
-                        );
-                    }
-                }),
+                Button::new(("view", index))
+                    .flex_1()
+                    .small()
+                    .info()
+                    .icon(PandoraIcon::Settings2)
+                    .label(t::instance::view())
+                    .on_click({
+                        let name = item.name.clone();
+                        move |_, window, cx| {
+                            root::switch_page(
+                                ui::PageType::InstancePage { name: name.clone() },
+                                &[ui::PageType::Instances],
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
             ))
     }
 }
@@ -555,6 +561,7 @@ fn render_play_button(item: &InstanceEntry, index: usize, data: DataEntities) ->
     match item.status {
         InstanceStatus::NotRunning => Button::new(("start_instance", index))
             .success()
+            .icon(PandoraIcon::Play)
             .label(t::instance::start::label())
             .on_click(move |_, window, cx| {
                 root::start_instance(id, name.clone(), None, &data, window, cx);
@@ -562,12 +569,16 @@ fn render_play_button(item: &InstanceEntry, index: usize, data: DataEntities) ->
         InstanceStatus::Launching => Button::new(("launching", index)).warning().label("..."),
         InstanceStatus::Stopping => Button::new(("launching", index)).danger().label("..."),
         InstanceStatus::Running => {
-            Button::new(("kill_instance", index)).danger().label(t::instance::kill()).on_click({
-                let backend_handle = data.backend_handle.clone();
-                move |_, _, _| {
-                    backend_handle.send(MessageToBackend::KillInstance { id });
-                }
-            })
+            Button::new(("kill_instance", index))
+                .danger()
+                .icon(PandoraIcon::Close)
+                .label(t::instance::kill())
+                .on_click({
+                    let backend_handle = data.backend_handle.clone();
+                    move |_, _, _| {
+                        backend_handle.send(MessageToBackend::KillInstance { id });
+                    }
+                })
         },
     }
 }

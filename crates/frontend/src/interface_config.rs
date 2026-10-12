@@ -146,6 +146,8 @@ pub struct InterfaceConfig {
     pub skin_list_show_3d: bool,
     #[serde(default = "default_zoom", deserialize_with = "schema::try_deserialize")]
     pub player_model_zoom: i32,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub player_model_animate: bool,
 
     // Quickplay
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -400,6 +402,7 @@ impl Default for InterfaceConfig {
             migrated_instance_group_order: false,
             instance_group_assignments: Default::default(),
             player_model_zoom: default_zoom(),
+            player_model_animate: true,
             quickplay_preset: QuickplayPreset::Vanilla,
             quickplay_minecraft_version: None,
         }

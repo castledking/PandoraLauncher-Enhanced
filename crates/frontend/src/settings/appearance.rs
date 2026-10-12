@@ -119,15 +119,6 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                         ),
                         ..Default::default()
                     },
-                    SettingItem {
-                        title: t::settings::appearance::sidebar::show_quickplay_page,
-                        description: t::settings::appearance::sidebar::show_quickplay_page_desc,
-                        widget: SettingItemWidget::Switch(
-                            |cfg| cfg.show_quickplay_page,
-                            |cfg, val| cfg.show_quickplay_page = val,
-                        ),
-                        ..Default::default()
-                    },
                 ]
                 .into(),
                 searched_items: None,

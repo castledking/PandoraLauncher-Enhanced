@@ -5360,17 +5360,25 @@ en = "Remove"
 [server.lists.empty_title]
 en = "Nothing here yet"
 [server.lists.empty_bans]
-en = "Nobody is banned"
+en = "No bans yet"
 [server.lists.empty_ips]
-en = "No addresses are banned"
+en = "No banned addresses"
 [server.lists.empty_whitelist]
 en = "Nobody is whitelisted"
 [server.lists.empty_operators]
-en = "There are no operators"
+en = "No operators yet"
 [server.lists.empty_user_cache]
-en = "The server has not seen anyone yet"
-[server.lists.empty_who_can_join]
-en = "Anyone can join right now. That changes as soon as you add someone here."
+en = "No players seen yet"
+[server.lists.empty_bans_body]
+en = "Anyone can play on the server right now. Banning someone keeps them off without having to start it."
+[server.lists.empty_ips_body]
+en = "Blocked addresses cannot connect, whoever they are signed in as."
+[server.lists.empty_whitelist_body]
+en = "With nobody here, anyone can play on the server. Add names to restrict it to them."
+[server.lists.empty_operators_body]
+en = "Operators can run commands on the server, so they are worth adding carefully."
+[server.lists.empty_user_cache_body]
+en = "The server writes this itself as players join. Nothing to show until someone does."
 [server.lists.empty_read_only]
 en = "The server writes this itself as players join, so it is shown rather than edited"
 [server.lists.no_match]

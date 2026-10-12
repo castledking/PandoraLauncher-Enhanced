@@ -4,7 +4,7 @@ use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBack
 use gpui::{prelude::*, *};
 use gpui_component::Theme;
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, WindowExt,
+    ActiveTheme, Disableable, Icon, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
@@ -144,114 +144,117 @@ impl ServerListSubpage {
             let reason_input =
                 cx.new(|cx| InputState::new(window, cx).placeholder(t::server::lists::dialog::reason_placeholder()));
 
-            dialog
-                .title(dialog_title(file))
-                .overlay_closable(true)
-                .flex()
-                .flex_col()
-                .p_4()
-                .gap_3()
-                .child(h_flex().gap_2().child(Input::new(&name_input).flex_1()).child(
-                    Button::new("add-name").icon(PandoraIcon::Plus).on_click({
-                        let draft = draft.clone();
-                        let name_input = name_input.clone();
-                        move |_, window, cx| {
-                            let value: Arc<str> = name_input.read(cx).value().trim().into();
-                            if value.is_empty() {
-                                return;
-                            }
+            // Put the cursor in the name box, since the whole dialog is about typing one
+            name_input.update(cx, |input, cx| input.focus(window, cx));
 
-                            let added = draft.update(cx, |draft, cx| {
-                                if draft.names.contains(&value) {
-                                    return false;
+            // The dialog lays out its own content, so the spacing comes from a column inside
+            // it rather than from styles set on the dialog, which it draws over.
+            dialog.title(dialog_title(file)).overlay_closable(true).child(
+                v_flex()
+                    .gap_3()
+                    .child(h_flex().gap_2().child(Input::new(&name_input).flex_1()).child(
+                        Button::new("add-name").icon(PandoraIcon::Plus).on_click({
+                            let draft = draft.clone();
+                            let name_input = name_input.clone();
+                            move |_, window, cx| {
+                                let value: Arc<str> = name_input.read(cx).value().trim().into();
+                                if value.is_empty() {
+                                    return;
                                 }
-                                draft.names.push(value);
-                                cx.notify();
-                                true
-                            });
 
-                            if added {
-                                name_input.update(cx, |input, cx| {
-                                    input.set_value(String::new(), window, cx);
-                                });
-                            }
-                        }
-                    }),
-                ))
-                .child(v_flex().gap_1().max_h(px(200.0)).overflow_y_scrollbar().children(
-                    draft.read(cx).names.iter().enumerate().map(|(index, name)| {
-                        h_flex()
-                            .gap_2()
-                            .text_sm()
-                            .child(div().w_5().text_color(cx.theme().muted_foreground).child(format!("{}.", index + 1)))
-                            .child(div().flex_1().truncate().child(name.to_string()))
-                            .child(
-                                Button::new(("remove-name", index))
-                                    .ghost()
-                                    .small()
-                                    .compact()
-                                    .icon(PandoraIcon::Close)
-                                    .on_click({
-                                        let draft = draft.clone();
-                                        let name = name.clone();
-                                        move |_, _, cx| {
-                                            draft.update(cx, |draft, cx| {
-                                                draft.names.retain(|existing| existing != &name);
-                                                cx.notify();
-                                            });
-                                        }
-                                    }),
-                            )
-                    }),
-                ))
-                .when(file != ServerListFile::BannedIps, |this| {
-                    this.child(
-                        h_flex()
-                            .gap_2()
-                            .child(div().w(px(112.0)).text_sm().child(t::server::lists::dialog::reason()))
-                            .child(Input::new(&reason_input).flex_1()),
-                    )
-                })
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .justify_end()
-                        .child(
-                            Button::new("cancel")
-                                .label(t::common::cancel())
-                                .on_click(|_, window, _| window.remove_window()),
-                        )
-                        .child(
-                            Button::new("confirm")
-                                .danger()
-                                .label(dialog_confirm(file))
-                                .disabled(draft.read(cx).names.is_empty())
-                                .on_click({
-                                    let draft = draft.clone();
-                                    let reason_input = reason_input.clone();
-                                    let backend_handle = backend_handle.clone();
-                                    move |_, window, cx| {
-                                        let names = Arc::from(draft.read(cx).names.as_slice());
-                                        let reason: Arc<str> = reason_input.read(cx).value().into();
-                                        let reason = reason.trim();
-                                        let reason = (!reason.is_empty()).then(|| Arc::from(reason));
-
-                                        // The outcome isn't waited on here. The backend warns
-                                        // about names it couldn't resolve, which is the only
-                                        // part worth interrupting for.
-                                        let (send, _recv) = tokio::sync::oneshot::channel();
-                                        backend_handle.send(MessageToBackend::AddServerListEntries {
-                                            id: instance_id,
-                                            file,
-                                            names,
-                                            reason,
-                                            channel: send,
-                                        });
-                                        window.remove_window();
+                                let added = draft.update(cx, |draft, cx| {
+                                    if draft.names.contains(&value) {
+                                        return false;
                                     }
-                                }),
-                        ),
-                )
+                                    draft.names.push(value);
+                                    cx.notify();
+                                    true
+                                });
+
+                                if added {
+                                    name_input.update(cx, |input, cx| {
+                                        input.set_value(String::new(), window, cx);
+                                    });
+                                }
+                            }
+                        }),
+                    ))
+                    .child(v_flex().gap_1().max_h(px(160.0)).overflow_y_scrollbar().children(
+                        draft.read(cx).names.iter().enumerate().map(|(index, name)| {
+                            h_flex()
+                                .gap_2()
+                                .text_sm()
+                                .child(
+                                    div()
+                                        .w_5()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(format!("{}.", index + 1)),
+                                )
+                                .child(div().flex_1().truncate().child(name.to_string()))
+                                .child(
+                                    Button::new(("remove-name", index))
+                                        .ghost()
+                                        .small()
+                                        .compact()
+                                        .icon(PandoraIcon::Close)
+                                        .on_click({
+                                            let draft = draft.clone();
+                                            let name = name.clone();
+                                            move |_, _, cx| {
+                                                draft.update(cx, |draft, cx| {
+                                                    draft.names.retain(|existing| existing != &name);
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                        }),
+                    ))
+                    .when(file != ServerListFile::BannedIps, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(div().w(px(112.0)).text_sm().child(t::server::lists::dialog::reason()))
+                                .child(Input::new(&reason_input).flex_1()),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .mt_2()
+                            .justify_end()
+                            .child(
+                                Button::new("cancel")
+                                    .label(t::common::cancel())
+                                    .on_click(|_, window, cx| window.close_dialog(cx)),
+                            )
+                            .child(confirm_button(file).disabled(draft.read(cx).names.is_empty()).on_click({
+                                let draft = draft.clone();
+                                let reason_input = reason_input.clone();
+                                let backend_handle = backend_handle.clone();
+                                move |_, window, cx| {
+                                    let names = Arc::from(draft.read(cx).names.as_slice());
+                                    let reason: Arc<str> = reason_input.read(cx).value().into();
+                                    let reason = reason.trim();
+                                    let reason = (!reason.is_empty()).then(|| Arc::from(reason));
+
+                                    // The outcome isn't waited on here. The backend
+                                    // warns about names it couldn't resolve, which
+                                    // is the only part worth interrupting for.
+                                    let (send, _recv) = tokio::sync::oneshot::channel();
+                                    backend_handle.send(MessageToBackend::AddServerListEntries {
+                                        id: instance_id,
+                                        file,
+                                        names,
+                                        reason,
+                                        channel: send,
+                                    });
+                                    window.close_dialog(cx);
+                                }
+                            })),
+                    ),
+            )
         });
     }
 }
@@ -266,16 +269,17 @@ impl Render for ServerListSubpage {
             .py_2()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().flex_1())
-            .when(!self.raw, |this| this.child(Input::new(&self.search).w(px(220.0)).small()))
-            .child(
-                Button::new("add")
-                    .danger()
-                    .icon(PandoraIcon::Plus)
-                    .label(add_label(self.file))
-                    .disabled(!self.file.is_editable())
-                    .on_click(cx.listener(|this, _, window, cx| this.open_add_dialog(window, cx))),
-            )
+            .when(!self.raw, |this| {
+                this.child(Input::new(&self.search).w(px(220.0)).small()).child(div().flex_1())
+            })
+            .when(self.raw, |this| this.child(div().flex_1()))
+            // Left out entirely for the user cache. It is a record of who the server has
+            // already seen, written as players join, so there is nothing to add to it.
+            .when(self.file.is_editable(), |this| {
+                this.child(
+                    add_button(self.file).on_click(cx.listener(|this, _, window, cx| this.open_add_dialog(window, cx))),
+                )
+            })
             .child(
                 Button::new("toggle-raw")
                     .icon(PandoraIcon::File)
@@ -360,17 +364,52 @@ impl Render for ServerListSubpage {
         }
 
         let body = if empty {
-            v_flex()
-                .gap_1()
-                .p_4()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(if query.is_empty() {
-                    empty_title(self.file)
-                } else {
-                    t::server::lists::no_match().into()
-                }))
-                .when(query.is_empty(), |this| this.child(empty_body(self.file)))
+            let searching = !query.is_empty();
+            let editable = self.file.is_editable();
+
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    v_flex()
+                        .items_center()
+                        .gap_3()
+                        .max_w(px(360.0))
+                        .child(
+                            div()
+                                .size_12()
+                                .rounded_full()
+                                .bg(theme.secondary)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(Icon::new(file_icon(self.file)).size_6().text_color(theme.muted_foreground)),
+                        )
+                        .child(div().font_semibold().child(if searching {
+                            t::server::lists::no_match().into()
+                        } else {
+                            empty_title(self.file)
+                        }))
+                        .when(!searching, |this| {
+                            this.child(
+                                div()
+                                    .text_sm()
+                                    .text_center()
+                                    .text_color(theme.muted_foreground)
+                                    .child(empty_body(self.file)),
+                            )
+                        })
+                        // Only offered where there's something to add to. The user cache is
+                        // written by the server, so an Add here would be a lie.
+                        .when(!searching && editable, |this| {
+                            this.child(
+                                add_button(self.file)
+                                    .on_click(cx.listener(|this, _, window, cx| this.open_add_dialog(window, cx))),
+                            )
+                        }),
+                )
                 .into_any_element()
         } else {
             v_flex().gap_1().p_2().children(rows).into_any_element()
@@ -430,6 +469,39 @@ fn render_entry(
         .into_any_element()
 }
 
+fn confirm_button(file: ServerListFile) -> Button {
+    let button = Button::new("confirm").label(dialog_confirm(file));
+
+    match file {
+        ServerListFile::BannedPlayers | ServerListFile::BannedIps => button.danger(),
+        ServerListFile::Whitelist | ServerListFile::Operators => button.success(),
+        ServerListFile::UserCache => button.primary(),
+    }
+}
+
+/// An Add button for this file, coloured by what adding a name to it does: refusing
+/// someone, letting them in, or handing them the server.
+fn add_button(file: ServerListFile) -> Button {
+    let button = Button::new("add").icon(PandoraIcon::Plus).label(add_label(file));
+
+    match file {
+        ServerListFile::BannedPlayers | ServerListFile::BannedIps => button.danger(),
+        ServerListFile::Whitelist | ServerListFile::Operators => button.success(),
+        ServerListFile::UserCache => button.primary(),
+    }
+}
+
+/// The same icons the tabs use, so a list and the tab that opened it read as one thing.
+fn file_icon(file: ServerListFile) -> PandoraIcon {
+    match file {
+        ServerListFile::BannedPlayers => PandoraIcon::CircleX,
+        ServerListFile::BannedIps => PandoraIcon::Globe,
+        ServerListFile::Whitelist => PandoraIcon::CircleCheck,
+        ServerListFile::Operators => PandoraIcon::Award,
+        ServerListFile::UserCache => PandoraIcon::Users,
+    }
+}
+
 fn add_label(file: ServerListFile) -> SharedString {
     match file {
         ServerListFile::BannedPlayers => t::server::lists::add_ban().into(),
@@ -472,9 +544,10 @@ fn empty_title(file: ServerListFile) -> SharedString {
 
 fn empty_body(file: ServerListFile) -> SharedString {
     match file {
-        ServerListFile::BannedPlayers => t::server::lists::empty_who_can_join().into(),
-        ServerListFile::BannedIps => SharedString::default(),
-        ServerListFile::Whitelist => t::server::lists::empty_who_can_join().into(),
-        ServerListFile::Operators | ServerListFile::UserCache => SharedString::default(),
+        ServerListFile::BannedPlayers => t::server::lists::empty_bans_body().into(),
+        ServerListFile::BannedIps => t::server::lists::empty_ips_body().into(),
+        ServerListFile::Whitelist => t::server::lists::empty_whitelist_body().into(),
+        ServerListFile::Operators => t::server::lists::empty_operators_body().into(),
+        ServerListFile::UserCache => t::server::lists::empty_user_cache_body().into(),
     }
 }

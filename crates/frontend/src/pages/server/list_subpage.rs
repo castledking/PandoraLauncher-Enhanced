@@ -263,6 +263,11 @@ impl Render for ServerListSubpage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
 
+        // Nothing to search, filter or edit until something is in the file, and the empty
+        // state below carries the only button that does anything. Raw view keeps its
+        // toolbar in case the file is emptied out from under it.
+        let show_toolbar = !self.entries.is_empty() || self.raw;
+
         let toolbar = h_flex()
             .gap_2()
             .px_4()
@@ -307,7 +312,7 @@ impl Render for ServerListSubpage {
         if self.raw {
             return v_flex()
                 .size_full()
-                .child(toolbar)
+                .when(show_toolbar, |this| this.child(toolbar))
                 .child(
                     v_flex()
                         .flex_1()
@@ -417,7 +422,7 @@ impl Render for ServerListSubpage {
 
         v_flex()
             .size_full()
-            .child(toolbar)
+            .when(show_toolbar, |this| this.child(toolbar))
             .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(body))
             .into_any_element()
     }

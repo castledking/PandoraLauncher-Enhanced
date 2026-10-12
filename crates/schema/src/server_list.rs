@@ -79,6 +79,10 @@ pub struct BannedPlayer {
     pub uid: Option<Arc<str>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_updated: Option<Arc<str>>,
+    /// Whatever else was in the file. A server from a newer Minecraft writes fields this
+    /// launcher has no name for, and those are left exactly as they were found.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A banned address, which has no player behind it to show.
@@ -94,6 +98,9 @@ pub struct BannedIp {
     pub source: Option<Arc<str>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<Arc<str>>,
+    /// Whatever else was in the file, kept as it was found.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A whitelisted player.
@@ -102,28 +109,37 @@ pub struct WhitelistedPlayer {
     pub name: Arc<str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<Uuid>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// An operator, with the permission level it holds.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Operator {
     pub name: Arc<str>,
-    pub uuid: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<Uuid>,
     /// 0 to 4, where 4 is the highest a server grants.
     pub level: i32,
     /// Whether the operator is exempt from the player limit.
     #[serde(default)]
     pub bypasses_player_limit: bool,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A player the server has seen, as it remembers them between runs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedUser {
-    pub uuid: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<Uuid>,
     pub name: Arc<str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_on: Option<Arc<str>>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One entry from any of the lists, flattened for the UI. Fields the file in question
@@ -164,8 +180,8 @@ impl ServerListEntry {
             ServerListEntry::BannedPlayer(entry) => entry.uuid,
             ServerListEntry::BannedIp(_) => None,
             ServerListEntry::Whitelisted(entry) => entry.uuid,
-            ServerListEntry::Operator(entry) => Some(entry.uuid),
-            ServerListEntry::CachedUser(entry) => Some(entry.uuid),
+            ServerListEntry::Operator(entry) => entry.uuid,
+            ServerListEntry::CachedUser(entry) => entry.uuid,
         }
     }
 
@@ -323,6 +339,7 @@ mod tests {
         let entry = ServerListEntry::Whitelisted(WhitelistedPlayer {
             name: "ggpots".into(),
             uuid: Uuid::parse_str("710f96df-8b04-4c91-8828-b2b5afc45cd3").ok(),
+            extra: serde_json::Map::new(),
         });
 
         assert!(entry.matches("ggpots", None));
@@ -346,4 +363,65 @@ pub struct ServerListAddOutcome {
 /// `2026-11-11 03:14:50 -0800`.
 pub fn now_timestamp() -> Arc<str> {
     chrono::Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string().into()
+}
+
+#[cfg(test)]
+mod unknown_field_checks {
+    use super::*;
+
+    /// Each entry type has to hold on to fields it has no name for. A server from a newer
+    /// Minecraft writes fields this launcher has never heard of, and dropping them on the
+    /// next save would quietly edit the operator's server.
+    fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug>(
+        value: serde_json::Value,
+    ) -> T {
+        let parsed: T = serde_json::from_value(value.clone()).expect("parsed");
+        let written = serde_json::to_value(&parsed).expect("written");
+        assert_eq!(written, value, "a field was lost on the way through");
+        parsed
+    }
+
+    #[test]
+    fn a_ban_keeps_a_field_it_didnt_understand() {
+        round_trip::<BannedPlayer>(serde_json::json!({
+            "name": "Steve",
+            "reason": "griefing",
+            "someFutureField": 7,
+        }));
+    }
+
+    #[test]
+    fn a_banned_address_keeps_a_field_it_didnt_understand() {
+        round_trip::<BannedIp>(serde_json::json!({
+            "ip": "10.0.0.1",
+            "someFutureField": {"nested": true},
+        }));
+    }
+
+    #[test]
+    fn a_whitelisted_player_keeps_a_field_it_didnt_understand() {
+        round_trip::<WhitelistedPlayer>(serde_json::json!({
+            "name": "ggpots",
+            "someFutureField": "hello",
+        }));
+    }
+
+    #[test]
+    fn an_operator_keeps_a_field_it_didnt_understand() {
+        round_trip::<Operator>(serde_json::json!({
+            "name": "ggpots",
+            "level": 4,
+            "bypassesPlayerLimit": true,
+            "someFutureField": [1, 2, 3],
+        }));
+    }
+
+    #[test]
+    fn a_cached_user_keeps_a_field_it_didnt_understand() {
+        round_trip::<CachedUser>(serde_json::json!({
+            "name": "ggpots",
+            "expiresOn": "2026-01-01T00:00:00Z",
+            "someFutureField": 1.5,
+        }));
+    }
 }

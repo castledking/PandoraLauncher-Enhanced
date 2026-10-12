@@ -98,15 +98,10 @@ impl BackendState {
 
         let mut updated: Vec<ServerListEntry> = existing.to_vec();
         for (name, uuid) in wanted.iter().zip(uuids) {
-            let Some(uuid) = uuid else {
-                outcome.unresolved.push(name.clone());
-                continue;
-            };
-
             let entry = match file {
                 ServerListFile::BannedPlayers => ServerListEntry::BannedPlayer(BannedPlayer {
                     name: name.clone(),
-                    uuid: Some(uuid),
+                    uuid,
                     expires_on: None,
                     created: Some(created.clone()),
                     source: Some("Server".into()),
@@ -114,10 +109,12 @@ impl BackendState {
                     reason: reason.clone(),
                     uid: None,
                     last_updated: None,
+                    extra: Default::default(),
                 }),
                 ServerListFile::Whitelist => ServerListEntry::Whitelisted(WhitelistedPlayer {
                     name: name.clone(),
-                    uuid: Some(uuid),
+                    uuid,
+                    extra: Default::default(),
                 }),
                 ServerListFile::Operators => ServerListEntry::Operator(Operator {
                     name: name.clone(),
@@ -125,12 +122,23 @@ impl BackendState {
                     // The level a server grants by default when it promotes someone
                     level: 4,
                     bypasses_player_limit: false,
+                    extra: Default::default(),
                 }),
                 // Caught by is_editable above; nothing to add a player to
                 ServerListFile::BannedIps | ServerListFile::UserCache => continue,
             };
 
             outcome.added.push(name.clone());
+
+            // Still written without a UUID. The server matches a ban on name alone until the
+            // player is seen, which is the case that matters here: banning someone before
+            // they have ever joined is the whole reason to do this without starting the
+            // server. It can't be resolved for a name Mojang has no account for, such as
+            // anyone on an offline-mode server.
+            if entry.uuid().is_none() {
+                outcome.unresolved.push(name.clone());
+            }
+
             updated.push(entry);
         }
 

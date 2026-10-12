@@ -1,6 +1,17 @@
 use std::sync::Arc;
 
-use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend};
+use crate::{
+    component::skin_renderer::SkinRenderer,
+    entity::instance::InstanceEntry,
+    icon::PandoraIcon,
+    png_render_cache::{self, ImageTransformation},
+    skin_thumbnail_cache::SkinThumbnailCache,
+};
+use bridge::{
+    handle::BackendHandle,
+    instance::InstanceID,
+    message::{AccountSkinResult, MessageToBackend},
+};
 use gpui::{prelude::*, *};
 use gpui_component::Theme;
 use gpui_component::{
@@ -12,9 +23,13 @@ use gpui_component::{
     spinner::Spinner,
     v_flex,
 };
-use schema::server_list::{ServerListEntry, ServerListFile};
-
-use crate::{entity::instance::InstanceEntry, icon::PandoraIcon};
+use rustc_hash::{FxHashMap, FxHashSet};
+use schema::{
+    minecraft_profile::SkinVariant,
+    server_list::{ServerListEntry, ServerListFile},
+    unique_bytes::UniqueBytes,
+};
+use uuid::Uuid;
 
 /// The names typed so far in the add dialog. Held as an entity so the buttons can change it
 /// and have the dialog redraw.
@@ -28,6 +43,28 @@ enum LoadState {
     Loaded,
 }
 
+/// How an entry is drawn beside its name. All three come off the same skin.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ServerListDisplay {
+    /// The head, flat, cropped out of the skin the way the account list shows one.
+    #[default]
+    Head2d,
+    /// The whole skin texture, flat, the way the skins page shows one.
+    Thumbnail,
+    /// Just the head, in three dimensions and still.
+    Head3d,
+}
+
+impl ServerListDisplay {
+    fn next(self) -> Self {
+        match self {
+            ServerListDisplay::Head2d => ServerListDisplay::Thumbnail,
+            ServerListDisplay::Thumbnail => ServerListDisplay::Head3d,
+            ServerListDisplay::Head3d => ServerListDisplay::Head2d,
+        }
+    }
+}
+
 pub struct ServerListSubpage {
     instance_id: InstanceID,
     backend_handle: BackendHandle,
@@ -39,7 +76,16 @@ pub struct ServerListSubpage {
     raw: bool,
     raw_input: Entity<TextareaState>,
     raw_dirty: bool,
+    display: ServerListDisplay,
+    /// Skins already fetched, by the UUID on the entry. A name with no UUID, or a UUID
+    /// Mojang has nothing for, simply never turns up here and is shown by name alone.
+    skins: FxHashMap<Uuid, UniqueBytes>,
+    /// Heads rendered in 3D, kept per skin since rendering one costs far more than a crop.
+    heads: FxHashMap<UniqueBytes, Arc<RenderImage>>,
+    requested: FxHashSet<Uuid>,
+    thumbnails: Entity<SkinThumbnailCache>,
     _load_task: Task<()>,
+    _skin_tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -56,12 +102,15 @@ impl ServerListSubpage {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(t::server::lists::search()));
         let raw_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 12));
 
+        let thumbnails = SkinThumbnailCache::new(cx);
+
         let subscriptions = vec![
             cx.subscribe(&search, |_, _, _: &InputEvent, cx| cx.notify()),
             cx.subscribe(&raw_input, |this, _, _: &InputEvent, cx| {
                 this.raw_dirty = true;
                 cx.notify();
             }),
+            cx.observe(&thumbnails, |_, _, cx| cx.notify()),
         ];
 
         let mut this = Self {
@@ -74,7 +123,13 @@ impl ServerListSubpage {
             raw: false,
             raw_input,
             raw_dirty: false,
+            display: ServerListDisplay::default(),
+            skins: FxHashMap::default(),
+            heads: FxHashMap::default(),
+            requested: FxHashSet::default(),
+            thumbnails,
             _load_task: Task::ready(()),
+            _skin_tasks: Vec::new(),
             _subscriptions: subscriptions,
         };
         this.reload(window, cx);
@@ -104,6 +159,7 @@ impl ServerListSubpage {
             _ = this.update_in(cx, |this, window, cx| {
                 this.entries = entries;
                 this.state = LoadState::Loaded;
+                this.request_skins(cx);
 
                 // Repopulated only when it isn't holding unsaved edits, so coming back from
                 // the raw file doesn't throw away something being typed
@@ -116,6 +172,100 @@ impl ServerListSubpage {
             });
         });
         cx.notify();
+    }
+
+    /// Asks for the skin behind each name that has a UUID behind it.
+    ///
+    /// A banned address has no player to it, and a name Mojang has no account for has no
+    /// UUID, so those are simply shown by name. Anything already asked for or already
+    /// known is left alone, since a list can be reloaded often.
+    fn request_skins(&mut self, cx: &mut Context<Self>) {
+        if !self.file.describes_players() {
+            return;
+        }
+
+        for uuid in self.entries.iter().filter_map(|entry| entry.uuid()) {
+            if self.requested.contains(&uuid) {
+                continue;
+            }
+            self.requested.insert(uuid);
+
+            let (send, recv) = tokio::sync::oneshot::channel();
+            self.backend_handle.send(MessageToBackend::GetAccountSkin {
+                account: uuid,
+                result: send,
+            });
+
+            self._skin_tasks.push(cx.spawn(async move |this, cx| {
+                let skin = recv.await.ok().and_then(|result| match result {
+                    AccountSkinResult::Success { skin, .. } => skin,
+                    AccountSkinResult::NeedsLogin | AccountSkinResult::UnableToLoadSkin => None,
+                });
+
+                _ = this.update(cx, |this, cx| {
+                    if let Some(skin) = skin {
+                        this.skins.insert(uuid, skin);
+                    }
+                    cx.notify();
+                });
+            }));
+        }
+    }
+
+    /// The picture to draw beside a name, in whichever of the three ways is set.
+    ///
+    /// A name with no UUID behind it, or one Mojang has nothing for, gets nothing here and
+    /// is shown by name alone rather than as a placeholder that means nothing.
+    fn picture_for(&mut self, uuid: Uuid, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let skin = self.skins.get(&uuid)?.clone();
+
+        match self.display {
+            ServerListDisplay::Head2d => {
+                // The face out of the top left of the skin, which is where Minecraft keeps
+                // it. The hat layer is a second piece drawn on top and is left off here;
+                // a flat crop can't show both without compositing them first.
+                const HEAD: ImageTransformation = ImageTransformation::CropAndScale {
+                    min_x: 8,
+                    min_y: 8,
+                    width: 8,
+                    height: 8,
+                    scale: 6,
+                };
+                Some(
+                    png_render_cache::render_with_transform(skin, HEAD, cx)
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .into_any_element(),
+                )
+            },
+            ServerListDisplay::Thumbnail => {
+                let variant = SkinVariant::Classic;
+                let thumbnails = self.thumbnails.update(cx, |cache, cx| cache.get_or_queue(&skin, variant, cx));
+                thumbnails.map(|(front, _)| {
+                    gpui::img(front)
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .into_any_element()
+                })
+            },
+            ServerListDisplay::Head3d => {
+                if let Some(head) = self.heads.get(&skin) {
+                    return Some(gpui::img(head.clone()).w(px(32.0)).h(px(32.0)).into_any_element());
+                }
+
+                // Rendered here and handed back on the next pass through, since a head
+                // costs real work and a list redraws often
+                let rendered = SkinRenderer::new(Some(Arc::from(skin.to_vec().into_boxed_slice())), false)
+                    .render_head_to_buffer(64, 64);
+                if let Some(rendered) = rendered {
+                    self.heads.insert(skin, rendered.clone());
+                    Some(gpui::img(rendered).w(px(32.0)).h(px(32.0)).into_any_element())
+                } else {
+                    None
+                }
+            },
+        }
     }
 
     fn save_raw(&mut self, cx: &mut Context<Self>) {
@@ -349,6 +499,29 @@ impl Render for ServerListSubpage {
                 this.child(Input::new(&self.search).w(px(220.0)).small()).child(div().flex_1())
             })
             .when(self.raw, |this| this.child(div().flex_1()))
+            // Only the lists of players have anyone to show a skin of. A banned address
+            // is just an address, and the user cache is the server's own record.
+            .when(self.file.describes_players(), |this| {
+                this.child(
+                    Button::new("toggle-display")
+                        .small()
+                        .compact()
+                        .icon(match self.display {
+                            ServerListDisplay::Head2d => PandoraIcon::Image,
+                            ServerListDisplay::Thumbnail => PandoraIcon::PackageOpen,
+                            ServerListDisplay::Head3d => PandoraIcon::Box,
+                        })
+                        .tooltip(match self.display {
+                            ServerListDisplay::Head2d => t::server::lists::display::head_2d(),
+                            ServerListDisplay::Thumbnail => t::server::lists::display::thumbnail(),
+                            ServerListDisplay::Head3d => t::server::lists::display::head_3d(),
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.display = this.display.next();
+                            cx.notify();
+                        })),
+                )
+            })
             // Left out entirely for the user cache. It is a record of who the server has
             // already seen, written as players join, so there is nothing to add to it.
             .when(self.file.is_editable(), |this| {
@@ -405,7 +578,9 @@ impl Render for ServerListSubpage {
         }
 
         let query = self.search.read(cx).value().to_lowercase();
-        let shown: Vec<&ServerListEntry> = self
+        // Held by value rather than borrowed, so that working out each row's picture can
+        // borrow the page itself. The rows take what they need out of it anyway.
+        let shown: Vec<ServerListEntry> = self
             .entries
             .iter()
             .filter(|entry| {
@@ -413,6 +588,7 @@ impl Render for ServerListSubpage {
                     || entry.name().to_lowercase().contains(query.as_str())
                     || entry.reason().is_some_and(|reason| reason.to_lowercase().contains(query.as_str()))
             })
+            .cloned()
             .collect();
 
         let empty = shown.is_empty();
@@ -436,7 +612,17 @@ impl Render for ServerListSubpage {
                 this.reload(window, cx);
             };
 
-            rows.push(render_entry(&theme, index, entry.name(), entry.reason(), file.is_editable(), cx, remove));
+            let picture = entry.uuid().and_then(|uuid| self.picture_for(uuid, cx));
+            rows.push(render_entry(
+                &theme,
+                index,
+                entry.name(),
+                entry.reason(),
+                file.is_editable(),
+                picture,
+                cx,
+                remove,
+            ));
         }
 
         let body = if empty {
@@ -507,6 +693,7 @@ fn render_entry(
     name: Arc<str>,
     reason: Option<Arc<str>>,
     editable: bool,
+    picture: Option<AnyElement>,
     cx: &mut Context<ServerListSubpage>,
     remove: impl Fn(&mut ServerListSubpage, &mut Window, &mut Context<ServerListSubpage>) + 'static,
 ) -> AnyElement {
@@ -518,6 +705,7 @@ fn render_entry(
         .border_1()
         .border_color(theme.border)
         .items_center()
+        .when_some(picture, |this, picture| this.child(picture))
         .child(v_flex().flex_1().min_w_0().child(div().truncate().child(name.to_string())).when(
             reason.is_some(),
             |this| {

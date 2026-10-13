@@ -22,9 +22,6 @@ opt-level = 3
 zbus-lockstep = { path = "patches/zbus-lockstep" }
 zbus-lockstep-macros = { path = "patches/zbus-lockstep-macros" }
 
-[patch."git+https://github.com/longbridge/gpui-component.git"]
-gpui-component = { path = "patches/gpui-component" }
-
 [workspace.dependencies]
 auth = { path = "crates/auth" }
 backend = { path = "crates/backend" }

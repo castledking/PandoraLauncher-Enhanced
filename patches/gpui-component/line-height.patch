@@ -1,0 +1,28 @@
+--- a/src/button/button.rs
++++ b/src/button/button.rs
+@@ -635,7 +635,10 @@
+                         .overflow_hidden()
+                         .whitespace_nowrap()
+                         .truncate()
+-                        .line_height(relative(1.))
++                        // This box clips its own text, and `relative(1.)` makes it
++                        // exactly one em tall while Inter needs 1.21em of ascent and
++                        // descent, so descenders were cut off mid-glyph.
++                        .line_height(relative(1.25))
+                         .child(label),
+                 )
+             })
+
+--- a/src/checkbox.rs
++++ b/src/checkbox.rs
+@@ -320,7 +320,9 @@
+                                         .when(self.disabled, |this| {
+                                             this.text_color(cx.theme().muted_foreground)
+                                         })
+-                                        .line_height(relative(1.))
++                                        // Inter's ascent and descent add up to 1.21em,
++                                        // so a 1em line box cut the bottom off descenders.
++                                        .line_height(relative(1.25))
+                                         .child(label),
+                                 )
+                             } else {

@@ -3,7 +3,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool, OnceLock},
+    sync::{Arc, OnceLock, atomic::AtomicBool},
 };
 
 use bridge::{
@@ -213,28 +213,7 @@ pub fn clear_game_output_window() {
 
 /// Returns the handle of the currently open game output window, if any.
 pub fn get_game_output_window() -> Option<AnyWindowHandle> {
-    GAME_OUTPUT_WINDOW
-        .get()
-        .and_then(|mutex| mutex.lock().map(|guard| guard.clone()))
-}
-
-/// Finds an existing game output window that hasn't been closed yet.
-/// Returns the window handle if found, otherwise None.
-pub fn find_existing_game_output_window(cx: &App) -> Option<AnyWindowHandle> {
-    // First try to get the stored handle
-    if let Some(handle) = get_game_output_window() {
-        // Verify the window still exists and is a game output window
-        if let Ok(is_game) = handle.read(cx, |root: Entity<Root>, cx| {
-            root.read(cx).view().clone().downcast::<GameOutputRoot>().is_ok()
-        }) {
-            if is_game {
-                return Some(handle);
-            }
-        }
-        // If the stored handle is invalid, clear it
-        clear_game_output_window();
-    }
-    None
+    GAME_OUTPUT_WINDOW.get().and_then(|mutex| mutex.lock().map(|guard| guard.clone()))
 }
 
 /// Recomputes the frontend's half of the quit barrier from the windows that are open.

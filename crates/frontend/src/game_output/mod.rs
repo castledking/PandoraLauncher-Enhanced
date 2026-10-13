@@ -63,23 +63,8 @@ pub struct GameOutput {
 }
 
 impl GameOutput {
-    pub fn new(mut receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>, cx: &mut Context<Self>) -> Self {
-        let task = cx.spawn(async move |output, cx| {
-            loop {
-                let Some(msg) = receiver.recv().await else {
-                    return;
-                };
-                _ = output.update(cx, |output, cx| {
-                    output.pending.push(msg);
-
-                    while let Ok(msg) = receiver.try_recv() {
-                        output.pending.push(msg);
-                    }
-
-                    cx.notify();
-                });
-            }
-        });
+    pub fn new(receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>, cx: &mut Context<Self>) -> Self {
+        let task = Self::receive_lines(receiver, cx);
 
         Self {
             font: Font {
@@ -110,6 +95,36 @@ impl GameOutput {
             visible_lines: Default::default(),
             _receive_lines_task: task,
         }
+    }
+
+    fn receive_lines(
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |output, cx| {
+            loop {
+                let Some(msg) = receiver.recv().await else {
+                    return;
+                };
+                _ = output.update(cx, |output, cx| {
+                    output.pending.push(msg);
+
+                    while let Ok(msg) = receiver.try_recv() {
+                        output.pending.push(msg);
+                    }
+
+                    cx.notify();
+                });
+            }
+        })
+    }
+
+    /// Switches the output over to a new run's lines, appending them after what's already
+    /// shown. The previous run's receiver is dropped, so anything it still had queued goes.
+    pub fn attach(&mut self, receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>, cx: &mut Context<Self>) {
+        self._receive_lines_task = Self::receive_lines(receiver, cx);
+        self.scroll_state.borrow_mut().scrolling = GameOutputScrolling::Bottom;
+        cx.notify();
     }
 
     /// Turns a point in the log's own space into a spot in it, or `None` if it isn't over
@@ -1385,6 +1400,23 @@ impl ScrollbarHandle for ScrollHandler {
 }
 
 impl GameOutputRoot {
+    /// Reuses this output for another run: its lines are appended to the log and the
+    /// actions follow the new run's instance.
+    pub fn attach(
+        &mut self,
+        receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>,
+        target: Option<GameOutputTarget>,
+        cx: &mut Context<Self>,
+    ) {
+        self.game_output.update(cx, |game_output, cx| game_output.attach(receiver, cx));
+        self._instance_subscription = target
+            .as_ref()
+            .and_then(|target| target.instance.clone())
+            .map(|instance| cx.observe(&instance, |_, _, cx| cx.notify()));
+        self.target = target;
+        cx.notify();
+    }
+
     pub fn new(
         game_output: Entity<GameOutput>,
         target: Option<GameOutputTarget>,

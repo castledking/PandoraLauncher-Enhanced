@@ -109,17 +109,15 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
             },
             SettingGroup {
                 title: Some(t::settings::appearance::sidebar),
-                items: vec![
-                    SettingItem {
-                        title: t::settings::appearance::sidebar::show_sidebar_icons,
-                        description: t::settings::appearance::sidebar::show_sidebar_icons_desc,
-                        widget: SettingItemWidget::Switch(
-                            |cfg| cfg.show_sidebar_icons,
-                            |cfg, val| cfg.show_sidebar_icons = val,
-                        ),
-                        ..Default::default()
-                    },
-                ]
+                items: vec![SettingItem {
+                    title: t::settings::appearance::sidebar::show_sidebar_icons,
+                    description: t::settings::appearance::sidebar::show_sidebar_icons_desc,
+                    widget: SettingItemWidget::Switch(
+                        |cfg| cfg.show_sidebar_icons,
+                        |cfg, val| cfg.show_sidebar_icons = val,
+                    ),
+                    ..Default::default()
+                }]
                 .into(),
                 searched_items: None,
             },

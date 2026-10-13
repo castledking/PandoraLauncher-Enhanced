@@ -358,13 +358,14 @@ impl Render for PlayerModelWidget {
                                         Button::new("play-anim")
                                             .compact()
                                             .small()
-.icon(PandoraIcon::pause_play(self.animating_animation))
-                            .on_click(cx.listener(|widget, _, _, cx| {
-                                widget.animating_animation = !widget.animating_animation;
-                                InterfaceConfig::get_mut(cx).player_model_animate = widget.animating_animation;
-                                widget.last_render = Instant::now();
-                                cx.notify();
-                            })),
+                                            .icon(PandoraIcon::pause_play(self.animating_animation))
+                                            .on_click(cx.listener(|widget, _, _, cx| {
+                                                widget.animating_animation = !widget.animating_animation;
+                                                InterfaceConfig::get_mut(cx).player_model_animate =
+                                                    widget.animating_animation;
+                                                widget.last_render = Instant::now();
+                                                cx.notify();
+                                            })),
                                     ),
                             )
                             .child(Slider::new(&self.animation_slider_state)),

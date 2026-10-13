@@ -194,6 +194,35 @@ fn server_menu(server: &InstanceEntry, backend_handle: &BackendHandle, index: us
                 let folder = folder.clone();
                 move |_, window, cx| crate::open_folder(&folder, window, cx)
             }))
+            // A server is an instance underneath, so it renames and takes an icon
+            // exactly the way one does. The instance card offers the same two, in
+            // the same order, so the two menus read the same.
+            .item(PopupMenuItem::new(t::common::rename()).on_click({
+                let name = name.clone();
+                let backend_handle = backend_handle.clone();
+                move |_, window, cx| {
+                    crate::modals::rename_instance::open_rename_instance(
+                        id,
+                        name.clone(),
+                        backend_handle.clone(),
+                        window,
+                        cx,
+                    );
+                }
+            }))
+            .item(PopupMenuItem::new(t::instance::select_icon()).on_click({
+                let backend_handle = backend_handle.clone();
+                move |_, window, cx| {
+                    let send = backend_handle.clone();
+                    crate::modals::select_icon::open_select_icon(
+                        Box::new(move |icon, _| {
+                            send.send(MessageToBackend::SetInstanceIcon { id, icon: Some(icon) });
+                        }),
+                        window,
+                        cx,
+                    );
+                }
+            }))
             .separator()
             .item(
                 crate::component::instance_list::delete_menu_item(t::server::action::delete()).on_click({
@@ -391,15 +420,19 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
     let id = server.id;
     let index = id.index;
 
+    // Sized and shaped like the instance card's icon, so the two card views
+    // line up; the platform mark only stands in when there is no icon.
     let icon = if let Some(icon) = server.icon.clone() {
-        let transform = png_render_cache::ImageTransformation::Resize { width: 48, height: 48 };
+        let transform = png_render_cache::ImageTransformation::Resize { width: 64, height: 64 };
         png_render_cache::render_with_transform(icon, transform, cx)
             .rounded(theme.radius)
-            .size_12()
+            .size_16()
+            .min_w_16()
+            .min_h_16()
             .into_any_element()
     } else {
         div()
-            .size_12()
+            .size_16()
             .rounded(theme.radius)
             .bg(theme.primary.opacity(0.12))
             .flex()

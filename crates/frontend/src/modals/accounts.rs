@@ -142,12 +142,12 @@ impl Render for Accounts {
 
         let items = accounts.iter().enumerate().filter_map(|(account_index, account)| {
             let head = if hide_skins {
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/hidden_head.png".into())))
+                png_render_cache::embedded_image("images/hidden_head.png")
             } else if let Some(head) = &account.head {
                 let resize = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
                 png_render_cache::render_with_transform(head.clone(), resize, cx)
             } else {
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into())))
+                png_render_cache::embedded_image("images/default_head.png")
             };
             let account_name = account.username(InterfaceConfig::get(cx).hide_usernames);
 

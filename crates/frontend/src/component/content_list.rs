@@ -156,7 +156,7 @@ impl ContentListDelegate {
         let icon = if let Some(png_icon) = summary.content_summary.png_icon.as_ref() {
             png_render_cache::render(png_icon.clone(), cx)
         } else {
-            gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
+            png_render_cache::embedded_image("images/default_mod.png")
         };
 
         let (desc1, desc2) = create_descriptions(
@@ -560,7 +560,7 @@ impl ContentListDelegate {
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
             png_render_cache::render(png_icon.clone(), cx)
         } else {
-            gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
+            png_render_cache::embedded_image("images/default_mod.png")
         };
 
         let mut hasher = DefaultHasher::new();

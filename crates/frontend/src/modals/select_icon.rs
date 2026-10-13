@@ -5,6 +5,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     Icon, Sizable, WindowExt,
     button::{Button, ButtonVariants},
+    notification::NotificationType,
     v_flex,
 };
 use parking_lot::RwLock;
@@ -23,6 +24,12 @@ impl IconChoice {
             IconChoice::RawPng(bytes) => EmbeddedOrRaw::Raw((*bytes).into()),
         }
     }
+}
+
+/// What an icon file is allowed to be. PNG is still the common case; a GIF is
+/// accepted too, since the icon view can play one.
+fn is_supported_icon(bytes: &[u8]) -> bool {
+    matches!(image::guess_format(bytes), Ok(image::ImageFormat::Png) | Ok(image::ImageFormat::Gif))
 }
 
 pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, window: &mut Window, cx: &mut App) {
@@ -102,8 +109,32 @@ pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, wind
                                     return;
                                 };
                                 let Ok(bytes) = std::fs::read(path) else {
+                                    _ = cx.update(|window, cx| {
+                                        window.push_notification(
+                                            (NotificationType::Error, SharedString::from("Unable to read that file")),
+                                            cx,
+                                        );
+                                    });
                                     return;
                                 };
+
+                                // Checked here rather than after the fact, so an
+                                // unsupported file is refused outright instead of
+                                // turning into an icon that draws as the "missing"
+                                // placeholder. The dialog stays open to try again.
+                                if !is_supported_icon(&bytes) {
+                                    _ = cx.update(|window, cx| {
+                                        window.push_notification(
+                                            (
+                                                NotificationType::Error,
+                                                SharedString::from("Icons must be a png or a gif"),
+                                            ),
+                                            cx,
+                                        );
+                                    });
+                                    return;
+                                }
+
                                 _ = cx.update(move |window, cx| {
                                     if let Some(selected) = selected.write().take() {
                                         (selected)(EmbeddedOrRaw::Raw(bytes.into()), cx);

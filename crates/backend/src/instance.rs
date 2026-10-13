@@ -835,8 +835,7 @@ impl Instance {
             ContentFolderState::new(dot_minecraft_path.join(content_type.folder_name()).into())
         });
 
-        let icon_path = path.join("icon.png");
-        let icon = std::fs::read(icon_path).ok().map(|v| v.into());
+        let icon = read_icon(&path);
 
         Ok(Self {
             id: InstanceID::dangling(),
@@ -1144,6 +1143,71 @@ impl Instance {
             }
         }
         self.refresh_frozen_mods_summaries(backend, summaries);
+    }
+}
+
+/// The icon file names an instance folder may hold, in the order they win if
+/// somehow both are present. A GIF is listed after PNG so an existing PNG keeps
+/// being used until it is explicitly replaced.
+pub const ICON_FILE_NAMES: &[&str] = &["icon.png", "icon.gif"];
+
+/// The image formats an icon may be stored in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IconFormat {
+    Png,
+    Gif,
+}
+
+impl IconFormat {
+    /// The file name this format is stored under, or `None` if the bytes are
+    /// something we don't accept. Callers check this before writing anything, so
+    /// an unsupported file is refused rather than saved as a broken icon.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        match image::guess_format(bytes).ok()? {
+            image::ImageFormat::Png => Some(Self::Png),
+            image::ImageFormat::Gif => Some(Self::Gif),
+            _ => None,
+        }
+    }
+
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::Png => "icon.png",
+            Self::Gif => "icon.gif",
+        }
+    }
+
+    /// Removes whichever icon files are present except the one being written, so
+    /// a folder never carries two icons that disagree.
+    pub fn clear_others(self, root: &Path) {
+        for name in ICON_FILE_NAMES {
+            if *name != self.file_name() {
+                let path = root.join(name);
+                if path.exists() {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+    }
+}
+
+/// Reads an instance's icon, whichever format it was saved in.
+pub fn read_icon(root: &Path) -> Option<UniqueBytes> {
+    for name in ICON_FILE_NAMES {
+        if let Ok(bytes) = std::fs::read(root.join(name)) {
+            return Some(bytes.into());
+        }
+    }
+    None
+}
+
+/// Removes every icon file from an instance folder.
+pub fn clear_icon(root: &Path) {
+    for name in ICON_FILE_NAMES {
+        let path = root.join(name);
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 

@@ -28,7 +28,6 @@ use bridge::{
     quit::QuitCoordinator,
     safe_path::SafePath,
 };
-use image::ImageFormat;
 use indexmap::IndexSet;
 use parking_lot::{Mutex, RwLock};
 use reqwest::{StatusCode, redirect::Policy};
@@ -1582,15 +1581,14 @@ impl BackendState {
                 instance_info.instance_fallback_icon = Some(e.into());
             },
             Some(EmbeddedOrRaw::Raw(image_bytes)) => {
-                if let Ok(format) = image::guess_format(&*image_bytes) {
-                    if format == ImageFormat::Png {
-                        let icon_path = instance_dir.join("icon.png");
-                        crate::fs::write_safe(&icon_path, &*image_bytes).unwrap();
-                    } else {
-                        self.send.send_error("Unable to apply icon: only pngs are supported");
-                    }
-                } else {
-                    self.send.send_error("Unable to apply icon: unknown format");
+                let Some(format) = crate::instance::IconFormat::from_bytes(&image_bytes) else {
+                    self.send.send_error("Unable to apply icon: only png and gif are supported");
+                    return None;
+                };
+
+                format.clear_others(&instance_dir);
+                if crate::fs::write_safe(&instance_dir.join(format.file_name()), &*image_bytes).is_err() {
+                    self.send.send_error("Unable to save instance icon");
                 }
             },
             None => {},

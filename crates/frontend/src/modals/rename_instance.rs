@@ -32,19 +32,22 @@ pub fn open_rename_instance(
                         window.close_dialog(cx);
                     }
                 }))
-                .child(Button::new("rename").label("Rename").success().on_click({
+                .child(Button::new("rename").label(t::common::rename()).success().on_click({
                     let backend_handle = backend_handle.clone();
                     let input_state = input_state.clone();
                     let current_name = current_name.clone();
                     move |_, window, cx| {
                         let new_name = input_state.read(cx).value().trim().to_string();
                         if new_name.is_empty() {
-                            window.push_notification((NotificationType::Error, "Instance name cannot be empty"), cx);
+                            window.push_notification(
+                                (NotificationType::Error, SharedString::from("Name cannot be empty")),
+                                cx,
+                            );
                             return;
                         }
                         if new_name.contains('/') || new_name.contains('\\') {
                             window.push_notification(
-                                (NotificationType::Error, "Instance name must not contain path separators"),
+                                (NotificationType::Error, SharedString::from("Name must not contain path separators")),
                                 cx,
                             );
                             return;
@@ -60,6 +63,6 @@ pub fn open_rename_instance(
                 })),
         );
 
-        dialog.title("Rename instance").child(content)
+        dialog.title(t::common::rename()).child(content)
     });
 }

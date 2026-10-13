@@ -317,40 +317,27 @@ impl BackendState {
 
                 match icon {
                     Some(EmbeddedOrRaw::Raw(image_bytes)) => {
-                        if let Ok(format) = image::guess_format(&*image_bytes) {
-                            if format == image::ImageFormat::Png {
-                                let icon_path = root_path.join("icon.png");
-                                if let Err(err) = crate::fs::write_safe(&icon_path, &*image_bytes) {
-                                    log::error!("Unable to save instance icon: {:?}", err);
-                                    self.send.send_error("Unable to save instance icon");
-                                    return;
-                                }
-                                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                                    instance.icon = Some(image_bytes);
-                                    self.send.send(instance.create_modify_message());
-                                }
-                            } else {
-                                self.send.send_error("Unable to apply icon: only pngs are supported");
-                            }
-                        } else {
-                            self.send.send_error("Unable to apply icon: unknown format");
-                        }
-                    },
-                    Some(EmbeddedOrRaw::Embedded(_)) => {
-                        let icon_path = root_path.join("icon.png");
-                        if icon_path.exists() {
-                            let _ = std::fs::remove_file(&icon_path);
+                        // Refused before anything is written, so an unsupported
+                        // file leaves the old icon alone instead of replacing it
+                        // with something that can't be drawn.
+                        let Some(format) = crate::instance::IconFormat::from_bytes(&image_bytes) else {
+                            self.send.send_error("Unable to apply icon: only png and gif are supported");
+                            return;
+                        };
+
+                        format.clear_others(&root_path);
+                        if let Err(err) = crate::fs::write_safe(&root_path.join(format.file_name()), &*image_bytes) {
+                            log::error!("Unable to save instance icon: {:?}", err);
+                            self.send.send_error("Unable to save instance icon");
+                            return;
                         }
                         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                            instance.icon = None;
+                            instance.icon = Some(image_bytes);
                             self.send.send(instance.create_modify_message());
                         }
                     },
-                    None => {
-                        let icon_path = root_path.join("icon.png");
-                        if icon_path.exists() {
-                            let _ = std::fs::remove_file(&icon_path);
-                        }
+                    Some(EmbeddedOrRaw::Embedded(_)) | None => {
+                        crate::instance::clear_icon(&root_path);
                         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                             instance.icon = None;
                             self.send.send(instance.create_modify_message());

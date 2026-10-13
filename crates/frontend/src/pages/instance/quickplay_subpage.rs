@@ -252,7 +252,7 @@ impl ListDelegate for WorldsListDelegate {
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
             png_render_cache::render(png_icon.clone(), cx)
         } else {
-            gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
+            png_render_cache::embedded_image("images/default_world.png")
         };
 
         let description = v_flex().child(SharedString::from(summary.title.clone())).child(
@@ -350,7 +350,7 @@ impl ListDelegate for ServersListDelegate {
         let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
             png_render_cache::render(png_icon.clone(), cx)
         } else {
-            gpui::img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
+            png_render_cache::embedded_image("images/default_world.png")
         };
 
         let ip_text: SharedString = if hide_server_addresses {

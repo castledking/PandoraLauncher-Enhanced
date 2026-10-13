@@ -780,19 +780,16 @@ impl Render for LauncherUI {
             let hide_skins = InterfaceConfig::get(cx).hide_skins;
 
             let head = if hide_skins {
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/hidden_head.png".into())))
+                png_render_cache::embedded_image("images/hidden_head.png")
             } else if let Some(head) = &account.head {
                 let resize = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
                 png_render_cache::render_with_transform(head.clone(), resize, cx)
             } else {
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into())))
+                png_render_cache::embedded_image("images/default_head.png")
             };
             (head, account_name)
         } else {
-            (
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into()))),
-                t::account::none().into(),
-            )
+            (png_render_cache::embedded_image("images/default_head.png"), t::account::none().into())
         };
 
         let account_button = h_flex()

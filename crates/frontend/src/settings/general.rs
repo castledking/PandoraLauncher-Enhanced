@@ -56,6 +56,15 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         ..Default::default()
                     },
                     SettingItem {
+                        title: t::settings::general::general::reuse_game_output_window,
+                        description: t::settings::general::general::reuse_game_output_window_desc,
+                        widget: SettingItemWidget::Switch(
+                            |cfg| cfg.reuse_game_output_window,
+                            |cfg, val| cfg.reuse_game_output_window = val,
+                        ),
+                        ..Default::default()
+                    },
+                    SettingItem {
                         title: t::settings::general::general::show_quickplay_page,
                         description: t::settings::general::general::show_quickplay_page_desc,
                         widget: SettingItemWidget::Switch(

@@ -125,6 +125,8 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub live_game_output_display: LiveGameOutputDisplay,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub reuse_game_output_window: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub quit_on_main_closed: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub use_os_titlebar: bool,
@@ -384,6 +386,7 @@ impl Default for InterfaceConfig {
             curseforge_page_class_id: default_curseforge_class_id(),
             hide_main_window_on_launch: false,
             live_game_output_display: LiveGameOutputDisplay::default(),
+            reuse_game_output_window: false,
             quit_on_main_closed: false,
             use_os_titlebar: false,
             hide_server_addresses: false,

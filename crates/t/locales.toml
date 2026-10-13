@@ -4530,6 +4530,20 @@ de = "Versteckt"
 hu = "Rejtett"
 ru = "Не показывать"
 it = "Nascosto"
+[settings.general.general.reuse_game_output_window]
+en = "Reuse game output window"
+tr = "Oyun çıktısı penceresini yeniden kullan"
+de = "Spiel-Ausgabefenster wiederverwenden"
+hu = "Játék kimeneti ablak újrahasznosítása"
+ru = "Повторно использовать окно вывода игры"
+it = "Riutilizza la finestra di output del gioco"
+[settings.general.general.reuse_game_output_window_desc]
+en = "Reuse the same game output window if it hasn't been closed yet, instead of opening a new one"
+tr = "Henüz kapatılmamışsa aynı oyun çıktısı penceresini yeniden kullan, yerine yenisini açmak yerine"
+de = "Dasselbe Spiel-Ausgabefenster wiederverwenden, wenn es noch nicht geschlossen wurde, anstatt ein neues zu öffnen"
+hu = "Ha még nem zárta be, akkor ugyanazt a játék kimeneti ablakot újrafelhasználni, ahelyett, hogy újat nyisson meg"
+ru = "Использовать то же окно вывода игры, если оно еще не закрыто, вместо открытия нового"
+it = "Riutilizza la stessa finestra di output del gioco se non è stata ancora chiusa, invece di aprirne una nuova"
 
 [settings.general.general.show_quickplay_page]
 en = "Show quickplay page"

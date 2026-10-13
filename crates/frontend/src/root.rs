@@ -20,11 +20,14 @@ use ustr::Ustr;
 
 use crate::{
     Backwards, CloseWindow, Forwards, OpenSettings,
+    clear_game_output_window,
     entity::DataEntities,
+    find_existing_game_output_window,
     game_output::{GameOutput, GameOutputRoot, GameOutputTarget},
     interface_config::{InterfaceConfig, LiveGameOutputDisplay},
     modals,
     pages::instance::instance_page::InstanceSubpageType,
+    set_game_output_window,
     ui::{LauncherUI, PageType},
 };
 
@@ -196,6 +199,14 @@ pub fn start_instance(
 ) {
     let modal_action = ModalAction::default();
 
+    // Check if we should reuse an existing game output window
+    let reuse_game_output_window = InterfaceConfig::get(cx).reuse_game_output_window;
+    let existing_window = if reuse_game_output_window {
+        find_existing_game_output_window(cx)
+    } else {
+        None
+    };
+
     // Remove any stale live game outputs
     if let Some(instance_entry) = data.instances.read(cx).entries.get(&id).cloned() {
         instance_entry.update(cx, |entry, _| {
@@ -233,46 +244,86 @@ pub fn start_instance(
     });
 
     let data = data.clone();
+    let reuse_game_output_window = InterfaceConfig::get(cx).reuse_game_output_window;
+    let existing_window = if reuse_game_output_window {
+        find_existing_game_output_window(cx)
+    } else {
+        None
+    };
+
+    let data = data.clone();
     cx.spawn(async move |cx| {
         let Ok(receiver) = receiver.await else {
             return;
         };
 
+        let mut update_result = None;
+
         match live_game_output_display {
             LiveGameOutputDisplay::Hidden => {},
-            LiveGameOutputDisplay::SeparateWindow => {
-                _ = cx.open_window(separate_window_options, |window, cx| {
-                    let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
-                    let game_output_root = cx.new(|cx| {
-                        crate::observe_game_output_window_bounds(window, cx);
-                        GameOutputRoot::new(game_output.clone(), target.clone(), window, cx)
-                    });
-                    window.activate_window();
-                    cx.new(|cx| Root::new(game_output_root, window, cx))
-                });
+LiveGameOutputDisplay::SeparateWindow => {
+                let update_result_separate = match existing_window {
+                    Some(existing_window) => {
+                        // Reuse the existing game output window
+                        let update_result_inner = cx.update_window(existing_window, |_, window, cx| {
+                            let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
+                            let game_output_root = cx.new(|cx| {
+                                crate::observe_game_output_window_bounds(window, cx);
+                                GameOutputRoot::new(game_output.clone(), target.clone(), window, cx)
+                            });
+                            window.activate_window();
+                            cx.new(|cx| Root::new(game_output_root, window, cx))
+                        });
+
+                        // If the update failed (window was closed), clear the stored handle
+                        if update_result_inner.is_err() {
+                            clear_game_output_window();
+                        }
+                        Some(update_result_inner)
+                    }
+None => {
+                        // Open a new window
+                        let window_handle = cx.open_window(separate_window_options, |window, cx| {
+                            let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
+                            let game_output_root = cx.new(|cx| {
+                                crate::observe_game_output_window_bounds(window, cx);
+                                GameOutputRoot::new(game_output.clone(), target.clone(), window, cx)
+                            });
+                            window.activate_window();
+                            let root = cx.new(|cx| Root::new(game_output_root.clone(), window, cx));
+                            // Store the game output window handle for reuse
+                            set_game_output_window(window.window_handle());
+                            cx.new(|cx| Root::new(game_output_root, window, cx))
+                        });
+                        None
+                    }
+                };
+                update_result = update_result_separate;
             },
             LiveGameOutputDisplay::TabOnInstancePage => {
-                _ = cx.update_window(window_handle, |_, window, cx| {
+                let update_result = cx.update_window(window_handle, |_, window, cx| {
                     let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
                     let game_output_root =
                         cx.new(|cx| GameOutputRoot::new(game_output.clone(), target.clone(), window, cx));
 
-                    let Some(instance_entry) = data.instances.read(cx).entries.get(&id).cloned() else {
-                        return;
-                    };
+                    if let Some(instance_entry) = data.instances.read(cx).entries.get(&id).cloned() {
+                        instance_entry.update(cx, |entry, _| {
+                            entry.live_game_output = Some(game_output_root);
+                        });
 
-                    instance_entry.update(cx, |entry, _| {
-                        entry.live_game_output = Some(game_output_root);
-                    });
-
-                    let config = InterfaceConfig::get(cx);
-                    if matches!(config.main_page, PageType::InstancePage { .. })
-                        && config.instance_subpage != InstanceSubpageType::LiveGameOutput
-                    {
-                        InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::LiveGameOutput;
+                        let config = InterfaceConfig::get(cx);
+                        if matches!(config.main_page, PageType::InstancePage { .. })
+                            && config.instance_subpage != InstanceSubpageType::LiveGameOutput
+                        {
+                            InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::LiveGameOutput;
+                        }
                     }
                 });
             },
+        }
+
+        if update_result.as_ref().is_some_and(|r| r.is_err()) {
+            clear_game_output_window();
         }
     })
     .detach();
@@ -308,6 +359,13 @@ pub fn start_quickplay(
     let title: SharedString = "Starting Minecraft".into();
     modals::generic::show_modal(window, cx, title, t::instance::start::error().into(), modal_action);
 
+    let reuse_game_output_window = InterfaceConfig::get(cx).reuse_game_output_window;
+    let existing_window = if reuse_game_output_window {
+        find_existing_game_output_window(cx)
+    } else {
+        None
+    };
+
     let options = game_output_window_options(cx);
 
     cx.spawn(async move |cx| {
@@ -315,16 +373,34 @@ pub fn start_quickplay(
             return;
         };
 
-        _ = cx.open_window(options, |window, cx| {
-            let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
-            // Nothing to act on, since a quickplay launch has no instance to point at yet
-            let game_output_root = cx.new(|cx| {
-                crate::observe_game_output_window_bounds(window, cx);
-                GameOutputRoot::new(game_output.clone(), None, window, cx)
+        if let Some(existing_window) = existing_window {
+            // Reuse the existing game output window
+            let update_result = cx.update_window(existing_window, |_, window, cx| {
+                let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
+                let game_output_root = cx.new(|cx| {
+                    crate::observe_game_output_window_bounds(window, cx);
+                    GameOutputRoot::new(game_output.clone(), None, window, cx)
+                });
+                window.activate_window();
+                cx.new(|cx| Root::new(game_output_root, window, cx))
             });
-            window.activate_window();
-            cx.new(|cx| Root::new(game_output_root, window, cx))
-        });
+
+            // If the update failed (window was closed), clear the stored handle
+            if update_result.is_err() {
+                clear_game_output_window();
+            }
+        } else {
+            _ = cx.open_window(options, |window, cx| {
+                let game_output = cx.new(|cx| GameOutput::new(receiver, cx));
+                // Nothing to act on, since a quickplay launch has no instance to point at yet
+                let game_output_root = cx.new(|cx| {
+                    crate::observe_game_output_window_bounds(window, cx);
+                    GameOutputRoot::new(game_output.clone(), None, window, cx)
+                });
+                window.activate_window();
+                cx.new(|cx| Root::new(game_output_root, window, cx))
+            });
+        }
     })
     .detach();
 }

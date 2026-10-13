@@ -3,7 +3,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicBool, OnceLock},
 };
 
 use bridge::{
@@ -16,7 +16,7 @@ use gpui_component::{
     notification::{Notification, NotificationType},
 };
 use indexmap::IndexMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::{
     entity::{
@@ -182,6 +182,11 @@ pub fn start(
         });
 }
 
+// Global storage for the game output window handle.
+// This avoids the "window already on the stack" panic when trying to find
+// an existing game output window by iterating all windows.
+static GAME_OUTPUT_WINDOW: OnceLock<Mutex<Option<AnyWindowHandle>>> = OnceLock::new();
+
 /// Whether a window is one the user is driving the launcher through, as opposed to a
 /// game output window. A game output window is a log tail for a process, so it isn't a
 /// reason to keep the launcher running on its own.
@@ -191,6 +196,45 @@ fn is_game_output_window(window: AnyWindowHandle, cx: &App) -> bool {
             root.read(cx).view().clone().downcast::<GameOutputRoot>().is_ok()
         })
         .unwrap_or(false)
+}
+
+/// Stores the handle of the currently open game output window, if any.
+pub fn set_game_output_window(handle: AnyWindowHandle) {
+    let mutex = GAME_OUTPUT_WINDOW.get_or_init(|| Mutex::new(None::<AnyWindowHandle>));
+    mutex.lock().replace(handle);
+}
+
+/// Clears the stored game output window handle.
+pub fn clear_game_output_window() {
+    if let Some(mutex) = GAME_OUTPUT_WINDOW.get() {
+        let _ = mutex.lock().take();
+    }
+}
+
+/// Returns the handle of the currently open game output window, if any.
+pub fn get_game_output_window() -> Option<AnyWindowHandle> {
+    GAME_OUTPUT_WINDOW
+        .get()
+        .and_then(|mutex| mutex.lock().map(|guard| guard.clone()))
+}
+
+/// Finds an existing game output window that hasn't been closed yet.
+/// Returns the window handle if found, otherwise None.
+pub fn find_existing_game_output_window(cx: &App) -> Option<AnyWindowHandle> {
+    // First try to get the stored handle
+    if let Some(handle) = get_game_output_window() {
+        // Verify the window still exists and is a game output window
+        if let Ok(is_game) = handle.read(cx, |root: Entity<Root>, cx| {
+            root.read(cx).view().clone().downcast::<GameOutputRoot>().is_ok()
+        }) {
+            if is_game {
+                return Some(handle);
+            }
+        }
+        // If the stored handle is invalid, clear it
+        clear_game_output_window();
+    }
+    None
 }
 
 /// Recomputes the frontend's half of the quit barrier from the windows that are open.

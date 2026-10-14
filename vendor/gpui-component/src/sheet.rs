@@ -247,7 +247,11 @@ impl RenderOnce for Sheet {
             .position(point(window_paddings.left, window_paddings.top))
             .snap_to_window()
             .child(
+                // The base sheet anchors itself to the window origin, which drops the
+                // position above, so it has to be told to stay inside the CSD frame too.
                 BaseSheet::new(cx)
+                    .left(window_paddings.left)
+                    .top(window_paddings.top)
                     .w(size.width)
                     .h(size.height)
                     .focus_handle(self.focus_handle)

@@ -15,10 +15,12 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CRATE = ROOT / "vendor" / "gpui-component"
-PATCH = ROOT / "patches" / "gpui-component" / "line-height.patch"
+PATCHES = sorted((ROOT / "patches" / "gpui-component").glob("*.patch"))
 
 if not CRATE.is_dir():
     sys.exit(f"{CRATE} is missing - run `cargo vendor` first")
+if not PATCHES:
+    sys.exit("no patches to apply")
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -33,23 +35,29 @@ def patch_targets(text: str) -> list[str]:
     return targets
 
 
-targets = patch_targets(PATCH.read_text())
-if not targets:
-    sys.exit(f"{PATCH} lists no files")
-
-result = subprocess.run(
-    ["patch", "--quiet", "--forward", "-p1", "-i", str(PATCH)],
-    cwd=CRATE,
-)
-if result.returncode != 0:
-    # Already applied is fine; anything else means the upstream file moved.
-    already = all(
-        "1.25" in (CRATE / target).read_text()
-        for target in targets
-        if (CRATE / target).is_file()
+def run_patch(patch: pathlib.Path, *args: str) -> bool:
+    result = subprocess.run(
+        ["patch", "--quiet", "-p1", *args, "-i", str(patch)],
+        cwd=CRATE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    if not already:
-        sys.exit(f"failed to apply {PATCH}")
+    return result.returncode == 0
+
+
+targets = []
+for patch in PATCHES:
+    patch_files = patch_targets(patch.read_text())
+    if not patch_files:
+        sys.exit(f"{patch} lists no files")
+
+    # Already applied is fine; checked first so patch doesn't leave rejects behind
+    already = run_patch(patch, "--reverse", "--dry-run")
+    if not already and not run_patch(patch, "--forward"):
+        # Anything else means the upstream file moved.
+        sys.exit(f"failed to apply {patch}")
+
+    targets.extend(t for t in patch_files if t not in targets)
 
 checksums = CRATE / ".cargo-checksum.json"
 data = json.loads(checksums.read_text())

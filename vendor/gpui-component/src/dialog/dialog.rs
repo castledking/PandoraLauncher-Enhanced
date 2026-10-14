@@ -495,8 +495,12 @@ impl RenderOnce for Dialog {
                 window_paddings.left + window_paddings.right,
                 window_paddings.top + window_paddings.bottom,
             );
-        let y = self.props.margin_top.unwrap_or(view_size.height / 10.) + px(layer_ix as f32 * 16.);
-        let x = view_size.width / 2. - self.props.width / 2.;
+        // The base dialog anchors itself to the window origin rather than the CSD frame,
+        // so the frame's inset is added here to keep the popup centered inside it.
+        let y = window_paddings.top
+            + self.props.margin_top.unwrap_or(view_size.height / 10.)
+            + px(layer_ix as f32 * 16.);
+        let x = window_paddings.left + view_size.width / 2. - self.props.width / 2.;
 
         let base_size = window.text_style().font_size;
         let rem_size = window.rem_size();

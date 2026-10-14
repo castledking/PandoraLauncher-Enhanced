@@ -2,13 +2,15 @@ use std::{cmp::Ordering, io::Write, path::Path, sync::Arc, time::Duration};
 
 use bridge::{
     handle::BackendHandle,
-    instance::{InstanceContentSummary, InstanceID},
+    instance::{ContentFolder, InstanceContentSummary, InstanceID},
     message::MessageToBackend,
 };
 use gpui::{App, BorrowAppContext, SharedString, Task};
 use rand::RngCore;
 use rustc_hash::FxHashSet;
-use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType, quickplay::QuickplayPreset};
+use schema::{
+    content_label::HexColor, curseforge::CurseforgeClassId, modrinth::ModrinthProjectType, quickplay::QuickplayPreset,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -90,6 +92,21 @@ pub struct InterfaceConfig {
     pub instance_shaders_sort_key: InstanceContentSortKey,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_shaders_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_mods_display: ContentListDisplay,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_plugins_display: ContentListDisplay,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_resourcepacks_display: ContentListDisplay,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_shaders_display: ContentListDisplay,
+    /// The categories offered when labelling content, shared by every instance and server.
+    /// Which category an item is in is kept with the item itself, in its auxiliary file.
+    #[serde(
+        default = "default_content_categories",
+        deserialize_with = "deserialize_content_categories"
+    )]
+    pub content_categories: Vec<ContentCategory>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub show_snapshots_in_create_instance: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -200,6 +217,24 @@ pub const DEFAULT_FONT: &'static str = "Inter 24pt";
 pub const DEFAULT_FONT_SIZE: i32 = 16;
 
 impl InterfaceConfig {
+    pub fn content_list_display(&self, folder: ContentFolder) -> ContentListDisplay {
+        match folder {
+            ContentFolder::Mods => self.instance_mods_display,
+            ContentFolder::ResourcePacks => self.instance_resourcepacks_display,
+            ContentFolder::Shaders => self.instance_shaders_display,
+            ContentFolder::Plugins => self.instance_plugins_display,
+        }
+    }
+
+    pub fn content_list_display_mut(&mut self, folder: ContentFolder) -> &mut ContentListDisplay {
+        match folder {
+            ContentFolder::Mods => &mut self.instance_mods_display,
+            ContentFolder::ResourcePacks => &mut self.instance_resourcepacks_display,
+            ContentFolder::Shaders => &mut self.instance_shaders_display,
+            ContentFolder::Plugins => &mut self.instance_plugins_display,
+        }
+    }
+
     pub fn set_active_theme(&mut self, theme: SharedString) {
         if theme == DEFAULT_THEME {
             self.active_theme = None;
@@ -333,6 +368,102 @@ impl InstanceContentSortKey {
     }
 }
 
+/// How rows are laid out in a mod, resource pack, shader or plugin list.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentListViewMode {
+    /// Icon, name, version, authors and filename.
+    #[default]
+    Standard,
+    /// One line per item: the toggle, the filename and the item's buttons.
+    Compact,
+}
+
+impl ContentListViewMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            ContentListViewMode::Standard => t::instance::content::view::standard(),
+            ContentListViewMode::Compact => t::instance::content::view::compact(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ContentListDisplay {
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub view_mode: ContentListViewMode,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub show_icons: bool,
+}
+
+impl Default for ContentListDisplay {
+    fn default() -> Self {
+        Self {
+            view_mode: ContentListViewMode::Standard,
+            show_icons: true,
+        }
+    }
+}
+
+impl ContentListDisplay {
+    pub fn is_compact(self) -> bool {
+        self.view_mode == ContentListViewMode::Compact
+    }
+
+    /// Compact rows never have icons, whatever `show_icons` says.
+    pub fn icons_visible(self) -> bool {
+        !self.is_compact() && self.show_icons
+    }
+}
+
+/// A category content can be put in.
+///
+/// The built-in ones are Modrinth categories, so they take their translated name and icon from
+/// there; any other id is a name the user made up.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContentCategory {
+    pub id: Arc<str>,
+    #[serde(
+        default,
+        skip_serializing_if = "schema::skip_if_none",
+        deserialize_with = "schema::try_deserialize"
+    )]
+    pub color: Option<HexColor>,
+}
+
+/// Not a Modrinth category, but given a translated name all the same.
+pub const OTHER_CONTENT_CATEGORY: &str = "other";
+
+pub fn default_content_categories() -> Vec<ContentCategory> {
+    [
+        ("library", Some(0x64748b)),
+        ("worldgen", Some(0x22c55e)),
+        ("combat", Some(0xef4444)),
+        ("optimization", Some(0xeab308)),
+        ("utility", Some(0x3b82f6)),
+        ("game-mechanics", Some(0xa855f7)),
+        (OTHER_CONTENT_CATEGORY, None),
+    ]
+    .into_iter()
+    .map(|(id, color)| ContentCategory {
+        id: id.into(),
+        color: color.map(HexColor::new),
+    })
+    .collect()
+}
+
+/// Drops entries that don't parse instead of every category, and only falls back to the defaults
+/// when there's no list at all, so a user who deleted every category keeps it that way.
+fn deserialize_content_categories<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ContentCategory>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(entries) = value.as_array() else {
+        return Ok(default_content_categories());
+    };
+    Ok(entries.iter().filter_map(|entry| ContentCategory::deserialize(entry).ok()).collect())
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum PreferredAddContentSource {
@@ -380,6 +511,11 @@ impl Default for InterfaceConfig {
             instance_resourcepacks_sort_enabled_first: Default::default(),
             instance_shaders_sort_key: Default::default(),
             instance_shaders_sort_enabled_first: Default::default(),
+            instance_mods_display: Default::default(),
+            instance_plugins_display: Default::default(),
+            instance_resourcepacks_display: Default::default(),
+            instance_shaders_display: Default::default(),
+            content_categories: default_content_categories(),
             content_install_latest: true,
             content_filter_version: Default::default(),
             modrinth_page_project_type: default_modrinth_project_type(),
@@ -587,5 +723,85 @@ pub fn migrate_instance_group(instance_id: InstanceID, backend_handle: &BackendH
             instance_id,
             group: group.as_str().into(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_from_before_content_labels_gets_the_defaults() {
+        let config: InterfaceConfig =
+            serde_json::from_str(r#"{"preferred_add_content_source":"modrinth","instance_mods_sort_key":"filename"}"#)
+                .unwrap();
+
+        for folder in [
+            ContentFolder::Mods,
+            ContentFolder::ResourcePacks,
+            ContentFolder::Shaders,
+            ContentFolder::Plugins,
+        ] {
+            let display = config.content_list_display(folder);
+            assert_eq!(display.view_mode, ContentListViewMode::Standard);
+            assert!(display.show_icons);
+            assert!(display.icons_visible());
+        }
+        assert_eq!(config.content_categories, default_content_categories());
+    }
+
+    #[test]
+    fn display_is_kept_per_list() {
+        let mut config: InterfaceConfig = serde_json::from_str(r#"{"preferred_add_content_source":"file"}"#).unwrap();
+        config.content_list_display_mut(ContentFolder::Plugins).view_mode = ContentListViewMode::Compact;
+        config.content_list_display_mut(ContentFolder::ResourcePacks).show_icons = false;
+
+        let config: InterfaceConfig = serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(config.content_list_display(ContentFolder::Plugins).is_compact());
+        assert!(!config.content_list_display(ContentFolder::Mods).is_compact());
+        assert!(!config.content_list_display(ContentFolder::ResourcePacks).icons_visible());
+        assert!(config.content_list_display(ContentFolder::Mods).icons_visible());
+    }
+
+    #[test]
+    fn compact_rows_never_show_icons() {
+        let display = ContentListDisplay {
+            view_mode: ContentListViewMode::Compact,
+            show_icons: true,
+        };
+        assert!(!display.icons_visible());
+    }
+
+    #[test]
+    fn bad_category_entries_are_dropped_alone() {
+        let config: InterfaceConfig = serde_json::from_str(
+            r##"{"preferred_add_content_source":"modrinth","content_categories":[
+                {"id":"library","color":"#64748b"},{"color":"#ffffff"},{"id":"QoL","color":"nonsense"},7]}"##,
+        )
+        .unwrap();
+        assert_eq!(
+            config.content_categories,
+            vec![
+                ContentCategory {
+                    id: "library".into(),
+                    color: Some(HexColor::new(0x64748b)),
+                },
+                ContentCategory {
+                    id: "QoL".into(),
+                    color: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn deleting_every_category_sticks() {
+        let config: InterfaceConfig =
+            serde_json::from_str(r#"{"preferred_add_content_source":"modrinth","content_categories":[]}"#).unwrap();
+        assert!(config.content_categories.is_empty());
+
+        let config: InterfaceConfig =
+            serde_json::from_str(r#"{"preferred_add_content_source":"modrinth","content_categories":"what"}"#).unwrap();
+        assert_eq!(config.content_categories, default_content_categories());
     }
 }

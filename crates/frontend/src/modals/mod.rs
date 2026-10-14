@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod change_version;
+pub mod content_label;
 pub mod create_instance;
 pub mod create_server;
 pub mod curseforge_install;

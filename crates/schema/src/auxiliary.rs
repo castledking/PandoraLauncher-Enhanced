@@ -5,6 +5,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::content_label::ContentLabel;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AuxiliaryContentMeta {
     #[serde(
@@ -19,6 +21,30 @@ pub struct AuxiliaryContentMeta {
         deserialize_with = "crate::try_deserialize"
     )]
     pub disabled_children: AuxDisabledChildren,
+    /// The user's category and highlight colour for this item.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub label: ContentLabel,
+    /// Labels for a modpack's own files, keyed by [`crate::content_label::child_label_keys`].
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub child_labels: BTreeMap<Arc<str>, ContentLabel>,
+}
+
+impl AuxiliaryContentMeta {
+    /// Whether there is nothing worth keeping a file for.
+    pub fn is_empty(&self) -> bool {
+        self.applied_overrides == AuxAppliedOverrides::default()
+            && self.disabled_children == AuxDisabledChildren::default()
+            && self.label.is_empty()
+            && self.child_labels.is_empty()
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,5 +97,57 @@ impl AuxDisabledChildren {
             }
             !self.disabled_filenames.contains(filename)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content_label::HexColor;
+
+    #[test]
+    fn files_from_before_labels_still_load() {
+        let json = r#"{"disabled_children":{"disabled_ids":["sodium"],"disabled_names":[],"disabled_filenames":[],
+            "enabled_ids":[],"enabled_names":[],"enabled_filenames":[]}}"#;
+        let aux: AuxiliaryContentMeta = serde_json::from_str(json).unwrap();
+        assert!(aux.disabled_children.disabled_ids.contains("sodium"));
+        assert!(aux.label.is_empty());
+        assert!(aux.child_labels.is_empty());
+        assert!(!aux.is_empty());
+    }
+
+    #[test]
+    fn label_only_file_round_trips() {
+        let mut aux = AuxiliaryContentMeta::default();
+        assert!(aux.is_empty());
+
+        aux.label.category = Some("optimization".into());
+        aux.child_labels.insert(
+            "id:sodium".into(),
+            ContentLabel {
+                category: None,
+                color: Some(HexColor::new(0xf59e0b)),
+            },
+        );
+        assert!(!aux.is_empty());
+
+        let json = serde_json::to_string(&aux).unwrap();
+        assert_eq!(
+            json,
+            r##"{"label":{"category":"optimization"},"child_labels":{"id:sodium":{"color":"#f59e0b"}}}"##
+        );
+
+        let read: AuxiliaryContentMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(read.label, aux.label);
+        assert_eq!(read.child_labels, aux.child_labels);
+    }
+
+    #[test]
+    fn corrupt_label_does_not_lose_disabled_children() {
+        let json = r#"{"label":42,"disabled_children":{"disabled_ids":["sodium"],"disabled_names":[],
+            "disabled_filenames":[],"enabled_ids":[],"enabled_names":[],"enabled_filenames":[]}}"#;
+        let aux: AuxiliaryContentMeta = serde_json::from_str(json).unwrap();
+        assert!(aux.label.is_empty());
+        assert!(aux.disabled_children.disabled_ids.contains("sodium"));
     }
 }

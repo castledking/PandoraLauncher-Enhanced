@@ -4041,6 +4041,96 @@ hu = "Bekapcsolt először"
 ru = "Сначала включённые"
 fr = "Activé en premier"
 it = "Attivato per primo"
+[instance.content.view.prefix]
+en = "View: "
+[instance.content.view.standard]
+en = "Standard"
+[instance.content.view.compact]
+en = "Compact"
+[instance.content.view.show_icons]
+en = "Show icons"
+[instance.content.view.icons_hidden_in_compact]
+en = "Show icons (never in compact rows)"
+[instance.content.label.category]
+en = "Category"
+[instance.content.label.no_category]
+en = "No category"
+[instance.content.label.new_category]
+en = "New category…"
+[instance.content.label.manage_categories]
+en = "Manage categories…"
+[instance.content.label.highlight_color]
+en = "Highlight color"
+[instance.content.label.no_color]
+en = "No highlight"
+[instance.content.label.category_color]
+en = "Use category color"
+[instance.content.label.custom_color]
+en = "Custom color…"
+[instance.content.label.clear]
+en = "Remove category and color"
+[instance.content.label.selected_count]
+en = "${count: usize} selected"
+[instance.content.label.other]
+en = "Other"
+[instance.content.label.color.red]
+en = "Red"
+[instance.content.label.color.orange]
+en = "Orange"
+[instance.content.label.color.yellow]
+en = "Yellow"
+[instance.content.label.color.green]
+en = "Green"
+[instance.content.label.color.teal]
+en = "Teal"
+[instance.content.label.color.blue]
+en = "Blue"
+[instance.content.label.color.purple]
+en = "Purple"
+[instance.content.label.color.pink]
+en = "Pink"
+[instance.content.label.color.gray]
+en = "Gray"
+[instance.content.label.color_dialog.hex]
+en = "HEX color"
+[instance.content.label.color_dialog.invalid]
+en = "Enter a color like #3b82f6 or #38f"
+[instance.content.label.color_dialog.preview]
+en = "Preview"
+[instance.content.label.color_dialog.remove]
+en = "Remove color"
+[instance.content.label.color_dialog.apply]
+en = "Apply"
+[instance.content.label.manage.description]
+en = "Categories are shared by every instance and server. A category's color tints the rows in it, unless a row has a highlight color of its own."
+[instance.content.label.manage.empty]
+en = "There are no categories. Add one, or restore the defaults."
+[instance.content.label.manage.add]
+en = "Add category"
+[instance.content.label.manage.restore_defaults]
+en = "Restore defaults"
+[instance.content.label.manage.set_color]
+en = "Change color"
+[instance.content.label.manage.delete]
+en = "Delete category"
+[instance.content.label.manage.done]
+en = "Done"
+[instance.content.label.manage.color_title]
+en = "Color for ${category: &str}"
+[instance.content.label.manage.new_title]
+en = "New category"
+[instance.content.label.manage.name]
+en = "Name"
+[instance.content.label.manage.name_placeholder]
+en = "Quality of life"
+[instance.content.label.manage.color]
+en = "Color"
+[instance.content.label.manage.create]
+en = "Create"
+[instance.content.label.manage.empty_name]
+en = "Give the category a name"
+[instance.content.label.manage.duplicate]
+en = "There is already a category called ${name: &str}"
 [instance.content.install.file_invalid_sha1]
 en = "File ${filename: &str} has invalid sha1: ${sha1: &str}"
 tr = "${filename: &str} dosyasının SHA-1 özeti geçersiz: ${sha1: &str}"

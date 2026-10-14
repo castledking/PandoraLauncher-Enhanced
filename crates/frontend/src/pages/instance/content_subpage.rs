@@ -15,7 +15,7 @@ use gpui_component::{
     h_flex,
     input::SelectAll,
     list::{List, ListState},
-    menu::PopupMenuItem,
+    menu::{DropdownMenu, PopupMenuItem},
     notification::{Notification, NotificationType},
     select::{Select, SelectEvent, SelectState},
     switch::Switch,
@@ -29,6 +29,7 @@ use schema::{
     loader::Loader,
     modrinth::ModrinthProjectType,
 };
+use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
@@ -40,7 +41,9 @@ use crate::{
         DataEntities,
         instance::{ContentStates, InstanceEntry},
     },
-    interface_config::{InstanceContentSortKey, InterfaceConfig, PreferredAddContentSource},
+    interface_config::{
+        ContentListDisplay, ContentListViewMode, InstanceContentSortKey, InterfaceConfig, PreferredAddContentSource,
+    },
     root,
     ui::PageType,
 };
@@ -190,6 +193,10 @@ impl ContentType {
             ContentType::Shaders => config.instance_shaders_sort_enabled_first = value,
             ContentType::Plugins => config.instance_plugins_sort_enabled_first = value,
         }
+    }
+
+    fn display(self, config: &InterfaceConfig) -> ContentListDisplay {
+        config.content_list_display(self.content_folder())
     }
 }
 
@@ -495,6 +502,7 @@ impl Render for InstanceContentSubpage {
             .child(
                 div().child(Select::new(&self.sort_dropdown).small().title_prefix(t::instance::content::sort_prefix())),
             )
+            .child(div().child(self.render_view_menu(cx)))
             .child(
                 h_flex()
                     .gap_1()
@@ -565,6 +573,51 @@ impl Render for InstanceContentSubpage {
 }
 
 impl InstanceContentSubpage {
+    /// The View menu: standard or compact rows, and whether standard rows show icons.
+    fn render_view_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let display = self.content_type.display(InterfaceConfig::get(cx));
+        let this = cx.entity();
+
+        Button::new("view_mode")
+            .outline()
+            .small()
+            .label(format!("{}{}", t::instance::content::view::prefix(), display.view_mode.name()))
+            .dropdown_caret(true)
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
+                let display = this.read(cx).content_type.display(InterfaceConfig::get(cx));
+
+                let menu = ContentListViewMode::iter().fold(menu, |menu, view_mode| {
+                    menu.item(PopupMenuItem::new(view_mode.name()).checked(display.view_mode == view_mode).on_click(
+                        window.listener_for(&this, move |page, _, _, cx| {
+                            page.update_display(|display| display.view_mode = view_mode, cx);
+                        }),
+                    ))
+                });
+
+                // Compact rows never have icons, so the choice only applies to standard rows
+                let show_icons_label = if display.is_compact() {
+                    t::instance::content::view::icons_hidden_in_compact()
+                } else {
+                    t::instance::content::view::show_icons()
+                };
+                menu.separator().item(
+                    PopupMenuItem::new(show_icons_label)
+                        .checked(display.show_icons)
+                        .disabled(display.is_compact())
+                        .on_click(window.listener_for(&this, |page, _, _, cx| {
+                            page.update_display(|display| display.show_icons = !display.show_icons, cx);
+                        })),
+                )
+            })
+    }
+
+    fn update_display(&mut self, update: impl FnOnce(&mut ContentListDisplay), cx: &mut Context<Self>) {
+        let folder = self.content_type.content_folder();
+        update(InterfaceConfig::get_mut(cx).content_list_display_mut(folder));
+        self.content_list.update(cx, |_, cx| cx.notify());
+        cx.notify();
+    }
+
     /// Where the back button should lead after browsing for content: the server's page for a
     /// server, the instance's page otherwise.
     fn return_path(&self) -> [PageType; 2] {

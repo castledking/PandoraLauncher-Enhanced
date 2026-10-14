@@ -7,6 +7,7 @@ use std::{
 
 use schema::{
     backend_config::{BackendConfig, ProxyConfig},
+    content_label::ContentLabelEdit,
     instance::{
         InstanceConfiguration, InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration,
         InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration,
@@ -229,6 +230,21 @@ pub enum MessageToBackend {
     DeleteContent {
         id: InstanceID,
         content_ids: Vec<InstanceContentID>,
+    },
+    /// Changes the category or highlight colour of some content. Only ever touches the content's
+    /// auxiliary file, so it is allowed while the instance is running.
+    SetContentLabel {
+        id: InstanceID,
+        content_ids: Vec<InstanceContentID>,
+        edit: ContentLabelEdit,
+    },
+    /// As [`MessageToBackend::SetContentLabel`], for one of a modpack's own files. `child_keys` are
+    /// from [`schema::content_label::child_label_keys`].
+    SetContentChildLabel {
+        id: InstanceID,
+        content_id: InstanceContentID,
+        child_keys: Arc<[Arc<str>]>,
+        edit: ContentLabelEdit,
     },
     InstallContent {
         content: ContentInstall,

@@ -23,10 +23,7 @@ use command::PandoraProcess;
 use futures::FutureExt;
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{
-    auxiliary::{AuxDisabledChildren, AuxiliaryContentMeta},
-    instance::InstanceConfiguration,
-    loader::Loader,
-    unique_bytes::UniqueBytes,
+    auxiliary::AuxiliaryContentMeta, instance::InstanceConfiguration, loader::Loader, unique_bytes::UniqueBytes,
 };
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -1121,6 +1118,31 @@ impl Instance {
         self.refresh_frozen_mods_summaries(backend, summaries);
     }
 
+    /// Re-reads what the auxiliary files say about the cached mods summaries, after some of them
+    /// were edited while the instance is running. `live_aux_paths` are the files as the summaries
+    /// name them in the live mods folder; while frozen the real ones are in the `original_mods/`
+    /// backup, which is where they're read from.
+    pub fn refresh_frozen_mods_aux(&mut self, backend: &Arc<BackendState>, live_aux_paths: &FxHashSet<PathBuf>) {
+        let Some(summaries) = self.content_state[ContentFolder::Mods].summaries.as_ref() else {
+            return;
+        };
+        let mut summaries: Vec<InstanceContentSummary> = summaries.to_vec();
+        for summary in &mut summaries {
+            let Some(live_aux_path) = crate::fs::pandora_aux_path_for_content(summary) else {
+                continue;
+            };
+            if !live_aux_paths.contains(&live_aux_path) {
+                continue;
+            }
+            let aux_path = self.frozen_mods_backup_path(&live_aux_path).unwrap_or(live_aux_path);
+            let aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).unwrap_or_default();
+            summary.disabled_children = Arc::new(aux.disabled_children);
+            summary.label = aux.label;
+            summary.child_labels = Arc::new(aux.child_labels);
+        }
+        self.refresh_frozen_mods_summaries(backend, summaries);
+    }
+
     /// Rebuilds the cached mods summaries from the `original_mods/` backup (the persistent
     /// logical set while the instance is running) and notifies the frontend. Used after
     /// mirroring an install/edit into the backup so newly added mods show up live, since the
@@ -1295,7 +1317,7 @@ fn create_instance_content_summary(
         .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
 
-    let disabled_children = read_disabled_children_for(&summary, path).unwrap_or_default();
+    let aux = read_aux_for(&summary, path).unwrap_or_default();
 
     let update_status = mod_metadata_manager
         .updates
@@ -1320,7 +1342,9 @@ fn create_instance_content_summary(
         enabled,
         content_source,
         update: ContentUpdateContext::new(update_status, for_loader, for_version.as_str()),
-        disabled_children: Arc::new(disabled_children),
+        disabled_children: Arc::new(aux.disabled_children),
+        label: aux.label,
+        child_labels: Arc::new(aux.child_labels),
     })
 }
 
@@ -1343,6 +1367,7 @@ fn try_load_resourcepack_folder(
     };
 
     let summary = ModMetadataManager::create_resource_pack(pack_mcmeta_bytes, pack_png_bytes)?;
+    let label = read_aux_for(&summary, path).map(|aux| aux.label).unwrap_or_default();
 
     let mut hasher = DefaultHasher::new();
     filename.hash(&mut hasher);
@@ -1372,13 +1397,14 @@ fn try_load_resourcepack_folder(
         content_source: schema::content::ContentSource::Manual,
         update: ContentUpdateContext::new(ContentUpdateStatus::ManualInstall, Loader::Vanilla, ""),
         disabled_children: Default::default(),
+        label,
+        child_labels: Default::default(),
     });
 }
 
-fn read_disabled_children_for(summary: &ContentSummary, path: &Path) -> Option<AuxDisabledChildren> {
+fn read_aux_for(summary: &ContentSummary, path: &Path) -> Option<AuxiliaryContentMeta> {
     let aux_path = crate::fs::pandora_aux_path(&summary.id, &summary.name, path)?;
-    let aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).ok()?;
-    Some(aux.disabled_children)
+    crate::fs::read_json(&aux_path).ok()
 }
 
 fn load_world_summary(path: &Path) -> anyhow::Result<InstanceWorldSummary> {

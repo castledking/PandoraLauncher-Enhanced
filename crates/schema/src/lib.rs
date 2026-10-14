@@ -6,6 +6,7 @@ pub mod auxiliary;
 pub mod backend_config;
 pub mod bukkit_plugin;
 pub mod content;
+pub mod content_label;
 pub mod curseforge;
 pub mod fabric_launch;
 pub mod fabric_loader_manifest;

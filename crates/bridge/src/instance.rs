@@ -1,10 +1,11 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use indexmap::IndexMap;
 use once_cell::sync::Lazy;
 use schema::{
     auxiliary::AuxDisabledChildren,
     content::ContentSource,
+    content_label::ContentLabel,
     curseforge::{CurseforgeModLoaderType, CurseforgeModpackFile, CurseforgeModpackMinecraft},
     loader::Loader,
     modrinth::ModrinthLoader,
@@ -93,6 +94,9 @@ pub struct InstanceContentSummary {
     pub content_source: ContentSource,
     pub update: ContentUpdateContext,
     pub disabled_children: Arc<AuxDisabledChildren>,
+    pub label: ContentLabel,
+    /// Labels for a modpack's own files, keyed by [`schema::content_label::child_label_keys`].
+    pub child_labels: Arc<BTreeMap<Arc<str>, ContentLabel>>,
 }
 
 #[derive(Debug, Clone)]

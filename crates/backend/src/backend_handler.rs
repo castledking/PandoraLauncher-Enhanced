@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     io::{BufRead, Read},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant, SystemTime},
 };
@@ -757,6 +757,95 @@ impl BackendState {
 
                 if cannot_modify_while_running {
                     self.send.send_warning("Cannot modify mods folder while instance is running");
+                }
+            },
+            MessageToBackend::SetContentLabel { id, content_ids, edit } => {
+                let mut instance_state = self.instance_state.write();
+                let Some(instance) = instance_state.instances.get_mut(id) else {
+                    return;
+                };
+
+                // Two builds of the same mod share an auxiliary file, so each file is edited once
+                let mut edited: FxHashSet<PathBuf> = FxHashSet::default();
+                let mut frozen_edited: FxHashSet<PathBuf> = FxHashSet::default();
+
+                for content_id in content_ids {
+                    let Some((summary, folder)) = instance.try_get_content(content_id) else {
+                        continue;
+                    };
+                    let Some(aux_path) = crate::fs::pandora_aux_path_for_content(summary) else {
+                        continue;
+                    };
+                    if !edited.insert(aux_path.clone()) {
+                        continue;
+                    }
+
+                    // A label only changes how the list looks, so unlike toggling or deleting it's
+                    // allowed while the instance runs. The live mods folder is then a throwaway copy
+                    // without any auxiliary files, so the edit goes to the `original_mods/` backup
+                    // that is put back when the instance stops.
+                    let frozen = folder == ContentFolder::Mods && instance.frozen_mods_folder;
+                    let target = if frozen {
+                        instance.frozen_mods_backup_path(&aux_path).unwrap_or_else(|| aux_path.clone())
+                    } else {
+                        aux_path.clone()
+                    };
+
+                    match crate::fs::edit_aux_file(&target, |aux| edit.apply(&mut aux.label)) {
+                        Ok(true) if frozen => {
+                            frozen_edited.insert(aux_path);
+                        },
+                        Ok(_) => {},
+                        Err(err) => {
+                            log::error!("Unable to save content label to {target:?}: {err:?}");
+                            self.send.send_error("Unable to save content label");
+                        },
+                    }
+                }
+
+                // The frozen mods list isn't re-read from disk while running; anything else is
+                // picked up by the folder watcher
+                if !frozen_edited.is_empty() {
+                    instance.refresh_frozen_mods_aux(self, &frozen_edited);
+                }
+            },
+            MessageToBackend::SetContentChildLabel {
+                id,
+                content_id,
+                child_keys,
+                edit,
+            } => {
+                let mut instance_state = self.instance_state.write();
+                let Some(instance) = instance_state.instances.get_mut(id) else {
+                    return;
+                };
+                let Some((summary, folder)) = instance.try_get_content(content_id) else {
+                    return;
+                };
+                let Some(aux_path) = crate::fs::pandora_aux_path_for_content(summary) else {
+                    return;
+                };
+
+                let frozen = folder == ContentFolder::Mods && instance.frozen_mods_folder;
+                let target = if frozen {
+                    instance.frozen_mods_backup_path(&aux_path).unwrap_or_else(|| aux_path.clone())
+                } else {
+                    aux_path.clone()
+                };
+
+                let result = crate::fs::edit_aux_file(&target, |aux| {
+                    schema::content_label::edit_child_label(&mut aux.child_labels, &child_keys, &edit)
+                });
+
+                match result {
+                    Ok(true) if frozen => {
+                        instance.refresh_frozen_mods_aux(self, &FxHashSet::from_iter([aux_path]));
+                    },
+                    Ok(_) => {},
+                    Err(err) => {
+                        log::error!("Unable to save content label to {target:?}: {err:?}");
+                        self.send.send_error("Unable to save content label");
+                    },
                 }
             },
             MessageToBackend::UpdateCheck {

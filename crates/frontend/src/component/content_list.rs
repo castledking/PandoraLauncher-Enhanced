@@ -1,5 +1,6 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -17,25 +18,35 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, IndexPath, Sizable,
+    ActiveTheme, Disableable, IndexPath, Sizable, Size,
     button::{Button, ButtonVariants},
     h_flex,
     list::{ListDelegate, ListItem, ListState},
+    menu::ContextMenuExt,
     spinner::Spinner,
     switch::Switch,
+    tooltip::Tooltip,
     v_flex,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
-use schema::{content::ContentSource, loader::Loader, text_component::FlatTextComponent};
+use schema::{
+    content::ContentSource,
+    content_label::{ContentLabel, child_label_keys, find_child_label},
+    loader::Loader,
+    text_component::FlatTextComponent,
+};
 use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::error_alert::ErrorAlert,
+    component::{
+        content_label::{self, LabelMenu, LabelTarget},
+        error_alert::ErrorAlert,
+    },
     entity::DataEntities,
     icon::PandoraIcon,
-    interface_config::{InstanceContentSortKey, InterfaceConfig},
+    interface_config::{ContentListDisplay, InstanceContentSortKey, InterfaceConfig},
     png_render_cache,
 };
 
@@ -52,6 +63,9 @@ struct ContentEntryChild {
     parent_enabled: bool,
     disabled_third_party_downloads: bool,
     is_missing: bool,
+    label: ContentLabel,
+    /// What the label is filed under in the modpack's auxiliary file, best first.
+    label_keys: Arc<[Arc<str>]>,
 }
 
 impl ContentEntryChild {
@@ -96,6 +110,8 @@ pub struct ContentListDelegate {
     content: Vec<InstanceContentSummary>,
     searched: Option<Vec<SummaryOrChild>>,
     children: Vec<Vec<ContentEntryChild>>,
+    /// Whether any row is a modpack whose files can be expanded below it.
+    has_expandable_rows: bool,
     expanded: Arc<AtomicUsize>,
     confirming_delete: Arc<Mutex<FxHashSet<u64>>>,
     confirming_delete_children: Arc<Mutex<FxHashSet<u64>>>,
@@ -130,6 +146,7 @@ impl ContentListDelegate {
             content: Vec::new(),
             searched: None,
             children: Vec::new(),
+            has_expandable_rows: false,
             expanded: Arc::new(AtomicUsize::new(0)),
             confirming_delete: Default::default(),
             confirming_delete_children: Default::default(),
@@ -146,6 +163,33 @@ impl ContentListDelegate {
         self.enabled_first = enabled_first;
     }
 
+    /// How this list's rows are laid out. Read from the config on every render rather than kept
+    /// here, so every list showing the same kind of content agrees.
+    fn display(&self, cx: &App) -> ContentListDisplay {
+        InterfaceConfig::get(cx).content_list_display(self.content_folder)
+    }
+
+    /// The label menu for a right-click on the row `element_id`. Like the row's own buttons, it
+    /// acts on the whole selection when the row is part of it, and on the row alone otherwise.
+    fn label_menu_for(&self, element_id: u64) -> Option<LabelMenu> {
+        let clicked = self.content.iter().find(|summary| summary.filename_hash == element_id)?;
+        let targets: Vec<&InstanceContentSummary> = if self.is_selected(element_id) {
+            self.content.iter().filter(|summary| self.is_selected(summary.filename_hash)).collect()
+        } else {
+            vec![clicked]
+        };
+
+        Some(LabelMenu {
+            target: LabelTarget::Content {
+                instance: self.id,
+                content_ids: targets.iter().map(|summary| summary.id).collect(),
+            },
+            labels: targets.iter().map(|summary| summary.label.clone()).collect(),
+            preview_name: SharedString::from(display_filename(&clicked.filename).to_string()),
+            backend_handle: self.backend_handle.clone(),
+        })
+    }
+
     pub fn render_summary(
         &self,
         summary: &InstanceContentSummary,
@@ -153,21 +197,17 @@ impl ContentListDelegate {
         expand_index: Option<usize>,
         cx: &mut Context<ListState<Self>>,
     ) -> ListItem {
-        let icon = if let Some(png_icon) = summary.content_summary.png_icon.as_ref() {
-            png_render_cache::render(png_icon.clone(), cx)
-        } else {
-            png_render_cache::embedded_image("images/default_mod.png")
-        };
+        let display = self.display(cx);
+        let compact = display.is_compact();
+        let button_size = if compact { Size::Small } else { Size::Medium };
 
-        let (desc1, desc2) = create_descriptions(
-            summary.content_summary.name.clone(),
-            summary.content_summary.version_str.clone(),
-            summary.content_summary.authors.clone(),
-            summary.content_summary.rich_description.clone(),
-            !summary.enabled,
-            summary.filename.clone(),
-            cx.theme().muted_foreground,
-        );
+        let (tint, category_color) = {
+            let categories = &InterfaceConfig::get(cx).content_categories;
+            (
+                content_label::resolve_color(&summary.label, categories),
+                content_label::category_color(summary.label.category.as_deref(), categories),
+            )
+        };
 
         let id = self.id;
         let content_id = summary.id;
@@ -381,6 +421,7 @@ impl ContentListDelegate {
         let toggle_control = Switch::new(("toggle", element_id))
             .checked(summary.enabled)
             .disabled(!summary.can_toggle)
+            .when(compact, |this| this.small())
             .when(summary.can_toggle, |this| {
                 this.on_click(cx.listener(move |this, checked, window, cx| {
                     cx.stop_propagation();
@@ -416,26 +457,38 @@ impl ContentListDelegate {
             })
             .px_2();
 
-        let controls = if let Some(expand_index) = expand_index {
+        let expand_control = expand_index.map(|expand_index| {
             let expand_icon = if self.expanded.load(Ordering::Relaxed) == expand_index {
                 PandoraIcon::ArrowDown
             } else {
                 PandoraIcon::ArrowRight
             };
 
-            let expand_control =
-                Button::new(("expand", element_id)).icon(expand_icon).compact().small().info().on_click({
-                    let expanded = self.expanded.clone();
-                    move |_, _, _| {
-                        let value = expanded.load(Ordering::Relaxed);
-                        if value == expand_index {
-                            expanded.store(0, Ordering::Relaxed);
-                        } else {
-                            expanded.store(expand_index, Ordering::Relaxed);
-                        }
+            Button::new(("expand", element_id)).icon(expand_icon).compact().small().info().on_click({
+                let expanded = self.expanded.clone();
+                move |_, _, _| {
+                    let value = expanded.load(Ordering::Relaxed);
+                    if value == expand_index {
+                        expanded.store(0, Ordering::Relaxed);
+                    } else {
+                        expanded.store(expand_index, Ordering::Relaxed);
                     }
-                });
+                }
+            })
+        });
 
+        let controls = if compact {
+            // The expand button sits beside the toggle rather than under it, keeping the row one line
+            // tall. Rows that can't expand keep its space, so every filename starts in the same place.
+            let expand_slot = match expand_control {
+                Some(expand_control) => Some(expand_control.into_any_element()),
+                None if self.searched.is_none() && self.has_expandable_rows => {
+                    Some(div().w_6().flex_none().into_any_element())
+                },
+                None => None,
+            };
+            h_flex().gap_1().child(toggle_control).children(expand_slot).into_any_element()
+        } else if let Some(expand_control) = expand_control {
             v_flex()
                 .items_center()
                 .gap_1()
@@ -446,31 +499,113 @@ impl ContentListDelegate {
             toggle_control.into_any_element()
         };
 
-        let mut item_content = h_flex()
-            .gap_1()
-            .child(controls)
-            .child(icon.size_16().min_w_16().min_h_16().grayscale(!summary.enabled))
-            .when(!summary.enabled, |this| this.line_through())
-            .line_height(rems(1.2))
-            .child(desc1.pl_2())
-            .when_some(desc2, |div, desc2| div.child(desc2))
-            .border_1()
-            .when(selected, |content| {
-                content.border_color(cx.theme().selection).bg(cx.theme().selection.alpha(0.2))
-            });
-
         let mut right_buttons = Vec::new();
+        if !compact && let Some(category) = &summary.label.category {
+            right_buttons.push(content_label::category_chip(category, category_color, cx).into_any_element());
+        }
         if let Some(unzip_button) = unzip_button {
-            right_buttons.push(unzip_button.into_any_element());
+            right_buttons.push(unzip_button.with_size(button_size).into_any_element());
         }
         if let Some(update_button) = update_button {
-            right_buttons.push(update_button.into_any_element());
+            right_buttons.push(update_button.with_size(button_size).into_any_element());
         }
-        right_buttons.push(delete_button.into_any_element());
-        item_content = item_content.child(h_flex().absolute().right_4().gap_2().children(right_buttons));
+        right_buttons.push(delete_button.with_size(button_size).into_any_element());
 
-        ListItem::new(("item", element_id)).p_1().child(item_content).on_click(cx.listener(
-            move |this, click: &ClickEvent, _, cx| {
+        let item_content = if compact {
+            // The filename carries the version, so it's all of the item a compact row shows
+            let filename = SharedString::from(display_filename(&summary.filename).to_string());
+            let category_name = summary.label.category.as_deref().map(content_label::category_name);
+
+            h_flex()
+                .id(("row", element_id))
+                .w_full()
+                .gap_1()
+                .child(controls)
+                .child(
+                    div()
+                        .id(("filename", element_id))
+                        .flex_1()
+                        .min_w_0()
+                        .pl_1()
+                        .truncate()
+                        .when(!summary.enabled, |this| this.line_through())
+                        .child(filename)
+                        .when_some(category_name, |this, name| {
+                            this.tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+                        }),
+                )
+                .child(h_flex().flex_none().gap_1().pr_3().children(right_buttons))
+        } else {
+            let icon = display.show_icons.then(|| {
+                let icon = if let Some(png_icon) = summary.content_summary.png_icon.as_ref() {
+                    png_render_cache::render(png_icon.clone(), cx)
+                } else {
+                    png_render_cache::embedded_image("images/default_mod.png")
+                };
+                icon.size_16().min_w_16().min_h_16().grayscale(!summary.enabled)
+            });
+
+            let (desc1, desc2) = create_descriptions(
+                summary.content_summary.name.clone(),
+                summary.content_summary.version_str.clone(),
+                summary.content_summary.authors.clone(),
+                summary.content_summary.rich_description.clone(),
+                !summary.enabled,
+                summary.filename.clone(),
+                cx.theme().muted_foreground,
+            );
+
+            h_flex()
+                .id(("row", element_id))
+                .gap_1()
+                .child(controls)
+                .children(icon)
+                .when(!summary.enabled, |this| this.line_through())
+                .line_height(rems(1.2))
+                .child(desc1.pl_2())
+                .when_some(desc2, |div, desc2| div.child(desc2))
+                .child(h_flex().absolute().right_4().gap_2().children(right_buttons))
+        };
+
+        let item_content = item_content
+            .border_1()
+            .map(|content| match tint {
+                Some(color) => {
+                    let (background, border) = content_label::row_tint(color, selected, cx);
+                    content.rounded(cx.theme().radius).bg(background).border_color(border)
+                },
+                None => content.when(selected, |content| {
+                    content.border_color(cx.theme().selection).bg(cx.theme().selection.alpha(0.2))
+                }),
+            })
+            .context_menu({
+                let list = cx.entity();
+                move |menu, window, cx| match list.read(cx).delegate().label_menu_for(element_id) {
+                    Some(label_menu) => Rc::new(label_menu).build(menu, window, cx),
+                    None => menu,
+                }
+            });
+
+        ListItem::new(("item", element_id))
+            .map(|item| if compact { item.px_1().py_0p5() } else { item.p_1() })
+            .child(item_content)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                    // Right-clicking outside the selection labels that row alone, so it becomes the
+                    // selection to show what the menu will act on
+                    let delegate = this.delegate_mut();
+                    if !delegate.is_selected(element_id) {
+                        delegate.confirming_delete.lock().clear();
+                        delegate.selected_range.clear();
+                        delegate.selected.clear();
+                        delegate.selected.insert(element_id);
+                        delegate.last_clicked_non_range = Some(element_id);
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if click.standard_click() {
                     let delegate = this.delegate_mut();
@@ -551,17 +686,14 @@ impl ContentListDelegate {
                         delegate.last_clicked_non_range = Some(element_id);
                     }
                 }
-            },
-        ))
+            }))
     }
 
     fn render_child_entry(&self, child: &ContentEntryChild, cx: &mut Context<ListState<Self>>) -> ListItem {
+        let display = self.display(cx);
+        let compact = display.is_compact();
+        let button_size = if compact { Size::Small } else { Size::Medium };
         let summary = &child.summary;
-        let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
-            png_render_cache::render(png_icon.clone(), cx)
-        } else {
-            png_render_cache::embedded_image("images/default_mod.png")
-        };
 
         let mut hasher = DefaultHasher::new();
         child.parent_filename_hash.hash(&mut hasher);
@@ -574,68 +706,100 @@ impl ContentListDelegate {
         let blocked = child.disabled_third_party_downloads && child.is_missing;
         let visually_enabled = enabled && child.parent_enabled && !blocked;
 
-        let (desc1, desc2) = create_descriptions(
-            summary.name.clone(),
-            summary.version_str.clone(),
-            summary.authors.clone(),
-            summary.rich_description.clone(),
-            !visually_enabled,
-            child.path.clone(),
-            cx.theme().muted_foreground,
-        );
-
-        let mut item_content = h_flex()
-            .gap_1()
-            .pl_4()
-            .child(
-                Switch::new(("toggle", element_id))
-                    .checked(enabled && !blocked)
-                    .when_else(
-                        child.is_missing,
-                        |this| this.disabled(true),
-                        |this| {
-                            this.on_click({
-                                let id = self.id;
-                                let content_id = child.parent;
-                                let child_id = child.summary.id.clone();
-                                let child_name = child.summary.name.clone();
-                                let path = child.path.clone();
-                                let disabled_default = child.disabled_default;
-                                let backend_handle = self.backend_handle.clone();
-                                move |checked, window, cx| {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-
-                                    backend_handle.send(MessageToBackend::SetContentChildEnabled {
-                                        id,
-                                        content_id,
-                                        child_id: child_id.clone(),
-                                        child_name: child_name.clone(),
-                                        child_filename: path.clone(),
-                                        disabled_default,
-                                        enabled: *checked,
-                                    });
-                                }
-                            })
-                        },
-                    )
-                    .px_2(),
+        let (tint, category_color) = {
+            let categories = &InterfaceConfig::get(cx).content_categories;
+            (
+                content_label::resolve_color(&child.label, categories),
+                content_label::category_color(child.label.category.as_deref(), categories),
             )
-            .child(icon.size_16().min_w_16().min_h_16().grayscale(!visually_enabled))
-            .line_height(rems(1.2))
-            .child(desc1.pl_2().when(!visually_enabled, |this| this.line_through()))
-            .when_some(desc2, |div, desc2| div.child(desc2.when(!visually_enabled, |this| this.line_through())));
+        };
+
+        let toggle_control = Switch::new(("toggle", element_id))
+            .checked(enabled && !blocked)
+            .when(compact, |this| this.small())
+            .when_else(
+                child.is_missing,
+                |this| this.disabled(true),
+                |this| {
+                    this.on_click({
+                        let id = self.id;
+                        let content_id = child.parent;
+                        let child_id = child.summary.id.clone();
+                        let child_name = child.summary.name.clone();
+                        let path = child.path.clone();
+                        let disabled_default = child.disabled_default;
+                        let backend_handle = self.backend_handle.clone();
+                        move |checked, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+
+                            backend_handle.send(MessageToBackend::SetContentChildEnabled {
+                                id,
+                                content_id,
+                                child_id: child_id.clone(),
+                                child_name: child_name.clone(),
+                                child_filename: path.clone(),
+                                disabled_default,
+                                enabled: *checked,
+                            });
+                        }
+                    })
+                },
+            )
+            .px_2();
+
+        let mut item_content = h_flex().id(("row", element_id)).gap_1().pl_4().child(toggle_control);
+
+        if compact {
+            item_content = item_content.w_full().child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .pl_1()
+                    .truncate()
+                    .when(!visually_enabled, |this| this.line_through())
+                    .child(SharedString::from(child.path.clone())),
+            );
+        } else {
+            let icon = display.show_icons.then(|| {
+                let icon = if let Some(png_icon) = summary.png_icon.as_ref() {
+                    png_render_cache::render(png_icon.clone(), cx)
+                } else {
+                    png_render_cache::embedded_image("images/default_mod.png")
+                };
+                icon.size_16().min_w_16().min_h_16().grayscale(!visually_enabled)
+            });
+
+            let (desc1, desc2) = create_descriptions(
+                summary.name.clone(),
+                summary.version_str.clone(),
+                summary.authors.clone(),
+                summary.rich_description.clone(),
+                !visually_enabled,
+                child.path.clone(),
+                cx.theme().muted_foreground,
+            );
+
+            item_content = item_content
+                .children(icon)
+                .line_height(rems(1.2))
+                .child(desc1.pl_2().when(!visually_enabled, |this| this.line_through()))
+                .when_some(desc2, |div, desc2| div.child(desc2.when(!visually_enabled, |this| this.line_through())));
+        }
+
+        let category_chip = child
+            .label
+            .category
+            .as_deref()
+            .filter(|_| !compact)
+            .map(|category| content_label::category_chip(category, category_color, cx));
 
         if child.disabled_third_party_downloads {
-            item_content = item_content.child(
-                ErrorAlert::new(
-                    t::instance::content::blocked().into(),
-                    t::instance::content::install::no_third_party_downloads().into(),
-                )
-                .w(Length::Auto),
-            );
-            item_content = item_content.child(
-                Button::new("download").label(t::instance::content::download()).success().on_click({
+            let download_button = Button::new("download")
+                .label(t::instance::content::download())
+                .success()
+                .with_size(button_size)
+                .on_click({
                     let backend_handle = self.backend_handle.clone();
                     let id = self.id;
                     let content_id = child.parent;
@@ -656,8 +820,41 @@ impl ContentListDelegate {
                             modal_action,
                         );
                     }
-                }),
-            );
+                });
+
+            if compact {
+                // The alert is taller than a compact row, so its text moves to a warning button's tooltip
+                let blocked_message = format!(
+                    "{}: {}",
+                    t::instance::content::blocked(),
+                    t::instance::content::install::no_third_party_downloads()
+                );
+                item_content = item_content.child(
+                    h_flex()
+                        .flex_none()
+                        .gap_1()
+                        .pr_3()
+                        .child(
+                            Button::new(("blocked", element_id))
+                                .warning()
+                                .icon(PandoraIcon::TriangleAlert)
+                                .with_size(button_size)
+                                .tooltip(blocked_message),
+                        )
+                        .child(download_button),
+                );
+            } else {
+                item_content = item_content
+                    .children(category_chip)
+                    .child(
+                        ErrorAlert::new(
+                            t::instance::content::blocked().into(),
+                            t::instance::content::install::no_third_party_downloads().into(),
+                        )
+                        .w(Length::Auto),
+                    )
+                    .child(download_button);
+            }
         } else {
             let id = self.id;
             let content_id = child.parent;
@@ -711,12 +908,38 @@ impl ContentListDelegate {
                         guard.insert(element_id);
                         this.delegate().confirming_delete.lock().clear();
                     }))
-            };
+            }
+            .with_size(button_size);
 
-            item_content = item_content.child(delete_button.absolute().right_4());
+            if compact {
+                item_content = item_content.child(h_flex().flex_none().gap_1().pr_3().child(delete_button));
+            } else {
+                item_content = item_content
+                    .child(h_flex().absolute().right_4().gap_2().children(category_chip).child(delete_button));
+            }
         }
 
-        ListItem::new(("item", element_id)).p_1().child(item_content)
+        let label_menu = Rc::new(LabelMenu {
+            target: LabelTarget::Child {
+                instance: self.id,
+                content_id: child.parent,
+                child_keys: child.label_keys.clone(),
+            },
+            labels: vec![child.label.clone()],
+            preview_name: SharedString::from(child.path.clone()),
+            backend_handle: self.backend_handle.clone(),
+        });
+
+        let item_content = item_content
+            .when_some(tint, |content, color| {
+                let (background, border) = content_label::row_tint(color, false, cx);
+                content.border_1().rounded(cx.theme().radius).bg(background).border_color(border)
+            })
+            .context_menu(move |menu, window, cx| label_menu.build(menu, window, cx));
+
+        ListItem::new(("item", element_id))
+            .map(|item| if compact { item.px_1().py_0p5() } else { item.p_1() })
+            .child(item_content)
     }
 
     pub fn set_content(&mut self, new_content: &[InstanceContentSummary]) {
@@ -748,6 +971,12 @@ impl ContentListDelegate {
                         let lowercase_filename: Arc<str> = filename.to_ascii_lowercase().into();
                         let lowercase_search_keys = Arc::new([lowercase_filename]);
 
+                        // Keyed by the file id rather than the shown name, which is translated
+                        let label_keys: Arc<[Arc<str>]> =
+                            child_label_keys(None, None, &format!("curseforge/{}", unknown_file.file_id)).into();
+                        let label =
+                            find_child_label(&modification.child_labels, &label_keys).cloned().unwrap_or_default();
+
                         inner_children.push(ContentEntryChild {
                             summary: UNKNOWN_CONTENT_SUMMARY.clone(),
                             parent_filename_hash: modification.filename_hash,
@@ -760,6 +989,8 @@ impl ContentListDelegate {
                             parent_enabled: modification.enabled,
                             disabled_third_party_downloads: false,
                             is_missing: true,
+                            label,
+                            label_keys,
                         });
                     }
                 }
@@ -806,6 +1037,9 @@ impl ContentListDelegate {
                             .disabled_children
                             .is_enabled(file.default_disabled, id, name, file.path.as_str());
 
+                    let label_keys: Arc<[Arc<str>]> = child_label_keys(id, name, file.path.as_str()).into();
+                    let label = find_child_label(&modification.child_labels, &label_keys).cloned().unwrap_or_default();
+
                     let is_missing = summary.is_none();
                     let summary = summary.unwrap_or(UNKNOWN_CONTENT_SUMMARY.clone());
 
@@ -837,6 +1071,8 @@ impl ContentListDelegate {
                         parent_enabled: modification.enabled,
                         disabled_third_party_downloads: file.disabled_third_party_downloads,
                         is_missing,
+                        label,
+                        label_keys,
                     });
                 }
             }
@@ -926,6 +1162,7 @@ impl ContentListDelegate {
 
         self.loading = false;
         self.content = mods.clone();
+        self.has_expandable_rows = children.iter().any(|children| !children.is_empty());
         self.children = children;
         self.searched = None;
         self.confirming_delete.lock().clear();
@@ -956,13 +1193,15 @@ impl ContentListDelegate {
         for (m, children) in self.content.iter().zip(self.children.iter()) {
             let mut parent_added = false;
 
-            if m.lowercase_search_keys.iter().any(|f| f.contains(&query)) {
+            if m.lowercase_search_keys.iter().any(|f| f.contains(&query)) || category_matches(&m.label, &query) {
                 parent_added = true;
                 searched.push(SummaryOrChild::Summary(m.clone()));
             }
 
             for child in children {
-                if child.lowercase_search_keys.iter().any(|f| f.contains(&query)) {
+                if child.lowercase_search_keys.iter().any(|f| f.contains(&query))
+                    || category_matches(&child.label, &query)
+                {
                     if !parent_added {
                         parent_added = true;
                         searched.push(SummaryOrChild::Summary(m.clone()));
@@ -1082,6 +1321,18 @@ impl ListDelegate for ContentListDelegate {
         self.actual_perform_search(query);
         Task::ready(())
     }
+}
+
+/// The filename without the `.disabled` a disabled item's file has; the toggle already says that.
+fn display_filename(filename: &str) -> &str {
+    filename.strip_suffix(".disabled").unwrap_or(filename)
+}
+
+/// Whether the search matches the item's category, by its id or the name it's shown as.
+fn category_matches(label: &ContentLabel, query: &str) -> bool {
+    label.category.as_deref().is_some_and(|category| {
+        category.to_lowercase().contains(query) || content_label::category_name(category).to_lowercase().contains(query)
+    })
 }
 
 fn create_descriptions(

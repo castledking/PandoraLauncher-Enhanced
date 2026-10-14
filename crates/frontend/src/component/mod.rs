@@ -1,4 +1,5 @@
 pub mod clipped_element;
+pub mod content_label;
 pub mod content_list;
 pub mod error_alert;
 pub mod generic_title_bar;

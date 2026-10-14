@@ -169,6 +169,29 @@ pub(crate) fn pandora_aux_path_for_content(content: &InstanceContentSummary) -> 
     pandora_aux_path(&content.content_summary.id, &content.content_summary.name, &content.path)
 }
 
+/// Reads the auxiliary file at `path` (an empty one if it doesn't exist yet), lets `edit` change
+/// it, and writes it back if `edit` reports a change. A file left with nothing in it is removed
+/// rather than kept around as `{}`. Returns whether anything changed.
+pub(crate) fn edit_aux_file(
+    path: &Path,
+    edit: impl FnOnce(&mut schema::auxiliary::AuxiliaryContentMeta) -> bool,
+) -> Result<bool, IoOrSerializationError> {
+    let mut aux: schema::auxiliary::AuxiliaryContentMeta = read_json(path).unwrap_or_default();
+    if !edit(&mut aux) {
+        return Ok(false);
+    }
+
+    if aux.is_empty() {
+        match std::fs::remove_file(path) {
+            Err(err) if err.kind() != ErrorKind::NotFound => return Err(err.into()),
+            _ => {},
+        }
+    } else {
+        write_safe(path, &serde_json::to_vec(&aux)?)?;
+    }
+    Ok(true)
+}
+
 pub(crate) fn create_content_library_path(
     content_library_dir: &Path,
     expected_hash: [u8; 20],

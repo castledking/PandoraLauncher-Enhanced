@@ -50,6 +50,7 @@ pub struct ServerSettingsSubpage {
     java_runtime_select: Entity<JavaRuntimeSelect>,
     sync_source: Entity<SelectState<NamedDropdown<Option<InstanceID>>>>,
     _select_java_task: Task<()>,
+    _select_jar_task: Task<()>,
     _java_runtimes_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -170,6 +171,7 @@ impl ServerSettingsSubpage {
             java_runtime_select,
             sync_source,
             _select_java_task: Task::ready(()),
+            _select_jar_task: Task::ready(()),
             _java_runtimes_task: Task::ready(()),
             _subscriptions: subscriptions,
         }
@@ -278,6 +280,30 @@ impl ServerSettingsSubpage {
             });
         });
     }
+
+    /// The backend copies the picked jar into the server and switches to it.
+    fn pick_custom_jar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(t::server::jar::pick().into()),
+        });
+        let backend_handle = self.backend_handle.clone();
+        let id = self.instance_id;
+        self._select_jar_task = cx.spawn_in(window, async move |_, _| {
+            let Ok(Ok(Some(mut paths))) = receiver.await else {
+                return;
+            };
+            if paths.is_empty() {
+                return;
+            }
+            backend_handle.send(MessageToBackend::SetServerCustomJar {
+                id,
+                jar: paths.swap_remove(0),
+            });
+        });
+    }
 }
 
 /// A titled, bordered block, so the settings read as a few distinct groups rather than a wall of
@@ -306,6 +332,8 @@ fn card(icon: PandoraIcon, title: &'static str, description: &'static str, cx: &
                 )
                 .child(
                     v_flex()
+                        .flex_1()
+                        .min_w_0()
                         .child(div().font_semibold().child(title))
                         .child(div().text_xs().text_color(theme.muted_foreground).child(description)),
                 ),
@@ -350,6 +378,55 @@ impl Render for ServerSettingsSubpage {
                         .on_click(|_, _, cx| cx.open_url(crate::modals::create_server::EULA_URL)),
                 ),
         );
+
+        let custom_jar_active = server.active_custom_jar().is_some();
+        let has_custom_jar = server.custom_jar.is_some();
+        let jar_label: SharedString = match &server.custom_jar {
+            Some(jar) => jar.file.to_string().into(),
+            None => t::server::jar::none().into(),
+        };
+        let jar = card(PandoraIcon::PackageOpen, t::server::jar::title(), t::server::jar::desc(), cx)
+            .child(
+                Checkbox::new("custom-jar")
+                    .label(t::server::jar::custom())
+                    .checked(custom_jar_active)
+                    .on_click(cx.listener(move |this, value: &bool, window, cx| {
+                        // Switching it on with nothing picked yet goes straight to picking one
+                        if has_custom_jar {
+                            this.backend_handle
+                                .send(MessageToBackend::SetServerCustomJarEnabled { id, enabled: *value });
+                        } else if *value {
+                            this.pick_custom_jar(window, cx);
+                        }
+                    })),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px_2()
+                            .py_1()
+                            .rounded(theme.radius)
+                            .bg(theme.secondary)
+                            .text_xs()
+                            .font_family("Roboto Mono")
+                            .truncate()
+                            .when(!custom_jar_active, |this| this.opacity(0.5))
+                            .child(jar_label),
+                    )
+                    .child(
+                        Button::new("pick-jar")
+                            .small()
+                            .outline()
+                            .icon(PandoraIcon::FolderOpen)
+                            .label(t::server::jar::browse())
+                            .on_click(cx.listener(|this, _, window, cx| this.pick_custom_jar(window, cx))),
+                    ),
+            )
+            .child(div().text_xs().opacity(0.6).child(t::server::jar::custom_desc()));
 
         let memory_enabled = self.memory_enabled;
         let resources = card(
@@ -605,6 +682,7 @@ impl Render for ServerSettingsSubpage {
                     .gap_4()
                     .p_4()
                     .child(eula)
+                    .child(jar)
                     .child(resources)
                     .child(java)
                     .child(behaviour)

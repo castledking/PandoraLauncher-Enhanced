@@ -1423,13 +1423,16 @@ impl Render for InstanceSettingsSubpage {
                     .on_click({
                         let instance = self.instance.clone();
                         let instances = self.data.instances.clone();
+                        let metadata = self.data.metadata.clone();
                         let backend_handle = self.backend_handle.clone();
                         move |_: &ClickEvent, window, cx| {
                             let instance = instance.read(cx);
                             crate::modals::duplicate_instance::open_duplicate_instance(
                                 instance.id,
                                 instance.name.clone(),
+                                instance.configuration.minecraft_version.as_str().into(),
                                 instances.clone(),
+                                metadata.clone(),
                                 backend_handle.clone(),
                                 window,
                                 cx,

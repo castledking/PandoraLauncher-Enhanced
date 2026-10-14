@@ -96,6 +96,9 @@ pub enum MessageToBackend {
     DuplicateInstance {
         id: InstanceID,
         name: Ustr,
+        /// Minecraft version to move the copy to, swapping its content for builds made for that
+        /// version. `None` keeps the version of the original.
+        version: Option<Ustr>,
         modal_action: ModalAction,
     },
     ExportInstance {
@@ -296,6 +299,8 @@ pub enum MessageToBackend {
         group: Option<Arc<str>>,
         /// Client instance to generate the server from, if any.
         generate_from: Option<InstanceID>,
+        /// A jar to run instead of downloading one for the platform. Copied into the server.
+        custom_jar: Option<PathBuf>,
         modal_action: ModalAction,
     },
     StartServer {
@@ -382,6 +387,16 @@ pub enum MessageToBackend {
     SetServerAutoRestart {
         id: InstanceID,
         auto_restart: bool,
+    },
+    /// Copies a jar into the server and runs it from then on instead of the platform's own.
+    SetServerCustomJar {
+        id: InstanceID,
+        jar: PathBuf,
+    },
+    /// Switches between the picked custom jar and the platform's own, keeping the pick.
+    SetServerCustomJarEnabled {
+        id: InstanceID,
+        enabled: bool,
     },
     PlanServerSync {
         server_id: InstanceID,

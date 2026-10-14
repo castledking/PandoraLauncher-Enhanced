@@ -59,6 +59,23 @@ impl BackendState {
             return Err("Instance is not a server".into());
         };
 
+        // A jar the user supplied replaces whatever the platform would download. The build is
+        // passed through untouched so it's still there if they switch back.
+        if let Some(jar) = server.active_custom_jar() {
+            if !crate::fs::is_single_component_path_str(jar) || !server_dir.join(jar).is_file() {
+                return Err(format!(
+                    "The custom server jar {jar} is missing from the server folder. Pick it again in this server's \
+                     Settings tab."
+                )
+                .into());
+            }
+            return Ok(ProvisionedServer {
+                jar: jar.into(),
+                extra_args: Vec::new(),
+                build: server.build,
+            });
+        }
+
         let version = configuration.minecraft_version;
         let tracker = modal_action.push_tracker(format!("Preparing {} server", server.platform.pretty_name()).into());
         tracker.set_total(1);

@@ -3,6 +3,9 @@
 //! it is an example rather than a test.
 //!
 //! cargo run -p backend --example server_smoke -- [paper|purpur|vanilla|fabric] [minecraft version]
+//!
+//! `custom [minecraft version]` instead creates a Paper server that runs a jar the user supplied
+//! (the vanilla jar, fetched from Mojang), and checks that jar is what starts.
 
 use std::{
     path::PathBuf,
@@ -30,8 +33,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let first = args.next();
     let sync_mode = first.as_deref() == Some("sync");
+    let custom_mode = first.as_deref() == Some("custom");
     let platform = if sync_mode {
         ServerPlatform::Fabric
+    } else if custom_mode {
+        ServerPlatform::Paper
     } else {
         first.and_then(|name| ServerPlatform::from_name(&name)).unwrap_or(ServerPlatform::Paper)
     };
@@ -40,6 +46,8 @@ fn main() {
     // Sync mode never starts a server, so it gets its own folder and can run alongside the others
     let launcher_dir = std::env::temp_dir().join(if sync_mode {
         "pandora_server_smoke_sync"
+    } else if custom_mode {
+        "pandora_server_smoke_custom"
     } else {
         "pandora_server_smoke"
     });
@@ -56,6 +64,8 @@ fn main() {
 
     let name = if sync_mode {
         format!("smoke-generated-{version}")
+    } else if custom_mode {
+        format!("smoke-custom-{version}")
     } else {
         format!("smoke-{}-{}", platform.pretty_name().to_lowercase(), version)
     };
@@ -131,6 +141,40 @@ fn main() {
         std::process::exit(0);
     }
 
+    // Fetched before the server exists, the way a user would have a jar of their own
+    let custom_jar = custom_mode.then(|| {
+        let jar = launcher_dir.join("custom-input").join("my-own-server.jar");
+        if !jar.is_file() {
+            step(&format!("fetch the vanilla {version} jar to use as a custom jar"));
+            helper.block_on(download_vanilla_server(&version, &jar));
+        }
+        jar
+    });
+    if custom_mode {
+        let bad = launcher_dir.join("custom-input").join("not-a-jar.txt");
+        std::fs::write(&bad, "hello").unwrap();
+        step("refuse a custom jar that isn't a jar");
+        let modal = ModalAction::default();
+        backend_handle.send(MessageToBackend::CreateServerInstance {
+            name: "smoke-custom-rejected".into(),
+            version: version.as_str().into(),
+            platform,
+            eula_accepted: true,
+            group: None,
+            generate_from: None,
+            custom_jar: Some(bad),
+            modal_action: modal.clone(),
+        });
+        wait_for("create refused", Duration::from_secs(10), {
+            let modal = modal.clone();
+            Box::new(move || modal.get_finished_at().is_some())
+        });
+        let error = modal.get_error_message().expect("a non-jar should be refused");
+        assert!(error.contains("isn't a .jar"), "unexpected error: {error}");
+        assert!(!launcher_dir.join("instances").join("smoke-custom-rejected").exists());
+        println!("  ok: refused with \"{error}\" and nothing was created");
+    }
+
     step(&format!("create {} {} server '{}'", platform.pretty_name(), version, name));
     let modal = ModalAction::default();
     backend_handle.send(MessageToBackend::CreateServerInstance {
@@ -140,6 +184,7 @@ fn main() {
         eula_accepted: true,
         group: None,
         generate_from: None,
+        custom_jar: custom_jar.clone(),
         modal_action: modal.clone(),
     });
     wait_modal("create", &modal, Duration::from_secs(30));
@@ -152,6 +197,16 @@ fn main() {
     let server_dir: PathBuf = launcher_dir.join("instances").join(&name).join(".minecraft");
     assert!(server_dir.join("eula.txt").is_file(), "eula.txt should exist once the EULA is accepted");
     println!("  ok: eula.txt written");
+
+    if custom_mode {
+        assert!(
+            server_dir.join("my-own-server.jar").is_file(),
+            "the custom jar should be copied into the server"
+        );
+        let info = std::fs::read_to_string(launcher_dir.join("instances").join(&name).join("info_v1.json")).unwrap();
+        assert!(info.contains("\"file\":\"my-own-server.jar\""), "custom jar not recorded: {info}");
+        println!("  ok: custom jar copied into the server and recorded");
+    }
 
     // Picks a port nothing is using, then holds it so the first start is guaranteed to clash
     let blocker = std::net::TcpListener::bind("0.0.0.0:0").expect("free port");
@@ -259,6 +314,25 @@ fn main() {
         })
     });
 
+    if custom_mode {
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.contains(&format!("Starting minecraft server version {version}"))),
+            "the custom jar should be what started"
+        );
+        let downloaded: Vec<_> = std::fs::read_dir(&server_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("paper-"))
+            .collect();
+        assert!(downloaded.is_empty(), "Paper shouldn't have been downloaded: {downloaded:?}");
+        println!("  ok: the custom jar ran and no Paper jar was downloaded");
+    }
+
     step("stop");
     backend_handle.send(MessageToBackend::StopServer { id });
     wait_for("console closed after stop", Duration::from_secs(120), {
@@ -279,11 +353,47 @@ fn main() {
     );
     println!("  ok: clean shutdown logged");
 
+    if custom_mode {
+        step("switch back to the platform's own jar, keeping the pick");
+        backend_handle.send(MessageToBackend::SetServerCustomJarEnabled { id, enabled: false });
+        wait_for("custom jar switched off", Duration::from_secs(10), {
+            let info = launcher_dir.join("instances").join(&name).join("info_v1.json");
+            Box::new(move || {
+                std::fs::read_to_string(&info)
+                    .map(|text| text.contains("\"enabled\":false") && text.contains("my-own-server.jar"))
+                    .unwrap_or(false)
+            })
+        });
+    }
+
     let errors = seen.lock().unwrap().errors.clone();
     assert!(errors.is_empty(), "backend reported errors: {errors:?}");
 
     println!("\nALL OK");
     std::process::exit(0);
+}
+
+/// Fetches Mojang's own server jar, to stand in for a jar the user supplied.
+async fn download_vanilla_server(version: &str, target: &std::path::Path) {
+    let manifest: serde_json::Value = reqwest::get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let url = manifest["versions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == version)
+        .and_then(|entry| entry["url"].as_str())
+        .expect("version in manifest")
+        .to_string();
+    let info: serde_json::Value = reqwest::get(url).await.unwrap().json().await.unwrap();
+    let jar_url = info["downloads"]["server"]["url"].as_str().expect("server download");
+    let bytes = reqwest::get(jar_url).await.unwrap().bytes().await.unwrap();
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(target, bytes).unwrap();
 }
 
 /// Generates a Fabric server from a Fabric client instance and checks that shared mods are copied,
@@ -348,6 +458,7 @@ fn run_sync_scenario(
         eula_accepted: true,
         group: None,
         generate_from: Some(client_id),
+        custom_jar: None,
         modal_action: modal.clone(),
     });
     wait("create and sync finished", Duration::from_secs(30), {

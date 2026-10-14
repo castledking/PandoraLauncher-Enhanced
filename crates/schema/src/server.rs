@@ -134,6 +134,15 @@ pub struct ServerConfiguration {
         deserialize_with = "crate::try_deserialize"
     )]
     pub linked_instance: Option<Arc<str>>,
+
+    /// A jar the user supplied to run instead of the one downloaded for the platform. The
+    /// platform still decides whether the server takes plugins or mods.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_none",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub custom_jar: Option<ServerCustomJar>,
 }
 
 impl ServerConfiguration {
@@ -144,8 +153,24 @@ impl ServerConfiguration {
             eula_accepted: false,
             auto_restart: false,
             linked_instance: None,
+            custom_jar: None,
         }
     }
+
+    /// The custom jar to launch, if one is picked and switched on.
+    pub fn active_custom_jar(&self) -> Option<&str> {
+        self.custom_jar.as_ref().filter(|jar| jar.enabled).map(|jar| &*jar.file)
+    }
+}
+
+/// Kept when switched off, so going back to the custom jar doesn't mean picking it again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerCustomJar {
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub enabled: bool,
+    /// File name of the jar. It is copied into the server directory when picked, so the server
+    /// keeps working if the original moves, and travels with it when it is duplicated or exported.
+    pub file: Arc<str>,
 }
 
 /// A single `server.properties` entry, kept in file order so the editor can round-trip the file
@@ -396,12 +421,31 @@ mod tests {
         server.eula_accepted = true;
         server.auto_restart = true;
         server.linked_instance = Some("My Pack".into());
+        server.custom_jar = Some(ServerCustomJar {
+            enabled: true,
+            file: "folia-1.21.1.jar".into(),
+        });
         configuration.server = Some(server.clone());
 
         let saved = serde_json::to_string(&configuration).unwrap();
         let loaded: InstanceConfiguration = serde_json::from_str(&saved).unwrap();
         assert_eq!(loaded.server, Some(server));
         assert_eq!(loaded.loader, Loader::Paper);
+    }
+
+    #[test]
+    fn custom_jar_only_applies_when_switched_on() {
+        let mut server = ServerConfiguration::new(ServerPlatform::Paper);
+        assert_eq!(server.active_custom_jar(), None);
+
+        server.custom_jar = Some(ServerCustomJar {
+            enabled: false,
+            file: "spigot.jar".into(),
+        });
+        assert_eq!(server.active_custom_jar(), None);
+
+        server.custom_jar.as_mut().unwrap().enabled = true;
+        assert_eq!(server.active_custom_jar(), Some("spigot.jar"));
     }
 
     #[test]

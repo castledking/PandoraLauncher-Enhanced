@@ -19,7 +19,7 @@ use crate::{
             console_subpage::ServerConsoleSubpage, properties_nav::ServerPropertiesNav,
             settings_subpage::ServerSettingsSubpage,
         },
-        servers_page::{build_label, platform_icon, power_button, status_pill},
+        servers_page::{platform_icon, power_button, server_details, status_pill},
     },
 };
 
@@ -154,16 +154,7 @@ impl ServerPage {
         let id = entry.id;
         let backend_handle = self.data.backend_handle.clone();
 
-        let details = match &server.build {
-            Some(build) => format!(
-                "{} {} · {} {}",
-                server.platform.pretty_name(),
-                entry.configuration.minecraft_version,
-                build_label(server.platform),
-                build
-            ),
-            None => format!("{} {}", server.platform.pretty_name(), entry.configuration.minecraft_version),
-        };
+        let details = server_details(&server, &entry.configuration.minecraft_version);
 
         let eula_banner = (!server.eula_accepted).then(|| {
             h_flex()

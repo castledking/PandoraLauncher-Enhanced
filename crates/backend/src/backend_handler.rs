@@ -177,10 +177,15 @@ impl BackendState {
                     }
                 }
             },
-            MessageToBackend::DuplicateInstance { id, name, modal_action } => {
+            MessageToBackend::DuplicateInstance {
+                id,
+                name,
+                version,
+                modal_action,
+            } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
+                    crate::duplicate::duplicate_instance(backend, id, &name, version, modal_action).await;
                 });
             },
             MessageToBackend::ExportInstance {
@@ -1448,10 +1453,20 @@ impl BackendState {
                 eula_accepted,
                 group,
                 generate_from,
+                custom_jar,
                 modal_action,
             } => {
-                self.create_server_instance(name, version, platform, eula_accepted, group, generate_from, modal_action)
-                    .await;
+                self.create_server_instance(
+                    name,
+                    version,
+                    platform,
+                    eula_accepted,
+                    group,
+                    generate_from,
+                    custom_jar,
+                    modal_action,
+                )
+                .await;
             },
             MessageToBackend::StartServer { id, modal_action } => {
                 self.start_server(id, modal_action).await;
@@ -1558,6 +1573,12 @@ impl BackendState {
             },
             MessageToBackend::SetServerAutoRestart { id, auto_restart } => {
                 self.set_server_auto_restart(id, auto_restart);
+            },
+            MessageToBackend::SetServerCustomJar { id, jar } => {
+                self.set_server_custom_jar(id, &jar).await;
+            },
+            MessageToBackend::SetServerCustomJarEnabled { id, enabled } => {
+                self.set_server_custom_jar_enabled(id, enabled);
             },
             MessageToBackend::PlanServerSync {
                 server_id,

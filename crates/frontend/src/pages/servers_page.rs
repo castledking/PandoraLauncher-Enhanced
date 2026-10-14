@@ -14,7 +14,7 @@ use gpui_component::{
     table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
     v_flex,
 };
-use schema::server::ServerPlatform;
+use schema::server::{ServerConfiguration, ServerPlatform};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -352,6 +352,18 @@ pub fn build_label(platform: ServerPlatform) -> &'static str {
     }
 }
 
+/// The platform and version line shown under a server's name, with whatever jar it runs.
+pub fn server_details(server: &ServerConfiguration, minecraft_version: &str) -> String {
+    let platform = format!("{} {}", server.platform.pretty_name(), minecraft_version);
+    if let Some(jar) = server.active_custom_jar() {
+        format!("{platform} · {} {jar}", t::server::jar::custom_label())
+    } else if let Some(build) = &server.build {
+        format!("{platform} · {} {build}", build_label(server.platform))
+    } else {
+        platform
+    }
+}
+
 /// The coloured dot and label used everywhere a server's state is shown.
 pub fn status_pill(status: InstanceStatus, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
@@ -442,18 +454,7 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
             .into_any_element()
     };
 
-    let subtitle = match &config.build {
-        Some(build) => {
-            format!(
-                "{} {} · {} {}",
-                config.platform.pretty_name(),
-                server.configuration.minecraft_version,
-                build_label(config.platform),
-                build
-            )
-        },
-        None => format!("{} {}", config.platform.pretty_name(), server.configuration.minecraft_version),
-    };
+    let subtitle = server_details(config, &server.configuration.minecraft_version);
 
     let menu = server_menu(server, backend_handle, index);
 

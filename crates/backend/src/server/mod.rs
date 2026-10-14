@@ -19,7 +19,8 @@ use rustc_hash::FxHashMap;
 use schema::{
     instance::InstanceConfiguration,
     server::{
-        ServerPlatform, ServerProperty, merge_server_properties, parse_server_properties, write_server_properties,
+        ServerCustomJar, ServerPlatform, ServerProperty, merge_server_properties, parse_server_properties,
+        write_server_properties,
     },
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -239,7 +240,7 @@ impl BackendState {
 
     /// Waits for the filesystem watcher to load a newly created instance folder, loading it directly
     /// only if the watcher never does.
-    async fn wait_for_new_instance(&self, instance_dir: &Path) -> Option<InstanceID> {
+    pub(crate) async fn wait_for_new_instance(&self, instance_dir: &Path) -> Option<InstanceID> {
         for _ in 0..100 {
             let found = self
                 .instance_state
@@ -422,6 +423,49 @@ impl BackendState {
         }
     }
 
+    /// Copies `jar` into the server directory and runs it from then on instead of the platform's
+    /// own jar.
+    pub async fn set_server_custom_jar(self: &Arc<Self>, id: InstanceID, jar: &Path) {
+        let Some(server_dir) = self.server_dir(id) else {
+            return;
+        };
+
+        let file = match import_custom_jar(&server_dir, jar).await {
+            Ok(file) => file,
+            Err(err) => {
+                self.send.send_error(err);
+                return;
+            },
+        };
+
+        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            instance.configuration.modify(|cfg| {
+                if let Some(server) = &mut cfg.server {
+                    server.custom_jar = Some(ServerCustomJar { enabled: true, file });
+                }
+            });
+            self.send.send(instance.create_modify_message());
+        }
+
+        if self.is_server_running(id) {
+            self.send.send_info("Custom jar set, restart the server to use it");
+        }
+    }
+
+    /// Switches between the picked custom jar and the platform's own jar.
+    pub fn set_server_custom_jar_enabled(self: &Arc<Self>, id: InstanceID, enabled: bool) {
+        let mut state = self.instance_state.write();
+        let Some(instance) = state.instances.get_mut(id) else {
+            return;
+        };
+        instance.configuration.modify(|cfg| {
+            if let Some(custom_jar) = cfg.server.as_mut().and_then(|server| server.custom_jar.as_mut()) {
+                custom_jar.enabled = enabled;
+            }
+        });
+        self.send.send(instance.create_modify_message());
+    }
+
     /// Turns auto restart on or off for a server.
     pub fn set_server_auto_restart(self: &Arc<Self>, id: InstanceID, auto_restart: bool) {
         let mut state = self.instance_state.write();
@@ -479,6 +523,47 @@ impl BackendState {
             .load_java_binary_for_server(&self.meta, &self.http_client_provider.client(), configuration, &version_info)
             .await
     }
+}
+
+/// The name a user-supplied jar will have inside the server directory, once it's checked to be a jar
+/// that exists.
+fn custom_jar_file_name(jar: &Path) -> Result<Arc<str>, String> {
+    let Some(file_name) = jar.file_name().and_then(|name| name.to_str()) else {
+        return Err(format!("{} can't be used as a server jar", jar.display()));
+    };
+    if !jar.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("jar")) {
+        return Err(format!("{file_name} isn't a .jar file"));
+    }
+    if !jar.is_file() {
+        return Err(format!("{} doesn't exist", jar.display()));
+    }
+    Ok(file_name.into())
+}
+
+/// Copies a user-supplied jar into the server directory and returns its name there. Keeping a copy
+/// means the server still starts if the original is moved, and travels with the server when it's
+/// duplicated or exported.
+async fn import_custom_jar(server_dir: &Path, jar: &Path) -> Result<Arc<str>, String> {
+    let file_name = custom_jar_file_name(jar)?;
+    let target = server_dir.join(&*file_name);
+
+    // A jar picked from the server's own folder is already where it needs to be
+    let already_there = matches!((jar.canonicalize(), target.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    if !already_there {
+        _ = tokio::fs::create_dir_all(server_dir).await;
+        // Copied under a temporary name so a failed copy never replaces a jar that works
+        let partial = target.with_extension("jar.partial");
+        let copied = match tokio::fs::copy(jar, &partial).await {
+            Ok(_) => tokio::fs::rename(&partial, &target).await,
+            Err(err) => Err(err),
+        };
+        if let Err(err) = copied {
+            _ = tokio::fs::remove_file(&partial).await;
+            return Err(format!("Unable to copy {file_name} into the server: {err}"));
+        }
+    }
+
+    Ok(file_name)
 }
 
 /// Mojang's EULA has to be accepted in `eula.txt` or the server refuses to start. Only written
@@ -584,12 +669,23 @@ impl BackendState {
         eula_accepted: bool,
         group: Option<Arc<str>>,
         generate_from: Option<InstanceID>,
+        custom_jar: Option<PathBuf>,
         modal_action: ModalAction,
     ) {
         let loader = platform.loader();
 
         let mut server = schema::server::ServerConfiguration::new(platform);
         server.eula_accepted = eula_accepted;
+        if let Some(jar) = &custom_jar {
+            // Checked before anything is created, so a bad pick doesn't leave a half-made server
+            match custom_jar_file_name(jar) {
+                Ok(file) => server.custom_jar = Some(ServerCustomJar { enabled: true, file }),
+                Err(err) => {
+                    modal_action.set_finished_with_error(err.into());
+                    return;
+                },
+            }
+        }
         if let Some(generate_from) = generate_from {
             server.linked_instance = self
                 .instance_state
@@ -614,6 +710,13 @@ impl BackendState {
 
         if eula_accepted {
             write_eula(&instance_dir.join(".minecraft"));
+        }
+
+        if let Some(jar) = &custom_jar
+            && let Err(err) = import_custom_jar(&instance_dir.join(".minecraft"), jar).await
+        {
+            // The server itself is fine; the jar can be picked again from its settings
+            self.send.send_error(err);
         }
 
         let Some(generate_from) = generate_from else {

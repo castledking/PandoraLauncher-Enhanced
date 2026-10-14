@@ -34,6 +34,7 @@ mod shortcut;
 mod skin_manager;
 mod syncing;
 mod update;
+mod version_change;
 
 pub const KNOWN_SHADER_MODS: &[&'static str] = &["iris", "oculus", "optifine"];
 

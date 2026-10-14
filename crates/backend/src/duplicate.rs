@@ -10,6 +10,7 @@ use bridge::{
     instance::InstanceID,
     modal_action::{ModalAction, ProgressTrackerFinishType},
 };
+use ustr::Ustr;
 
 use crate::BackendState;
 
@@ -210,7 +211,13 @@ fn duplicate_with_content_library(
     Ok(())
 }
 
-pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name: &str, modal_action: ModalAction) {
+pub async fn duplicate_instance(
+    backend: Arc<BackendState>,
+    id: InstanceID,
+    name: &str,
+    version: Option<Ustr>,
+    modal_action: ModalAction,
+) {
     if !crate::fs::is_single_component_path_str(name) {
         modal_action
             .set_finished_with_error(format!("Unable to duplicate instance, name must not be a path: {name}").into());
@@ -231,13 +238,13 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
         return;
     }
 
-    let source = {
-        let state = backend.instance_state.read();
-        let Some(instance) = state.instances.get(id) else {
+    let (source, source_version) = {
+        let mut state = backend.instance_state.write();
+        let Some(instance) = state.instances.get_mut(id) else {
             modal_action.set_finished_with_error("Unable to duplicate instance, unknown id".to_string().into());
             return;
         };
-        instance.root_path.clone()
+        (instance.root_path.clone(), instance.configuration.get().minecraft_version)
     };
 
     let dest = backend.directories.instances_dir.join(name);
@@ -270,6 +277,16 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
     match result {
         Ok(()) => {
             tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+            if let Some(version) = version.filter(|version| *version != source_version) {
+                match backend.wait_for_new_instance(&dest).await {
+                    Some(new_id) => backend.move_instance_to_version(new_id, version, &modal_action).await,
+                    None => modal_action.set_finished_with_error(
+                        format!("The instance was duplicated, but the copy couldn't be loaded to move it to {version}")
+                            .into(),
+                    ),
+                }
+            }
         },
         Err(error) => {
             let _ = fs::remove_dir_all(&dest);

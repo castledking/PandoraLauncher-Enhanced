@@ -2241,6 +2241,8 @@ de = "Fehler beim Duplizieren der Instanz"
 hu = "Hiba a példány duplikálása közben"
 ru = "Не удалось создать дубликат экземпляра"
 it = "Errore durante la duplicazione dell'istanza"
+[instance.duplicate.version_hint]
+en = "The copy moves to Minecraft ${version: &str}, with its mods, resource packs and shaders swapped for ${version: &str} builds. Mods without one are turned off in the copy. The original instance isn't changed."
 [instance.export.action]
 en = "Export"
 tr = "Dışa Aktar"
@@ -5509,6 +5511,23 @@ en = "Nothing, start empty"
 en = "Pick one of your modded instances to build a server that matches it, with its mods copied over."
 [server.create.source_selected_desc]
 en = "Version and platform are taken from the instance. Its mods are copied, leaving out ones that only work on the client."
+
+[server.jar.title]
+en = "Server jar"
+[server.jar.desc]
+en = "Normally the platform's own jar is downloaded for you. Use your own to run a fork or a build that isn't offered."
+[server.jar.custom]
+en = "Use a custom server jar"
+[server.jar.custom_desc]
+en = "The jar is copied into the server's folder. The platform still decides whether the server takes plugins or mods, and the Minecraft version picks the Java it runs on."
+[server.jar.custom_label]
+en = "Custom jar"
+[server.jar.none]
+en = "No jar selected"
+[server.jar.pick]
+en = "Select a server jar"
+[server.jar.browse]
+en = "Browse"
 
 [server.eula.agree]
 en = "I agree to the Minecraft End User License Agreement"

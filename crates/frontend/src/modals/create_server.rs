@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend, modal_action::ModalAction};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, StyledExt, WindowExt,
+    ActiveTheme, Disableable, Icon, Sizable, StyledExt, WindowExt,
     alert::Alert,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
@@ -70,11 +70,14 @@ struct CreateServerModalState {
     source_dropdown: Entity<SelectState<NamedDropdown<ClientSource>>>,
     group_input_state: Entity<InputState>,
     platform: ServerPlatform,
+    custom_jar_enabled: bool,
+    custom_jar: Option<Arc<Path>>,
     eula_accepted: bool,
     loaded_versions: bool,
     error_loading_versions: Option<SharedString>,
     name_invalid: bool,
     instance_names: Arc<[SharedString]>,
+    _pick_jar_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -180,11 +183,14 @@ impl CreateServerModalState {
             source_dropdown,
             group_input_state,
             platform: ServerPlatform::Paper,
+            custom_jar_enabled: false,
+            custom_jar: None,
             eula_accepted: false,
             loaded_versions: false,
             error_loading_versions: None,
             name_invalid: false,
             instance_names,
+            _pick_jar_task: Task::ready(()),
             _subscriptions: subscriptions,
         };
 
@@ -327,7 +333,84 @@ impl CreateServerModalState {
             .child(div().text_xs().text_color(theme.muted_foreground).child(platform_blurb(selected)))
     }
 
-    fn render(&mut self, dialog: Dialog, _window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+    fn pick_custom_jar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(t::server::jar::pick().into()),
+        });
+        self._pick_jar_task = cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut paths))) = receiver.await else {
+                return;
+            };
+            if paths.is_empty() {
+                return;
+            }
+            let path: Arc<Path> = paths.swap_remove(0).into();
+            _ = this.update(cx, |this, cx| {
+                this.custom_jar = Some(path);
+                this.custom_jar_enabled = true;
+                cx.notify();
+            });
+        });
+    }
+
+    fn render_custom_jar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let enabled = self.custom_jar_enabled;
+        let label: SharedString = match &self.custom_jar {
+            Some(path) => path.to_string_lossy().into_owned().into(),
+            None => t::server::jar::none().into(),
+        };
+
+        v_flex()
+            .gap_1p5()
+            .child(
+                Checkbox::new("custom-jar")
+                    .label(t::server::jar::custom())
+                    .checked(enabled)
+                    .on_click(cx.listener(|this, value: &bool, window, cx| {
+                        // Switching it on with nothing picked yet goes straight to picking one
+                        if *value && this.custom_jar.is_none() {
+                            this.pick_custom_jar(window, cx);
+                        } else {
+                            this.custom_jar_enabled = *value;
+                        }
+                        cx.notify();
+                    })),
+            )
+            .when(enabled, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .px_2()
+                                .py_1()
+                                .rounded(theme.radius)
+                                .bg(theme.secondary)
+                                .text_xs()
+                                .font_family("Roboto Mono")
+                                .truncate()
+                                .child(label),
+                        )
+                        .child(
+                            Button::new("pick-jar")
+                                .small()
+                                .outline()
+                                .icon(PandoraIcon::FolderOpen)
+                                .label(t::server::jar::browse())
+                                .on_click(cx.listener(|this, _, window, cx| this.pick_custom_jar(window, cx))),
+                        ),
+                )
+                .child(div().text_xs().text_color(theme.muted_foreground).child(t::server::jar::custom_desc()))
+            })
+    }
+
+    fn render(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
         if let Some(error) = self.error_loading_versions.clone() {
             let metadata = self.metadata.clone();
             return dialog
@@ -420,16 +503,23 @@ impl CreateServerModalState {
                 ),
             ))
             .child(crate::labelled(t::server::platform::title(), self.render_platform_picker(generating, cx)))
+            .child(crate::labelled(t::server::jar::title(), self.render_custom_jar(cx)))
             .child(crate::labelled(t::instance::mc_version(), version_select))
             .child(crate::labelled(t::server::create::group(), Input::new(&self.group_input_state)))
             .child(eula);
 
-        let can_create = self.eula_accepted && !self.name_invalid && self.loaded_versions;
+        let can_create = self.eula_accepted
+            && !self.name_invalid
+            && self.loaded_versions
+            && (!self.custom_jar_enabled || self.custom_jar.is_some());
 
         dialog
             .title(t::server::create::title())
             .overlay_closable(false)
             .w(px(520.0))
+            // The dialog sits a tenth of the way down and is taller than a short window, so it is
+            // capped to let its body scroll instead of pushing the buttons off screen
+            .max_h(window.viewport_size().height * 0.85)
             .child(content)
             .footer(
                 h_flex()
@@ -459,6 +549,14 @@ impl CreateServerModalState {
         if !self.eula_accepted || self.name_invalid {
             return;
         }
+        let custom_jar = if self.custom_jar_enabled {
+            match &self.custom_jar {
+                Some(jar) => Some(jar.to_path_buf()),
+                None => return,
+            }
+        } else {
+            None
+        };
         let Some(version) = self.version_dropdown.read(cx).selected_value().cloned() else {
             return;
         };
@@ -482,6 +580,7 @@ impl CreateServerModalState {
             eula_accepted: self.eula_accepted,
             group,
             generate_from: self.generate_from(cx),
+            custom_jar,
             modal_action: modal_action.clone(),
         });
 

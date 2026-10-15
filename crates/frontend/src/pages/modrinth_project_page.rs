@@ -295,6 +295,7 @@ impl Render for ModrinthProjectPage {
                                     &project_id_str,
                                     project_type,
                                     install_for,
+                                    None,
                                     &data,
                                     window,
                                     cx,

@@ -706,6 +706,9 @@ impl TableDelegate for ServerList {
             "controls" => h_flex()
                 .size_full()
                 .gap_2()
+                // The same inset as the instance table's, so switching between the two tables
+                // doesn't change the buttons' size
+                .border_r_4()
                 .child(power_button(id, status, &backend_handle).flex_1().small())
                 .child(Button::new("view").flex_1().small().info().label(t::instance::view()).on_click({
                     let name = server.name.clone();

@@ -80,6 +80,22 @@ pub fn category_exists(name: &str, categories: &[ContentCategory]) -> bool {
         .any(|category| category.id.to_lowercase() == name || category_name(&category.id).to_lowercase() == name)
 }
 
+/// The order sorting by category puts content in: categorised content first, alphabetically by the
+/// name its category is shown under, then content filed under "Other", then uncategorised content.
+pub fn compare_categories(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
+    fn rank(category: Option<&str>) -> (u8, SharedString) {
+        match category.map(str::trim).filter(|category| !category.is_empty()) {
+            None => (2, SharedString::default()),
+            Some(category) if category.eq_ignore_ascii_case(OTHER_CONTENT_CATEGORY) => (1, SharedString::default()),
+            Some(category) => (0, category_name(category)),
+        }
+    }
+
+    let (rank_a, name_a) = rank(a);
+    let (rank_b, name_b) = rank(b);
+    rank_a.cmp(&rank_b).then_with(|| lexical_sort::natural_lexical_cmp(&name_a, &name_b))
+}
+
 pub fn category_color(category: Option<&str>, categories: &[ContentCategory]) -> Option<HexColor> {
     let category = category?;
     categories.iter().find(|candidate| &*candidate.id == category)?.color
@@ -374,8 +390,15 @@ impl LabelMenu {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::interface_config::default_content_categories;
+    // Not a glob import: that would bring in gpui's `test` attribute in place of the built-in one
+    use std::sync::Arc;
+
+    use schema::content_label::{ContentLabel, HexColor};
+
+    use super::{
+        category_color, category_exists, category_name, category_short_name, compare_categories, resolve_color,
+    };
+    use crate::interface_config::{ContentCategory, OTHER_CONTENT_CATEGORY, default_content_categories};
 
     fn label(category: Option<&str>, color: Option<u32>) -> ContentLabel {
         ContentLabel {
@@ -417,6 +440,33 @@ mod tests {
         // Built-in ids are also taken under the name they're shown as
         assert!(category_exists(&category_name("worldgen"), &categories));
         assert!(!category_exists("Magic", &categories));
+    }
+
+    #[test]
+    fn sorting_by_category_puts_other_then_uncategorised_last() {
+        let mut categories = vec![
+            None,
+            Some("other"),
+            Some("utility"),
+            Some("Quality of life"),
+            Some("library"),
+            Some("  "),
+            Some("combat"),
+        ];
+        categories.sort_by(|a, b| compare_categories(*a, *b));
+        // Alphabetical by the shown names: Combat, Library, Quality of life, Utility
+        assert_eq!(
+            categories,
+            [
+                Some("combat"),
+                Some("library"),
+                Some("Quality of life"),
+                Some("utility"),
+                Some("other"),
+                None,
+                Some("  ")
+            ]
+        );
     }
 
     #[test]

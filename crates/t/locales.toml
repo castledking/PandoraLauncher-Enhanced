@@ -3334,6 +3334,10 @@ sv = "Fel vid laddning av projektversioner från Modrinth: ${err: &str}"
 ru = "Ошибка загрузки версий проекта с Modrinth: ${err: &str}"
 fr = "Erreur lors du chargement des versions du projet depuis Modrinth : ${err: &str}"
 it = "Errore durante il caricamento delle versioni del progetto da Modrinth: ${err: &str}"
+[instance.content.install.through_bridge]
+en = "${loader: &str} (through ${bridge: &str})"
+[instance.content.install.other_game_version]
+en = "This is made for Minecraft ${selected: &str}, not ${instance: &str}, so it might not work."
 [instance.content.install.label]
 en = "Install"
 tr = "Yükle"
@@ -3977,6 +3981,8 @@ hu = "Fájlméret"
 ru = "Размер файла"
 fr = "Taille du fichier"
 it = "Dimensione del file"
+[instance.content.sort_key.category]
+en = "Category"
 
 [instance.content.blocked]
 en = "Blocked"
@@ -4041,6 +4047,12 @@ hu = "Bekapcsolt először"
 ru = "Сначала включённые"
 fr = "Activé en premier"
 it = "Attivato per primo"
+[instance.content.version_filter.any]
+en = "Any version"
+[instance.content.version_filter.any_short]
+en = "Any"
+[instance.content.version_filter.instance]
+en = "${version: &str} (this instance)"
 [instance.content.view.prefix]
 en = "View: "
 [instance.content.view.standard]

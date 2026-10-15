@@ -25,7 +25,6 @@ use gpui_component::{
     menu::ContextMenuExt,
     spinner::Spinner,
     switch::Switch,
-    tooltip::Tooltip,
     v_flex,
 };
 use parking_lot::Mutex;
@@ -88,6 +87,9 @@ impl ContentEntryChild {
             },
             InstanceContentSortKey::ModifiedTime => std::cmp::Ordering::Equal,
             InstanceContentSortKey::FileSize => self.filesize.cmp(&other.filesize).reverse(),
+            InstanceContentSortKey::Category => {
+                content_label::compare_categories(self.label.category.as_deref(), other.label.category.as_deref())
+            },
         }
     }
 }
@@ -500,7 +502,7 @@ impl ContentListDelegate {
         };
 
         let mut right_buttons = Vec::new();
-        if !compact && let Some(category) = &summary.label.category {
+        if let Some(category) = &summary.label.category {
             right_buttons.push(content_label::category_chip(category, category_color, cx).into_any_element());
         }
         if let Some(unzip_button) = unzip_button {
@@ -514,7 +516,6 @@ impl ContentListDelegate {
         let item_content = if compact {
             // The filename carries the version, so it's all of the item a compact row shows
             let filename = SharedString::from(display_filename(&summary.filename).to_string());
-            let category_name = summary.label.category.as_deref().map(content_label::category_name);
 
             h_flex()
                 .id(("row", element_id))
@@ -523,16 +524,12 @@ impl ContentListDelegate {
                 .child(controls)
                 .child(
                     div()
-                        .id(("filename", element_id))
                         .flex_1()
                         .min_w_0()
                         .pl_1()
                         .truncate()
                         .when(!summary.enabled, |this| this.line_through())
-                        .child(filename)
-                        .when_some(category_name, |this, name| {
-                            this.tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
-                        }),
+                        .child(filename),
                 )
                 .child(h_flex().flex_none().gap_1().pr_3().children(right_buttons))
         } else {
@@ -791,7 +788,6 @@ impl ContentListDelegate {
             .label
             .category
             .as_deref()
-            .filter(|_| !compact)
             .map(|category| content_label::category_chip(category, category_color, cx));
 
         if child.disabled_third_party_downloads {
@@ -834,6 +830,7 @@ impl ContentListDelegate {
                         .flex_none()
                         .gap_1()
                         .pr_3()
+                        .children(category_chip)
                         .child(
                             Button::new(("blocked", element_id))
                                 .warning()
@@ -912,7 +909,8 @@ impl ContentListDelegate {
             .with_size(button_size);
 
             if compact {
-                item_content = item_content.child(h_flex().flex_none().gap_1().pr_3().child(delete_button));
+                item_content =
+                    item_content.child(h_flex().flex_none().gap_1().pr_3().children(category_chip).child(delete_button));
             } else {
                 item_content = item_content
                     .child(h_flex().absolute().right_4().gap_2().children(category_chip).child(delete_button));

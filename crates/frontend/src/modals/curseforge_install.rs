@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::sync::Arc;
 
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
@@ -26,7 +26,7 @@ use schema::{
         CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY, CurseforgeClassId, CurseforgeFile, CurseforgeGetModFilesRequest,
         CurseforgeGetModFilesResult, CurseforgeHit, CurseforgeModLoaderType, CurseforgeReleaseType,
     },
-    loader::Loader,
+    loader::{Loader, bridged_curseforge_dependency},
 };
 use strum::IntoEnumIterator;
 use ustr::Ustr;
@@ -38,6 +38,7 @@ use crate::{
         instance::InstanceEntry,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
+    modals::install_compat::{self, InstanceCompat, VersionChoice},
     root,
 };
 
@@ -64,11 +65,18 @@ struct InstallDialog {
     last_selected_loader: Option<SharedString>,
 
     fixed_minecraft_version: Option<&'static str>,
+    /// When the instance's own version has nothing, the other versions offered instead.
+    minecraft_version_choices: Option<Vec<&'static str>>,
+    preferred_minecraft_version: Option<&'static str>,
     minecraft_version_select_state: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
+    /// What the existing instance being installed into can take.
+    instance: Option<InstanceCompat>,
 
     force_target_loader: bool,
     target_loader: Option<Loader>,
     loader_select_state: Option<Entity<SelectState<Vec<SharedString>>>>,
+    /// The loader choices offered for an instance, and the CurseForge loader each one is.
+    loader_options: Vec<(SharedString, CurseforgeModLoaderType)>,
     single_loader_set: Option<EnumSet<CurseforgeModLoaderType>>,
     install_dependencies: bool,
 
@@ -76,9 +84,12 @@ struct InstallDialog {
     mod_versions_retry_task: Task<()>,
 }
 
+/// `game_version_hint` is the Minecraft version the user was browsing, which is picked when the
+/// instance's own version has nothing.
 pub fn open(
     hit: CurseforgeHit,
     install_for: Option<InstanceID>,
+    game_version_hint: Option<Ustr>,
     data: &DataEntities,
     window: &mut Window,
     cx: &mut App,
@@ -121,34 +132,41 @@ pub fn open(
         };
 
         let instance = instance.read(cx);
+        let compat = InstanceCompat::of(instance, cx);
+        let minecraft_version = compat.minecraft_version;
+        let instance_loader = compat.loader;
 
-        let minecraft_version = instance.configuration.minecraft_version.as_str();
-        let instance_loader = instance.configuration.loader;
+        // What the instance can load: its own loader's files, and those of any loader it runs
+        // through a bridge mod. Plugin files on CurseForge carry no mod loader, so only mods and
+        // modpacks can be checked.
+        let usable_loaders = usable_curseforge_loaders(&compat);
+        let checks_loader = project_type.supports_loader_filter() && instance_loader != Loader::Vanilla;
+        let usable_versions = version_matrix
+            .iter()
+            .filter(|(_, loaders)| !checks_loader || !loaders.loaders.is_disjoint(usable_loaders))
+            .map(|(version, _)| *version)
+            .collect::<Vec<_>>();
 
-        let Some(loaders) = version_matrix.get(minecraft_version) else {
-            let error_message = t::instance::content::load::versions::not_found_for(minecraft_version);
-            open_error_dialog(title.clone(), error_message.into(), window, cx);
-            return;
-        };
-
-        let mut valid_loader = true;
-        // Plugin files on CurseForge carry no mod loader, so only mods and modpacks can be checked
-        if project_type.supports_loader_filter() {
-            valid_loader =
-                instance_loader == Loader::Vanilla || loaders.loaders.contains(instance_loader.as_curseforge_loader());
-        }
-        if !valid_loader {
-            let error_message = t::instance::content::load::versions::not_found_for_loader(
-                instance_loader.pretty_name(),
-                minecraft_version,
-            );
-            open_error_dialog(title.clone(), error_message.into(), window, cx);
-            return;
-        }
+        let (fixed_minecraft_version, minecraft_version_choices, preferred_minecraft_version) =
+            match VersionChoice::new(minecraft_version, usable_versions, game_version_hint) {
+                VersionChoice::Exact => (Some(minecraft_version), None, None),
+                VersionChoice::Other { choices, preferred } => (None, Some(choices), preferred),
+                VersionChoice::Nothing => {
+                    let error_message = if version_matrix.contains_key(minecraft_version) {
+                        t::instance::content::load::versions::not_found_for_loader(
+                            instance_loader.pretty_name(),
+                            minecraft_version,
+                        )
+                    } else {
+                        t::instance::content::load::versions::not_found_for(minecraft_version)
+                    };
+                    open_error_dialog(title.clone(), error_message.into(), window, cx);
+                    return;
+                },
+            };
 
         let title = title.clone();
         let instance_id = instance.id;
-        let fixed_minecraft_version = Some(minecraft_version);
         let force_target_loader = project_type.mod_or_modpack() && instance_loader != Loader::Vanilla;
         let install_dialog = InstallDialog {
             title,
@@ -161,10 +179,14 @@ pub fn open(
             unsupported_instances: 0,
             target: Some(InstallTarget::Instance(instance_id)),
             fixed_minecraft_version,
+            minecraft_version_choices,
+            preferred_minecraft_version,
             minecraft_version_select_state: None,
+            instance: Some(compat),
             force_target_loader,
             target_loader: Some(instance_loader),
             loader_select_state: None,
+            loader_options: Vec::new(),
             last_selected_minecraft_version: None,
             single_loader_set: None,
             install_dependencies: true,
@@ -182,15 +204,13 @@ pub fn open(
             .iter()
             .filter_map(|(_, instance)| {
                 let instance = instance.read(cx);
+                let compat = InstanceCompat::of(instance, cx);
 
-                let minecraft_version = instance.configuration.minecraft_version.as_str();
-                let instance_loader = instance.configuration.loader;
-
-                if let Some(loaders) = version_matrix.get(minecraft_version) {
+                if let Some(loaders) = version_matrix.get(compat.minecraft_version) {
                     let mut valid_loader = true;
                     if project_type.supports_loader_filter() {
-                        valid_loader = instance_loader == Loader::Vanilla
-                            || loaders.loaders.contains(instance_loader.as_curseforge_loader());
+                        valid_loader = compat.loader == Loader::Vanilla
+                            || !loaders.loaders.is_disjoint(usable_curseforge_loaders(&compat));
                     }
                     if valid_loader {
                         return Some(instance.clone());
@@ -221,10 +241,14 @@ pub fn open(
             unsupported_instances,
             target: None,
             fixed_minecraft_version: None,
+            minecraft_version_choices: None,
+            preferred_minecraft_version: None,
             minecraft_version_select_state: None,
+            instance: None,
             force_target_loader: false,
             target_loader: None,
             loader_select_state: None,
+            loader_options: Vec::new(),
             last_selected_minecraft_version: None,
             single_loader_set: None,
             install_dependencies: true,
@@ -234,6 +258,14 @@ pub fn open(
         };
         install_dialog.show(window, cx);
     }
+}
+
+/// The CurseForge loaders whose files an instance can load.
+fn usable_curseforge_loaders(compat: &InstanceCompat) -> EnumSet<CurseforgeModLoaderType> {
+    std::iter::once(compat.loader)
+        .chain(compat.bridged)
+        .map(|loader| loader.as_curseforge_loader())
+        .collect()
 }
 
 fn open_error_dialog(title: SharedString, text: SharedString, window: &mut Window, cx: &mut App) {
@@ -275,6 +307,16 @@ impl InstallDialog {
             return modal.child(content);
         };
 
+        if let Some(instance) = self.instance
+            && selected_minecraft_version.as_str() != instance.minecraft_version
+        {
+            content = content.child(install_compat::other_version_warning(
+                &selected_minecraft_version,
+                instance.minecraft_version,
+                cx,
+            ));
+        }
+
         content = content.child(self.render_select_loader(&selected_minecraft_version, window, cx));
 
         let selected_loader_string =
@@ -313,6 +355,16 @@ impl InstallDialog {
             .filter(|dep| dep.relation_type == CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY)
             .cloned()
             .collect::<Vec<_>>();
+
+        // A dependency that can't load through the instance's bridge is swapped for the one that
+        // stands in for it there, such as Forgified Fabric API for Fabric API under Sinytra Connector
+        if let Some(instance) = self.instance {
+            for dep in &mut required_dependencies {
+                if let Some(replacement) = bridged_curseforge_dependency(dep.mod_id, instance.loader, instance.bridged) {
+                    dep.mod_id = replacement;
+                }
+            }
+        }
 
         // Ignore projects that are already installed
         if !required_dependencies.is_empty()
@@ -451,10 +503,16 @@ impl InstallDialog {
                         reason: ContentInstallReason::Standalone,
                     });
 
+                    // An existing instance stays on its own version, which its dependencies are looked
+                    // up for, even when this file was made for another
+                    let minecraft_version = match this.instance {
+                        Some(instance) => instance.minecraft_version,
+                        None => selected_minecraft_version.as_str(),
+                    };
                     let content_install = ContentInstall {
                         target,
                         loader,
-                        minecraft_version: selected_minecraft_version.as_str().into(),
+                        minecraft_version: minecraft_version.into(),
                         files: files.into(),
                     };
 
@@ -504,13 +562,14 @@ impl InstallDialog {
                                 .success()
                                 .h_full()
                                 .label(t::instance::content::install::add_to_instance())
-                                .on_click(cx.listener(move |this, _, _, _| {
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.target = Some(InstallTarget::Instance(instance.id));
                                     this.fixed_minecraft_version =
                                         Some(instance.configuration.minecraft_version.as_str());
                                     this.force_target_loader = this.project_type.mod_or_modpack()
                                         && instance.configuration.loader != Loader::Vanilla;
                                     this.target_loader = Some(instance.configuration.loader);
+                                    this.instance = Some(InstanceCompat::of(&instance, cx));
                                 })),
                         )
                     });
@@ -523,6 +582,7 @@ impl InstallDialog {
                     this.fixed_minecraft_version = None;
                     this.force_target_loader = false;
                     this.target_loader = None;
+                    this.instance = None;
                 },
             )))
             .into_any_element()
@@ -543,25 +603,19 @@ impl InstallDialog {
                     select_state
                 })
             } else {
-                let mut keys: Vec<SharedString> =
-                    self.version_matrix.keys().cloned().map(SharedString::new_static).collect();
-                keys.sort_by(|a, b| {
-                    let a_is_snapshot = a.contains("w") || a.contains("pre") || a.contains("rc");
-                    let b_is_snapshot = b.contains("w") || b.contains("pre") || b.contains("rc");
-                    if a_is_snapshot != b_is_snapshot {
-                        if a_is_snapshot {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Less
-                        }
-                    } else {
-                        lexical_sort::natural_lexical_cmp(a, b).reverse()
-                    }
-                });
+                let mut keys: Vec<SharedString> = match &self.minecraft_version_choices {
+                    Some(choices) => choices.iter().copied().map(SharedString::new_static).collect(),
+                    None => self.version_matrix.keys().copied().map(SharedString::new_static).collect(),
+                };
+                install_compat::sort_game_versions(&mut keys);
+                let preferred = self
+                    .preferred_minecraft_version
+                    .and_then(|preferred| keys.iter().position(|key| key.as_str() == preferred))
+                    .unwrap_or(0);
                 cx.new(|cx| {
                     let mut select_state =
                         SelectState::new(SearchableVec::new(keys), None, window, cx).searchable(true);
-                    select_state.set_selected_index(Some(IndexPath::default()), window, cx);
+                    select_state.set_selected_index(Some(IndexPath::default().row(preferred)), window, cx);
                     select_state
                 })
             }
@@ -583,12 +637,35 @@ impl InstallDialog {
         let loader_select_state = self.loader_select_state.get_or_insert_with(|| {
             self.single_loader_set = None;
 
+            self.loader_options.clear();
+
             if let Some(loader) = self.target_loader
                 && self.force_target_loader
             {
-                let loader = SharedString::new_static(loader.as_curseforge_loader().pretty_name());
+                // The instance's own loader, then any it runs through a bridge mod, of those this
+                // version has files for
+                let available = self
+                    .version_matrix
+                    .get(selected_minecraft_version.as_str())
+                    .map(|loaders| loaders.loaders)
+                    .unwrap_or_default();
+                let own = loader.as_curseforge_loader();
+                let mut options = vec![(SharedString::new_static(own.pretty_name()), own)];
+                if let Some(instance) = self.instance {
+                    for bridged in instance.bridged {
+                        options.push((instance.bridged_label(bridged), bridged.as_curseforge_loader()));
+                    }
+                }
+                let mut usable: Vec<_> =
+                    options.iter().filter(|(_, loader)| available.contains(*loader)).cloned().collect();
+                if usable.is_empty() {
+                    usable.push(options.swap_remove(0));
+                }
+                self.loader_options = usable;
+
+                let labels = self.loader_options.iter().map(|(label, _)| label.clone()).collect::<Vec<_>>();
                 cx.new(|cx| {
-                    let mut select_state = SelectState::new(vec![loader], None, window, cx);
+                    let mut select_state = SelectState::new(labels, None, window, cx);
                     select_state.set_selected_index(Some(IndexPath::default()), window, cx);
                     select_state
                 })
@@ -645,8 +722,10 @@ impl InstallDialog {
             }
         });
 
+        // An instance's loader is fixed, unless it runs another's mods through a bridge too
+        let fixed_loader = self.force_target_loader && self.loader_options.len() <= 1;
         Select::new(loader_select_state)
-            .disabled(self.force_target_loader || self.single_loader_set.is_some())
+            .disabled(fixed_loader || self.single_loader_set.is_some())
             .title_prefix(format!("{}: ", t::instance::loader()))
             .into_any_element()
     }
@@ -663,6 +742,10 @@ impl InstallDialog {
 
             let mod_loader_type = if self.single_loader_set.is_some() {
                 None
+            } else if let Some((_, loader)) =
+                self.loader_options.iter().find(|(label, _)| label == selected_loader_string)
+            {
+                Some(*loader as u32)
             } else {
                 Some(CurseforgeModLoaderType::from_name(selected_loader_string.as_str()) as u32)
             };

@@ -123,8 +123,10 @@ pub struct InterfaceConfig {
     // Content
     #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
     pub content_install_latest: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
-    pub content_filter_version: bool,
+    /// Whether browsing content for an instance starts out narrowed to the instance's own Minecraft
+    /// version. Replaces `content_filter_version`, which was off by default.
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub content_filter_instance_version: bool,
     #[serde(
         default = "default_modrinth_project_type",
         deserialize_with = "schema::try_deserialize"
@@ -305,6 +307,8 @@ pub enum InstanceContentSortKey {
     Filename,
     ModifiedTime,
     FileSize,
+    /// Grouped by the category the user filed each item under.
+    Category,
 }
 
 impl InstanceContentSortKey {
@@ -317,6 +321,7 @@ impl InstanceContentSortKey {
                 DropdownName::translated(t::instance::content::sort_key::modified_time)
             },
             InstanceContentSortKey::FileSize => DropdownName::translated(t::instance::content::sort_key::filesize),
+            InstanceContentSortKey::Category => DropdownName::translated(t::instance::content::sort_key::category),
         }
     }
 
@@ -364,6 +369,9 @@ impl InstanceContentSortKey {
                 .unwrap_or(0)
                 .cmp(&b.content_summary.filesize.unwrap_or(0))
                 .reverse(),
+            InstanceContentSortKey::Category => {
+                crate::component::content_label::compare_categories(a.label.category.as_deref(), b.label.category.as_deref())
+            },
         }
     }
 }
@@ -517,7 +525,7 @@ impl Default for InterfaceConfig {
             instance_shaders_display: Default::default(),
             content_categories: default_content_categories(),
             content_install_latest: true,
-            content_filter_version: Default::default(),
+            content_filter_instance_version: true,
             modrinth_page_project_type: default_modrinth_project_type(),
             curseforge_page_class_id: default_curseforge_class_id(),
             hide_main_window_on_launch: false,
@@ -748,6 +756,20 @@ mod tests {
             assert!(display.icons_visible());
         }
         assert_eq!(config.content_categories, default_content_categories());
+    }
+
+    #[test]
+    fn browsing_starts_on_the_instance_version_even_if_the_old_toggle_was_off() {
+        let config: InterfaceConfig =
+            serde_json::from_str(r#"{"preferred_add_content_source":"modrinth","content_filter_version":false}"#)
+                .unwrap();
+        assert!(config.content_filter_instance_version);
+
+        let config: InterfaceConfig = serde_json::from_str(
+            r#"{"preferred_add_content_source":"modrinth","content_filter_instance_version":false}"#,
+        )
+        .unwrap();
+        assert!(!config.content_filter_instance_version);
     }
 
     #[test]

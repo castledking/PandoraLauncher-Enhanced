@@ -6,7 +6,10 @@ use std::{
 };
 
 use atomic_time::AtomicInstant;
-use gpui::{AnyElement, App, Element, IntoElement, RenderImage, StyleRefinement, Styled, Window, prelude::*};
+use gpui::{
+    AbsoluteLength, AnyElement, App, DefiniteLength, Element, IntoElement, Length, RenderImage, StyleRefinement, Styled,
+    Window, prelude::*,
+};
 use gpui_component::StyledExt;
 use image::{
     AnimationDecoder, DynamicImage, Frame,
@@ -166,12 +169,20 @@ impl IntoElement for CachedImage {
 
     fn into_element(self) -> Self::Element {
         let grayscale = self.grayscale;
+        let fit = ImageFit::of(&self.style);
         let content = match self.content {
-            ImageContent::Still(image) => gpui::img(image).size_full().into_any_element(),
-            ImageContent::Animated(animation) => AnimatedImage { animation, grayscale }.into_any_element(),
-            ImageContent::Embedded(path) => gpui::img(gpui::ImageSource::Resource(gpui::Resource::Embedded(path)))
-                .size_full()
-                .into_any_element(),
+            ImageContent::Still(image) => fit.apply(gpui::img(image)).grayscale(grayscale).into_any_element(),
+            ImageContent::Animated(animation) => AnimatedImage {
+                animation,
+                grayscale,
+                fit,
+            }
+            .into_any_element(),
+            ImageContent::Embedded(path) => {
+                fit.apply(gpui::img(gpui::ImageSource::Resource(gpui::Resource::Embedded(path))))
+                    .grayscale(grayscale)
+                    .into_any_element()
+            },
         };
 
         // The caller's styling goes on a box around the image, not on the image:
@@ -180,11 +191,55 @@ impl IntoElement for CachedImage {
     }
 }
 
+/// How the image fills the box it's styled as. Left to itself, an image's height is worked out
+/// from its width and its own aspect ratio whatever height it was given, so an icon taller than
+/// it is wide (icons are cropped to their content, so plenty are) spilled out of its box. Told the
+/// box's ratio instead, it fills the box and is letterboxed inside it.
+#[derive(Clone, Copy)]
+struct ImageFit {
+    width: Length,
+    height: Length,
+    ratio: Option<f32>,
+}
+
+impl ImageFit {
+    fn of(style: &StyleRefinement) -> Self {
+        let width = style.size.width.unwrap_or_else(|| gpui::relative(1.).into());
+        let height = style.size.height.unwrap_or_else(|| gpui::relative(1.).into());
+        let ratio = match (width, height) {
+            (
+                Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(width))),
+                Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(height))),
+            ) => Some(width / height),
+            (
+                Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Rems(width))),
+                Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Rems(height))),
+            ) => Some(width.0 / height.0),
+            // A box sized by its surroundings keeps the old behaviour of the image's own ratio
+            _ => None,
+        };
+        Self {
+            width,
+            height,
+            ratio: ratio.filter(|ratio| ratio.is_finite() && *ratio > 0.0),
+        }
+    }
+
+    fn apply(self, image: gpui::Img) -> gpui::Img {
+        let image = image.w(self.width).h(self.height);
+        match self.ratio {
+            Some(ratio) => image.aspect_ratio(ratio),
+            None => image,
+        }
+    }
+}
+
 /// Paints whichever animation frame is due, and asks for the next one so the
 /// clip keeps moving while it is on screen.
 struct AnimatedImage {
     animation: Arc<Animation>,
     grayscale: bool,
+    fit: ImageFit,
 }
 
 impl IntoElement for AnimatedImage {
@@ -214,7 +269,9 @@ impl Element for AnimatedImage {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        gpui::img(self.animation.frames[0].clone()).request_layout(id, inspector_id, window, cx)
+        self.fit
+            .apply(gpui::img(self.animation.frames[0].clone()))
+            .request_layout(id, inspector_id, window, cx)
     }
 
     fn prepaint(
@@ -245,7 +302,9 @@ impl Element for AnimatedImage {
             window.request_animation_frame();
         }
 
-        _ = window.paint_image(bounds, bounds, gpui::Corners::default(), frame, 0, self.grayscale);
+        // Letterboxed like a still image, rather than stretched to the box
+        let fitted = gpui::ObjectFit::Contain.get_bounds(bounds, frame.size(0));
+        _ = window.paint_image(bounds, fitted, gpui::Corners::default(), frame, 0, self.grayscale);
     }
 }
 

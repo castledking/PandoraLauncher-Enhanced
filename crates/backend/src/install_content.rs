@@ -22,9 +22,10 @@ use schema::{
         CURSEFORGE_API_KEY, CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY, CachedCurseforgeFileInfo,
         CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeModLoaderType,
     },
-    loader::Loader,
+    loader::{Loader, bridged_curseforge_dependency, bridged_modrinth_dependency},
     modrinth::{ModrinthDependencyType, ModrinthLoader, ModrinthProjectVersionsRequest},
 };
+use enumset::EnumSet;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 use strum::IntoEnumIterator;
@@ -142,37 +143,61 @@ impl BackendState {
             false
         });
 
-        let installed_content_ids: Option<Mutex<InstalledContentIds>> = if needs_installed_content_ids {
-            let mut installed_content_ids = InstalledContentIds::default();
+        // Picking a version means knowing whether the instance runs another loader's mods through a
+        // bridge such as Sinytra Connector, so its mods are read for that too
+        let needs_version_lookup = content.files.iter().any(|content_file| {
+            matches!(
+                content_file.download,
+                ContentDownload::Modrinth { version_id: None, .. } | ContentDownload::Curseforge { .. }
+            )
+        });
 
-            if let InstallTarget::Instance(instance) = content.target {
-                let content_futures =
-                    ContentFolder::iter().map(|folder| Instance::load_content(self.clone(), instance, folder));
-                let content_summaries = futures::future::join_all(content_futures).await;
-                for summaries in content_summaries {
-                    if let Some(summaries) = summaries {
-                        for summary in summaries.iter() {
-                            match summary.content_source {
-                                ContentSource::ModrinthProject { ref project_id } => {
-                                    installed_content_ids.modrinth_projects.insert(project_id.clone());
-                                },
-                                ContentSource::CurseforgeProject { project_id } => {
-                                    installed_content_ids.curseforge_projects.insert(project_id);
-                                },
-                                _ => {},
-                            }
-                            if let Some(id) = &summary.content_summary.id {
-                                installed_content_ids.summary_ids.insert(id.clone());
-                            }
-                        }
+        let mut installed_content_ids = needs_installed_content_ids.then(InstalledContentIds::default);
+        let mut bridged_loaders = EnumSet::empty();
+
+        if let InstallTarget::Instance(instance) = content.target
+            && (needs_installed_content_ids || needs_version_lookup)
+        {
+            let folders: Vec<ContentFolder> = if needs_installed_content_ids {
+                ContentFolder::iter().collect()
+            } else {
+                vec![ContentFolder::Mods]
+            };
+            let content_futures =
+                folders.iter().map(|folder| Instance::load_content(self.clone(), instance, *folder));
+            let content_summaries = futures::future::join_all(content_futures).await;
+            for (folder, summaries) in folders.iter().zip(content_summaries) {
+                let Some(summaries) = summaries else {
+                    continue;
+                };
+                if *folder == ContentFolder::Mods {
+                    let mod_ids = summaries
+                        .iter()
+                        .filter(|summary| summary.enabled)
+                        .filter_map(|summary| summary.content_summary.id.as_deref());
+                    bridged_loaders = content.loader.bridged_loaders(content.minecraft_version.as_str(), mod_ids);
+                }
+                let Some(installed_content_ids) = &mut installed_content_ids else {
+                    continue;
+                };
+                for summary in summaries.iter() {
+                    match summary.content_source {
+                        ContentSource::ModrinthProject { ref project_id } => {
+                            installed_content_ids.modrinth_projects.insert(project_id.clone());
+                        },
+                        ContentSource::CurseforgeProject { project_id } => {
+                            installed_content_ids.curseforge_projects.insert(project_id);
+                        },
+                        _ => {},
+                    }
+                    if let Some(id) = &summary.content_summary.id {
+                        installed_content_ids.summary_ids.insert(id.clone());
                     }
                 }
             }
+        }
 
-            Some(Mutex::new(installed_content_ids))
-        } else {
-            None
-        };
+        let installed_content_ids: Option<Mutex<InstalledContentIds>> = installed_content_ids.map(Mutex::new);
 
         let mut tasks = Vec::new();
 
@@ -182,6 +207,7 @@ impl BackendState {
                 &modal_action,
                 content_file,
                 installed_content_ids.as_ref(),
+                bridged_loaders,
                 false,
             ));
         }
@@ -211,6 +237,7 @@ impl BackendState {
                     &modal_action,
                     dependency,
                     installed_content_ids.as_ref(),
+                    bridged_loaders,
                     true,
                 ));
             }
@@ -375,8 +402,15 @@ impl BackendState {
         modal_action: &ModalAction,
         content_file: &ContentInstallFile,
         installed_content_ids: Option<&Mutex<InstalledContentIds>>,
+        bridged_loaders: EnumSet<Loader>,
         skip_if_already_installed: bool,
     ) -> Result<InstallFromContentLibrary, ContentInstallError> {
+        // A mod for a loader the instance runs through a bridge mod is no less usable than one for
+        // its own loader
+        let loads_through_bridge = |summary: &ContentSummary| {
+            summary.extra.mod_loader().is_some_and(|loader| bridged_loaders.contains(loader))
+        };
+
         let download_meta = ModrinthDownloadMeta {
             reason: content_file.reason,
             game_version: content.minecraft_version,
@@ -435,6 +469,26 @@ impl BackendState {
 
                     let mut not_found = matches!(result, Err(MetaLoadError::NonOK(404)))
                         || result.as_ref().ok().map(|r| r.0.is_empty()).unwrap_or(false);
+                    // Builds for the instance's own loader come first, then those for any loader it
+                    // runs through a bridge mod
+                    if not_found && !bridged_loaders.is_empty() {
+                        tracker.add_total(1);
+
+                        let bridged: Arc<[ModrinthLoader]> =
+                            bridged_loaders.iter().map(Loader::as_modrinth_loader).collect();
+                        result = self
+                            .meta
+                            .fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
+                                project_id: project_id.clone(),
+                                game_versions: Some(Arc::new([content.minecraft_version.into()])),
+                                loaders: Some(bridged),
+                            }))
+                            .await;
+                        not_found = matches!(result, Err(MetaLoadError::NonOK(404)))
+                            || result.as_ref().ok().map(|r| r.0.is_empty()).unwrap_or(false);
+
+                        tracker.add_count(1);
+                    }
                     if not_found && modrinth_loader != ModrinthLoader::Unknown {
                         tracker.add_total(1);
 
@@ -526,7 +580,7 @@ impl BackendState {
                 if is_wrong_version && mod_summary.extra.is_strict_minecraft_version() {
                     return Err(ContentInstallError::UnableToFindVersion);
                 }
-                if is_wrong_loader && mod_summary.extra.is_strict_loader() {
+                if is_wrong_loader && mod_summary.extra.is_strict_loader() && !loads_through_bridge(&mod_summary) {
                     return Err(ContentInstallError::UnableToFindVersion);
                 }
 
@@ -583,12 +637,20 @@ impl BackendState {
                                 if let Some(project_id) = &dep.project_id
                                     && dep.dependency_type == ModrinthDependencyType::Required
                                 {
+                                    // A dependency that can't load through the instance's bridge is
+                                    // swapped for the one standing in for it there, such as
+                                    // Forgified Fabric API for Fabric API under Sinytra Connector
+                                    let (project_id, version_id) =
+                                        match bridged_modrinth_dependency(project_id, content.loader, bridged_loaders) {
+                                            Some(replacement) => (Arc::<str>::from(replacement), None),
+                                            None => (project_id.clone(), dep.version_id.clone()),
+                                        };
                                     Some(ContentInstallFile {
                                         replace_old: None,
                                         path: ContentInstallPath::Automatic,
                                         download: ContentDownload::Modrinth {
                                             project_id: project_id.clone(),
-                                            version_id: dep.version_id.clone(),
+                                            version_id,
                                             install_dependencies: true,
                                         },
                                         content_source: ContentSource::ModrinthProject {
@@ -659,6 +721,29 @@ impl BackendState {
 
                 let mut not_found = matches!(result, Err(MetaLoadError::NonOK(404)))
                     || result.as_ref().ok().map(|r| r.data.is_empty()).unwrap_or(false);
+                // Files for the instance's own loader come first, then those for any loader it runs
+                // through a bridge mod
+                for bridged in bridged_loaders {
+                    if !not_found {
+                        break;
+                    }
+                    tracker.add_total(1);
+
+                    result = self
+                        .meta
+                        .fetch(CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
+                            mod_id: project_id,
+                            game_version: content.minecraft_version.into(),
+                            mod_loader_type: Some(bridged.as_curseforge_loader() as u32),
+                            release_types: None,
+                            page_size: Some(1),
+                        }))
+                        .await;
+                    not_found = matches!(result, Err(MetaLoadError::NonOK(404)))
+                        || result.as_ref().ok().map(|r| r.data.is_empty()).unwrap_or(false);
+
+                    tracker.add_count(1);
+                }
                 if not_found && mod_loader_type.is_some() {
                     tracker.add_total(1);
 
@@ -754,9 +839,7 @@ impl BackendState {
                 if is_wrong_version && mod_summary.extra.is_strict_minecraft_version() {
                     return Err(ContentInstallError::UnableToFindVersion);
                 }
-                if is_wrong_loader && mod_summary.extra.is_strict_loader() {
-                    // todo: determine loader(s) from summary and check if it is compatible with the loader hint
-                    // todo: if we install a fabric mod on forge 1.20.1 / neoforge 1.21.1, we can install sinytra instead of erroring
+                if is_wrong_loader && mod_summary.extra.is_strict_loader() && !loads_through_bridge(&mod_summary) {
                     return Err(ContentInstallError::UnableToFindVersion);
                 }
 
@@ -791,11 +874,15 @@ impl BackendState {
                         .iter()
                         .filter_map(|dep| {
                             if dep.relation_type == CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY {
+                                // As for Modrinth: Forgified Fabric API stands in for Fabric API
+                                // under Sinytra Connector
+                                let dependency = bridged_curseforge_dependency(dep.mod_id, content.loader, bridged_loaders)
+                                    .unwrap_or(dep.mod_id);
                                 Some(ContentInstallFile {
                                     replace_old: None,
                                     path: ContentInstallPath::Automatic,
                                     download: ContentDownload::Curseforge {
-                                        project_id: dep.mod_id,
+                                        project_id: dependency,
                                         install_dependencies: true,
                                     },
                                     content_source: ContentSource::CurseforgeProject { project_id },

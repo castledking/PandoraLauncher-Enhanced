@@ -43,6 +43,7 @@ use crate::{
     component::{
         error_alert::ErrorAlert,
         mod_action_dropdown::{ModAction, render_mod_action_dropdown},
+        version_filter::VersionFilter,
     },
     entity::{
         DataEntities,
@@ -96,7 +97,11 @@ pub struct ModrinthSearchPage {
     data: DataEntities,
     hits: Vec<ModrinthHit>,
     install_for: Option<InstanceID>,
+    /// The Minecraft version results are narrowed to, if any.
     filter_version: Option<Ustr>,
+    /// The version of the instance being browsed for.
+    instance_version: Option<Ustr>,
+    version_filter: VersionFilter,
     loading: Option<Subscription>,
     pending_reload: bool,
     pending_clear: bool,
@@ -106,6 +111,9 @@ pub struct ModrinthSearchPage {
     _delayed_clear_task: Task<()>,
     _meta_reload_task: Task<()>,
     filter_loaders: EnumSet<Loader>,
+    /// Whether the user has picked loaders themselves, after which they're left alone rather than
+    /// following the instance's mods (such as Sinytra Connector being found once they load).
+    filter_loaders_picked: bool,
     filter_categories: BTreeSet<&'static str>,
     sort_option: ModrinthSearchIndex,
     show_categories: Arc<AtomicBool>,
@@ -243,6 +251,43 @@ fn environment_display(environment: ModrinthEnvironment) -> (PandoraIcon, Shared
     }
 }
 
+/// The loader filter browsing for an instance starts with: its own loader, and any whose mods it
+/// runs through a bridge mod. A vanilla instance starts unfiltered, since installing a mod onto it
+/// switches it to Fabric anyway.
+pub fn default_filter_loaders(loader: Loader, bridged: EnumSet<Loader>) -> EnumSet<Loader> {
+    match loader {
+        Loader::Vanilla => EnumSet::empty(),
+        loader => EnumSet::only(loader) | bridged,
+    }
+}
+
+/// The loaders a search for `project_type` can be narrowed to.
+fn loaders_offered_for(project_type: ModrinthProjectType) -> EnumSet<Loader> {
+    match project_type {
+        ModrinthProjectType::Mod | ModrinthProjectType::Modpack => Loader::Fabric | Loader::Forge | Loader::NeoForge,
+        ModrinthProjectType::Plugin => EnumSet::only(Loader::Paper),
+        _ => EnumSet::empty(),
+    }
+}
+
+/// Browsing for a Paper server opens on plugins, and browsing for a modded instance on something
+/// other than plugins, whichever type the page was last left on.
+fn correct_project_type_for(loader: Loader, cx: &mut App) {
+    let corrected = match (loader, InterfaceConfig::get(cx).modrinth_page_project_type) {
+        (
+            Loader::Paper,
+            ModrinthProjectType::Mod
+            | ModrinthProjectType::Modpack
+            | ModrinthProjectType::Resourcepack
+            | ModrinthProjectType::Shader
+            | ModrinthProjectType::Other,
+        ) => ModrinthProjectType::Plugin,
+        (Loader::Fabric | Loader::Forge | Loader::NeoForge, ModrinthProjectType::Plugin) => ModrinthProjectType::Mod,
+        _ => return,
+    };
+    InterfaceConfig::get_mut(cx).modrinth_page_project_type = corrected;
+}
+
 /// What the search box says, which has to follow the project type rather than staying on
 /// whatever the page happened to open with.
 fn search_placeholder(project_type: ModrinthProjectType) -> &'static str {
@@ -264,6 +309,11 @@ impl ModrinthSearchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(entry) = install_for.and_then(|id| data.instances.read(cx).entries.get(&id)) {
+            let loader = entry.read(cx).configuration.loader;
+            correct_project_type_for(loader, cx);
+        }
+
         // The page opens on whatever project type was last looked at, so the search box has
         // to say what that one is searching rather than assuming mods
         let project_type = InterfaceConfig::get(cx).modrinth_page_project_type;
@@ -280,22 +330,25 @@ impl ModrinthSearchPage {
         > = Default::default();
         let mut all_installed_content_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>> = FxHashMap::default();
         let mut filter_version = None;
+        let mut instance_version = None;
         let mut filter_loaders = EnumSet::empty();
 
         let mut content_states = None;
         if let Some(install_for) = install_for {
-            if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
+            if let Some(entry) = data.instances.read(cx).entries.get(&install_for).cloned() {
                 let instance = entry.read(cx);
                 content_states = Some(instance.content_states.clone());
                 let instance_content = instance.content.clone();
                 let loader = instance.configuration.loader;
                 let minecraft_version = instance.configuration.minecraft_version;
                 can_install_latest = true;
-                filter_version = Some(minecraft_version);
-                // A Paper server can only use plugins, so don't make the user find the filter
-                if loader == Loader::Paper {
-                    filter_loaders = EnumSet::only(Loader::Paper);
+                instance_version = Some(minecraft_version);
+                if InterfaceConfig::get(cx).content_filter_instance_version {
+                    filter_version = Some(minecraft_version);
                 }
+                // Results start out limited to what the instance can load, so a NeoForge instance
+                // shows NeoForge mods (and Fabric ones too, with Sinytra Connector installed)
+                filter_loaders = default_filter_loaders(loader, instance.bridged_loaders(cx));
 
                 for content_folder in ContentFolder::iter() {
                     let mut specific_installed_content: FxHashMap<Arc<str>, Vec<InstalledContent>> =
@@ -343,7 +396,19 @@ impl ModrinthSearchPage {
                     specific_installed_content_by_project[content_folder] = specific_installed_content;
 
                     let content = instance_content[content_folder].clone();
+                    let instance_entry = entry.clone();
                     cx.observe(&content, move |page, entity, cx| {
+                        // The instance's mods load after the page opens, and a bridge such as Sinytra
+                        // Connector among them widens what it can load
+                        if content_folder == ContentFolder::Mods && !page.filter_loaders_picked {
+                            let instance = instance_entry.read(cx);
+                            let loaders = default_filter_loaders(loader, instance.bridged_loaders(cx));
+                            if loaders != page.filter_loaders {
+                                page.filter_loaders = loaders;
+                                page.reload(cx);
+                            }
+                        }
+
                         let specific = &mut page.specific_installed_content_by_project[content_folder];
 
                         specific.clear();
@@ -388,11 +453,22 @@ impl ModrinthSearchPage {
 
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
+        let version_filter = VersionFilter::new(
+            filter_version,
+            instance_version,
+            &data.metadata,
+            window,
+            cx,
+            |page: &mut Self, version, _, cx| page.set_filter_version(version, cx),
+        );
+
         let mut page = Self {
             data: data.clone(),
             hits: Vec::new(),
             install_for,
             filter_version,
+            instance_version,
+            version_filter,
             loading: None,
             pending_reload: false,
             pending_clear: false,
@@ -402,6 +478,7 @@ impl ModrinthSearchPage {
             _delayed_clear_task: Task::ready(()),
             _meta_reload_task: Task::ready(()),
             filter_loaders,
+            filter_loaders_picked: false,
             filter_categories: Default::default(),
             sort_option: ModrinthSearchIndex::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
@@ -455,10 +532,28 @@ impl ModrinthSearchPage {
     }
 
     fn set_filter_loaders(&mut self, loaders: EnumSet<Loader>, _window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_loaders_picked = true;
         if self.filter_loaders == loaders {
             return;
         }
         self.filter_loaders = loaders;
+        self.reload(cx);
+    }
+
+    fn set_filter_version(&mut self, version: Option<Ustr>, cx: &mut Context<Self>) {
+        // Whether to start on the instance's version is remembered, but not a one-off pick of
+        // some other version
+        if self.instance_version.is_some() {
+            if version.is_none() {
+                InterfaceConfig::get_mut(cx).content_filter_instance_version = false;
+            } else if version == self.instance_version {
+                InterfaceConfig::get_mut(cx).content_filter_instance_version = true;
+            }
+        }
+        if self.filter_version == version {
+            return;
+        }
+        self.filter_version = version;
         self.reload(cx);
     }
 
@@ -523,7 +618,6 @@ impl ModrinthSearchPage {
 
         let config = InterfaceConfig::get(cx);
         let filter_project_type = config.modrinth_page_project_type;
-        let modrinth_filter_version = config.content_filter_version;
 
         let project_type = match filter_project_type {
             ModrinthProjectType::Mod | ModrinthProjectType::Other => "mod",
@@ -539,16 +633,16 @@ impl ModrinthSearchPage {
         let mut facets = format!("[[\"project_type={}\"]", project_type);
 
         let filter_by_loader = filter_project_type.has_loader_and_version();
-        if filter_by_loader
-            && let Some(filter_version) = self.filter_version
-            && modrinth_filter_version
-        {
+        if filter_by_loader && let Some(filter_version) = self.filter_version {
             facets.push_str(",[\"versions=");
             facets.push_str(&filter_version);
             facets.push_str("\"]");
         }
 
-        if !self.filter_loaders.is_empty() && filter_by_loader {
+        // Only the loaders the current project type offers count: a NeoForge instance's loader
+        // means nothing to a plugin search
+        let filter_loaders = self.filter_loaders & loaders_offered_for(filter_project_type);
+        if !filter_loaders.is_empty() && filter_by_loader {
             // Modrinth tracks loaders in their own facet. Only modpacks are an exception, since they
             // carry no loaders and describe themselves purely by category.
             let loader_facet = if filter_project_type.loader_facet_uses_categories() {
@@ -560,7 +654,7 @@ impl ModrinthSearchPage {
             facets.push_str(",[");
 
             let mut first = true;
-            for loader in self.filter_loaders {
+            for loader in filter_loaders {
                 // Paper runs anything written against the Bukkit API, and most plugins only list
                 // some of these, so a Paper server searches all of them. Folia is left out: a
                 // Folia-only plugin can't load on Paper or Purpur.
@@ -798,6 +892,7 @@ impl ModrinthSearchPage {
                     let is_open = self.open_dropdown_id.as_ref().map(|s| s.as_str()) == Some(&*dropdown_id);
                     let accent = _accent;
 
+                    let filter_version = self.filter_version;
                     let mut actions = vec![ModAction::Reinstall, ModAction::OpenPage, ModAction::Remove];
 
                     // Only show Update Check if can_install_latest is true
@@ -816,6 +911,7 @@ impl ModrinthSearchPage {
                                         project_id.clone(),
                                         project_type,
                                         install_for.clone(),
+                                        filter_version,
                                         &data,
                                         window,
                                         cx,
@@ -895,6 +991,7 @@ impl ModrinthSearchPage {
                             let project_id = hit.project_id.clone();
                             let install_for = self.install_for.clone();
                             let project_type = hit.project_type;
+                            let filter_version = self.filter_version;
 
                             move |_, window, cx| {
                                 cx.stop_propagation();
@@ -905,6 +1002,7 @@ impl ModrinthSearchPage {
                                         &project_id,
                                         project_type,
                                         install_for,
+                                        filter_version,
                                         &data,
                                         window,
                                         cx,
@@ -1032,12 +1130,14 @@ impl PrimaryAction {
         }
     }
 
+    /// `game_version_hint` is the Minecraft version the user was browsing, if any.
     pub fn perform(
         &self,
         name: SharedString,
         project_id: &Arc<str>,
         project_type: ModrinthProjectType,
         install_for: Option<InstanceID>,
+        game_version_hint: Option<Ustr>,
         data: &DataEntities,
         window: &mut Window,
         cx: &mut App,
@@ -1049,6 +1149,7 @@ impl PrimaryAction {
                     project_id.clone(),
                     project_type,
                     install_for,
+                    game_version_hint,
                     data,
                     window,
                     cx,
@@ -1068,6 +1169,25 @@ impl PrimaryAction {
                 let instance = entry.read(cx);
                 let loader = instance.configuration.loader;
                 let minecraft_version = instance.configuration.minecraft_version;
+
+                // Found while browsing another Minecraft version, so there may be nothing for the
+                // instance's own: the dialog lets the user see which version they're getting
+                if let Some(hint) = game_version_hint
+                    && hint != minecraft_version
+                    && project_type.has_loader_and_version()
+                {
+                    crate::modals::modrinth_install::open(
+                        name,
+                        project_id.clone(),
+                        project_type,
+                        Some(install_for),
+                        Some(hint),
+                        data,
+                        window,
+                        cx,
+                    );
+                    return;
+                }
                 if loader == Loader::Vanilla && project_type.mod_or_modpack() {
                     let data = data.clone();
                     let project_id = project_id.clone();
@@ -1417,22 +1537,9 @@ impl Render for ModrinthSearchPage {
             })
             .into_any_element();
 
-        let is_mod = filter_project_type.has_loader_and_version();
-        let filter_version_toggle = if is_mod && let Some(filter_version) = self.filter_version {
-            let title = format!("{}: {}", t::instance::version(), filter_version);
-            Some(
-                selection_button("filter_version", InterfaceConfig::get(cx).content_filter_version)
-                    .label(title)
-                    .outline()
-                    .on_click(cx.listener(|page, _, _, cx| {
-                        let cfg = InterfaceConfig::get_mut(cx);
-                        cfg.content_filter_version = !cfg.content_filter_version;
-                        page.reload(cx);
-                    })),
-            )
-        } else {
-            None
-        };
+        let version_filter = filter_project_type
+            .has_loader_and_version()
+            .then(|| self.version_filter.render().w_full());
 
         let parameters = v_flex()
             .h_full()
@@ -1443,7 +1550,7 @@ impl Render for ModrinthSearchPage {
             .gap_3()
             .child(type_button_group)
             .when_some(loader_button_group, |this, group| this.child(group))
-            .when_some(filter_version_toggle, |this, button| this.child(button))
+            .when_some(version_filter, |this, select| this.child(select))
             .child(category)
             .child(sort);
 

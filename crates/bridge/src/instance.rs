@@ -300,6 +300,16 @@ impl ContentType {
         }
     }
 
+    /// The loader a mod of this type is made for. None for anything that isn't a mod.
+    pub fn mod_loader(&self) -> Option<Loader> {
+        match self {
+            Self::Fabric => Some(Loader::Fabric),
+            Self::LegacyForge | Self::Forge => Some(Loader::Forge),
+            Self::NeoForge => Some(Loader::NeoForge),
+            _ => None,
+        }
+    }
+
     pub fn modrinth_loaders(&self, fallback: ModrinthLoader) -> Arc<[ModrinthLoader]> {
         match self {
             ContentType::Fabric => [ModrinthLoader::Fabric].into(),

@@ -42,6 +42,7 @@ use crate::{
     component::{
         error_alert::ErrorAlert,
         mod_action_dropdown::{ModAction, render_mod_action_dropdown},
+        version_filter::VersionFilter,
     },
     entity::{
         DataEntities,
@@ -51,7 +52,7 @@ use crate::{
     format_downloads,
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
-    pages::page::Page,
+    pages::{modrinth_page::default_filter_loaders, page::Page},
 };
 
 fn show_vanilla_change_to_fabric_modal(
@@ -94,7 +95,11 @@ pub struct CurseforgeSearchPage {
     data: DataEntities,
     hits: Vec<CurseforgeHit>,
     install_for: Option<InstanceID>,
+    /// The Minecraft version results are narrowed to, if any.
     filter_version: Option<Ustr>,
+    /// The version of the instance being browsed for.
+    instance_version: Option<Ustr>,
+    version_filter: VersionFilter,
     loading: Option<Subscription>,
     pending_reload: bool,
     pending_clear: bool,
@@ -104,6 +109,9 @@ pub struct CurseforgeSearchPage {
     _delayed_clear_task: Task<()>,
     _meta_reload_task: Task<()>,
     filter_loaders: EnumSet<Loader>,
+    /// Whether the user has picked loaders themselves, after which they're left alone rather than
+    /// following the instance's mods (such as Sinytra Connector being found once they load).
+    filter_loaders_picked: bool,
     filter_categories: BTreeSet<u32>,
     sort_field: CurseforgeSortField,
     show_categories: Arc<AtomicBool>,
@@ -186,6 +194,27 @@ impl CurseforgeSearchPage {
             project_type = CurseforgeClassId::Mod;
             InterfaceConfig::get_mut(cx).curseforge_page_class_id = CurseforgeClassId::Mod;
         }
+        // Browsing for a Paper server opens on plugins, and browsing for a modded instance on
+        // something other than plugins, whichever type the page was last left on
+        if let Some(entry) = install_for.and_then(|id| data.instances.read(cx).entries.get(&id)) {
+            let corrected = match (entry.read(cx).configuration.loader, project_type) {
+                (
+                    Loader::Paper,
+                    CurseforgeClassId::Mod
+                    | CurseforgeClassId::Modpack
+                    | CurseforgeClassId::Resourcepack
+                    | CurseforgeClassId::Shader,
+                ) => Some(CurseforgeClassId::BukkitPlugin),
+                (Loader::Fabric | Loader::Forge | Loader::NeoForge, CurseforgeClassId::BukkitPlugin) => {
+                    Some(CurseforgeClassId::Mod)
+                },
+                _ => None,
+            };
+            if let Some(corrected) = corrected {
+                project_type = corrected;
+                InterfaceConfig::get_mut(cx).curseforge_page_class_id = corrected;
+            }
+        }
 
         let search_state = cx.new(|cx| {
             let placeholder = match project_type {
@@ -207,17 +236,25 @@ impl CurseforgeSearchPage {
         > = Default::default();
         let mut all_installed_content_by_project: FxHashMap<u32, Vec<InstalledContent>> = FxHashMap::default();
         let mut filter_version = None;
+        let mut instance_version = None;
+        let mut filter_loaders = EnumSet::empty();
 
         let mut content_states = None;
         if let Some(install_for) = install_for {
-            if let Some(entry) = data.instances.read(cx).entries.get(&install_for) {
+            if let Some(entry) = data.instances.read(cx).entries.get(&install_for).cloned() {
                 let instance = entry.read(cx);
                 content_states = Some(instance.content_states.clone());
                 let instance_content = instance.content.clone();
                 let loader = instance.configuration.loader;
                 let minecraft_version = instance.configuration.minecraft_version;
                 can_install_latest = true;
-                filter_version = Some(minecraft_version);
+                instance_version = Some(minecraft_version);
+                if InterfaceConfig::get(cx).content_filter_instance_version {
+                    filter_version = Some(minecraft_version);
+                }
+                // Results start out limited to what the instance can load, so a NeoForge instance
+                // shows NeoForge mods (and Fabric ones too, with Sinytra Connector installed)
+                filter_loaders = default_filter_loaders(loader, instance.bridged_loaders(cx));
 
                 for content_folder in ContentFolder::iter() {
                     let mut specific_installed_content: FxHashMap<u32, Vec<InstalledContent>> = FxHashMap::default();
@@ -245,7 +282,19 @@ impl CurseforgeSearchPage {
                     specific_installed_content_by_project[content_folder] = specific_installed_content;
 
                     let content = instance_content[content_folder].clone();
+                    let instance_entry = entry.clone();
                     cx.observe(&content, move |page, entity, cx| {
+                        // The instance's mods load after the page opens, and a bridge such as Sinytra
+                        // Connector among them widens what it can load
+                        if content_folder == ContentFolder::Mods && !page.filter_loaders_picked {
+                            let instance = instance_entry.read(cx);
+                            let loaders = default_filter_loaders(loader, instance.bridged_loaders(cx));
+                            if loaders != page.filter_loaders {
+                                page.filter_loaders = loaders;
+                                page.reload(cx);
+                            }
+                        }
+
                         let specific = &mut page.specific_installed_content_by_project[content_folder];
 
                         specific.clear();
@@ -281,11 +330,22 @@ impl CurseforgeSearchPage {
 
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
+        let version_filter = VersionFilter::new(
+            filter_version,
+            instance_version,
+            &data.metadata,
+            window,
+            cx,
+            |page: &mut Self, version, _, cx| page.set_filter_version(version, cx),
+        );
+
         let mut page = Self {
             data: data.clone(),
             hits: Vec::new(),
             install_for,
             filter_version,
+            instance_version,
+            version_filter,
             loading: None,
             pending_reload: false,
             pending_clear: false,
@@ -295,7 +355,8 @@ impl CurseforgeSearchPage {
             _search_input_subscription,
             _delayed_clear_task: Task::ready(()),
             _meta_reload_task: Task::ready(()),
-            filter_loaders: Default::default(),
+            filter_loaders,
+            filter_loaders_picked: false,
             filter_categories: Default::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
             show_sort: Arc::new(AtomicBool::new(false)),
@@ -358,10 +419,28 @@ impl CurseforgeSearchPage {
     }
 
     fn set_filter_loaders(&mut self, loaders: EnumSet<Loader>, _window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_loaders_picked = true;
         if self.filter_loaders == loaders {
             return;
         }
         self.filter_loaders = loaders;
+        self.reload(cx);
+    }
+
+    fn set_filter_version(&mut self, version: Option<Ustr>, cx: &mut Context<Self>) {
+        // Whether to start on the instance's version is remembered, but not a one-off pick of
+        // some other version
+        if self.instance_version.is_some() {
+            if version.is_none() {
+                InterfaceConfig::get_mut(cx).content_filter_instance_version = false;
+            } else if version == self.instance_version {
+                InterfaceConfig::get_mut(cx).content_filter_instance_version = true;
+            }
+        }
+        if self.filter_version == version {
+            return;
+        }
+        self.filter_version = version;
         self.reload(cx);
     }
 
@@ -419,22 +498,20 @@ impl CurseforgeSearchPage {
 
         let config = InterfaceConfig::get(cx);
         let class_id = config.curseforge_page_class_id;
-        let modrinth_filter_version = config.content_filter_version;
 
         let offset = if self.pending_clear { 0 } else { self.hits.len() };
 
-        let game_version = if class_id.has_loader_and_version()
-            && let Some(filter_version) = self.filter_version
-            && modrinth_filter_version
-        {
-            Some(filter_version)
+        let game_version = if class_id.has_loader_and_version() {
+            self.filter_version
         } else {
             None
         };
 
-        let mod_loader_types = if !self.filter_loaders.is_empty() && class_id.supports_loader_filter() {
+        // Only mod loaders count: a Paper server's loader means nothing to a mod search
+        let filter_loaders = self.filter_loaders & (Loader::Fabric | Loader::Forge | Loader::NeoForge);
+        let mod_loader_types = if !filter_loaders.is_empty() && class_id.supports_loader_filter() {
             let mut string = "[\"".to_string();
-            for (i, loader) in self.filter_loaders.iter().enumerate() {
+            for (i, loader) in filter_loaders.iter().enumerate() {
                 if i > 0 {
                     string.push_str("\",\"");
                 }
@@ -632,6 +709,7 @@ impl CurseforgeSearchPage {
                     let installed_content_ids = installed_content_ids.clone();
                     let is_open = self.open_dropdown_id.as_ref().map(|s| s.as_str()) == Some(&*dropdown_id);
                     let accent = _accent;
+                    let filter_version = self.filter_version;
 
                     let mut actions = vec![ModAction::Reinstall, ModAction::Remove];
 
@@ -650,6 +728,7 @@ impl CurseforgeSearchPage {
                                         crate::modals::curseforge_install::open(
                                             hit.clone(),
                                             install_for.clone(),
+                                            filter_version,
                                             &data,
                                             window,
                                             cx,
@@ -729,6 +808,7 @@ impl CurseforgeSearchPage {
                             let data = self.data.clone();
                             let hit = hit.clone();
                             let install_for = self.install_for.clone();
+                            let filter_version = self.filter_version;
 
                             move |_, window, cx| {
                                 cx.stop_propagation();
@@ -739,6 +819,7 @@ impl CurseforgeSearchPage {
                                             crate::modals::curseforge_install::open(
                                                 hit.clone(),
                                                 install_for,
+                                                filter_version,
                                                 &data,
                                                 window,
                                                 cx,
@@ -766,6 +847,24 @@ impl CurseforgeSearchPage {
                                             let project_type =
                                                 hit.class_id.map(CurseforgeClassId::from_u32).unwrap_or_default();
                                             let minecraft_version = instance.configuration.minecraft_version;
+
+                                            // Found while browsing another Minecraft version, so there
+                                            // may be nothing for the instance's own: the dialog lets
+                                            // the user see which version they're getting
+                                            if let Some(hint) = filter_version
+                                                && hint != minecraft_version
+                                                && project_type.has_loader_and_version()
+                                            {
+                                                crate::modals::curseforge_install::open(
+                                                    hit.clone(),
+                                                    Some(install_for),
+                                                    Some(hint),
+                                                    &data,
+                                                    window,
+                                                    cx,
+                                                );
+                                                return;
+                                            }
                                             if loader == Loader::Vanilla && project_type.mod_or_modpack() {
                                                 let data = data.clone();
                                                 let project_id = hit.id;
@@ -1206,23 +1305,9 @@ impl Render for CurseforgeSearchPage {
                 })
                 .into_any_element();
 
-        let filter_version_toggle = if filter_project_type.has_loader_and_version()
-            && let Some(filter_version) = self.filter_version
-        {
-            let title = format!("{}: {}", t::instance::version(), filter_version);
-            Some(
-                selection_button("filter_version", InterfaceConfig::get(cx).content_filter_version)
-                    .label(title)
-                    .outline()
-                    .on_click(cx.listener(|page, _, _, cx| {
-                        let cfg = InterfaceConfig::get_mut(cx);
-                        cfg.content_filter_version = !cfg.content_filter_version;
-                        page.reload(cx);
-                    })),
-            )
-        } else {
-            None
-        };
+        let version_filter = filter_project_type
+            .has_loader_and_version()
+            .then(|| self.version_filter.render().w_full());
 
         let parameters = v_flex()
             .h_full()
@@ -1233,7 +1318,7 @@ impl Render for CurseforgeSearchPage {
             .gap_3()
             .child(type_button_group)
             .when_some(loader_button_group, |this, group| this.child(group))
-            .when_some(filter_version_toggle, |this, button| this.child(button))
+            .when_some(version_filter, |this, select| this.child(select))
             .child(category)
             .child(sort);
 

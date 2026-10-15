@@ -150,11 +150,13 @@ impl ContentType {
                 InstanceContentSortKey::Filename,
                 InstanceContentSortKey::ModifiedTime,
                 InstanceContentSortKey::FileSize,
+                InstanceContentSortKey::Category,
             ],
             ContentType::ResourcePacks | ContentType::Shaders | ContentType::Plugins => &[
                 InstanceContentSortKey::Filename,
                 InstanceContentSortKey::ModifiedTime,
                 InstanceContentSortKey::FileSize,
+                InstanceContentSortKey::Category,
             ],
         }
     }

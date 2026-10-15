@@ -702,6 +702,7 @@ dependencies = [
  "command",
  "crc32fast",
  "enum-map",
+ "enumset",
  "flate2",
  "futures",
  "hex",

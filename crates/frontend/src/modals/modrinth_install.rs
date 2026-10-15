@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::sync::Arc;
 
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
@@ -23,13 +23,14 @@ use relative_path::RelativePath;
 use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{
     content::{ContentInstallReason, ContentSource},
-    loader::Loader,
+    loader::{Loader, bridged_modrinth_dependency},
     modrinth::{
         ModrinthDependencyType, ModrinthLoader, ModrinthProjectType, ModrinthProjectVersion,
         ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthVersionStatus, ModrinthVersionType,
     },
 };
 use strum::IntoEnumIterator;
+use ustr::Ustr;
 
 use crate::{
     component::{error_alert::ErrorAlert, instance_dropdown::InstanceDropdown},
@@ -38,6 +39,7 @@ use crate::{
         instance::InstanceEntry,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
+    modals::install_compat::{self, InstanceCompat, VersionChoice},
     root,
 };
 
@@ -65,22 +67,32 @@ struct InstallDialog {
     last_selected_loader: Option<SharedString>,
 
     fixed_minecraft_version: Option<&'static str>,
+    /// When the instance's own version has nothing, the other versions offered instead.
+    minecraft_version_choices: Option<Vec<&'static str>>,
+    preferred_minecraft_version: Option<&'static str>,
     minecraft_version_select_state: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
+    /// What the existing instance being installed into can take.
+    instance: Option<InstanceCompat>,
 
     force_target_loader: bool,
     target_loader: Option<Loader>,
     loader_select_state: Option<Entity<SelectState<Vec<SharedString>>>>,
+    /// The loader choices offered for an instance, and the Modrinth loaders each one matches.
+    loader_options: Vec<(SharedString, EnumSet<ModrinthLoader>)>,
     single_loader_set: Option<EnumSet<ModrinthLoader>>,
     install_dependencies: bool,
 
     mod_version_select_state: Option<Entity<SelectState<SearchableVec<ModVersionItem>>>>,
 }
 
+/// `game_version_hint` is the Minecraft version the user was browsing, which is picked when the
+/// instance's own version has nothing.
 pub fn open(
     name: SharedString,
     project_id: Arc<str>,
     project_type: ModrinthProjectType,
     install_for: Option<InstanceID>,
+    game_version_hint: Option<Ustr>,
     data: &DataEntities,
     window: &mut Window,
     cx: &mut App,
@@ -104,7 +116,16 @@ pub fn open(
             let name = name.clone();
             let _subscription = window.observe(&project_versions, cx, move |_, window, cx| {
                 window.close_all_dialogs(cx);
-                open(name.clone(), project_id.clone(), project_type, install_for, &data, window, cx);
+                open(
+                    name.clone(),
+                    project_id.clone(),
+                    project_type,
+                    install_for,
+                    game_version_hint,
+                    &data,
+                    window,
+                    cx,
+                );
             });
             window.open_dialog(cx, move |dialog, _, _| {
                 let _ = &_subscription;
@@ -172,37 +193,41 @@ pub fn open(
                 };
 
                 let instance = instance.read(cx);
+                let compat = InstanceCompat::of(instance, cx);
+                let minecraft_version = compat.minecraft_version;
+                let instance_loader = compat.loader;
 
-                let minecraft_version = instance.configuration.minecraft_version.as_str();
-                let instance_loader = instance.configuration.loader;
+                // What the instance can load: its own loader's builds, and those of any loader it
+                // runs through a bridge mod
+                let usable_loaders = usable_modrinth_loaders(&compat);
+                let checks_loader = project_type.has_loader_and_version() && instance_loader != Loader::Vanilla;
+                let usable_versions = version_matrix
+                    .iter()
+                    .filter(|(_, loaders)| !checks_loader || !loaders.loaders.is_disjoint(usable_loaders))
+                    .map(|(version, _)| *version)
+                    .collect::<Vec<_>>();
 
-                let Some(loaders) = version_matrix.get(minecraft_version) else {
-                    let error_message = t::instance::content::load::versions::not_found_for(minecraft_version);
-                    open_error_dialog(title.clone(), error_message.into(), window, cx);
-                    return;
-                };
-
-                let mut valid_loader = true;
-                if project_type.has_loader_and_version() {
-                    valid_loader = instance_loader == Loader::Vanilla
-                        || instance_loader
-                            .compatible_modrinth_loaders()
-                            .iter()
-                            .any(|loader| loaders.loaders.contains(*loader));
-                }
-                if !valid_loader {
-                    let error_message = t::instance::content::load::versions::not_found_for_loader(
-                        instance_loader.pretty_name(),
-                        minecraft_version,
-                    );
-                    open_error_dialog(title.clone(), error_message.into(), window, cx);
-                    return;
-                }
+                let (fixed_minecraft_version, minecraft_version_choices, preferred_minecraft_version) =
+                    match VersionChoice::new(minecraft_version, usable_versions, game_version_hint) {
+                        VersionChoice::Exact => (Some(minecraft_version), None, None),
+                        VersionChoice::Other { choices, preferred } => (None, Some(choices), preferred),
+                        VersionChoice::Nothing => {
+                            let error_message = if version_matrix.contains_key(minecraft_version) {
+                                t::instance::content::load::versions::not_found_for_loader(
+                                    instance_loader.pretty_name(),
+                                    minecraft_version,
+                                )
+                            } else {
+                                t::instance::content::load::versions::not_found_for(minecraft_version)
+                            };
+                            open_error_dialog(title.clone(), error_message.into(), window, cx);
+                            return;
+                        },
+                    };
 
                 let title = title.clone();
                 let instance_id = instance.id;
-                let fixed_minecraft_version = Some(minecraft_version);
-                let force_target_loader = project_type.has_loader_and_version() && instance_loader != Loader::Vanilla;
+                let force_target_loader = checks_loader;
                 let install_dialog = InstallDialog {
                     title,
                     name: name.into(),
@@ -215,10 +240,14 @@ pub fn open(
                     unsupported_instances: 0,
                     target: Some(InstallTarget::Instance(instance_id)),
                     fixed_minecraft_version,
+                    minecraft_version_choices,
+                    preferred_minecraft_version,
                     minecraft_version_select_state: None,
+                    instance: Some(compat),
                     force_target_loader,
                     target_loader: Some(instance_loader),
                     loader_select_state: None,
+                    loader_options: Vec::new(),
                     last_selected_minecraft_version: None,
                     single_loader_set: None,
                     install_dependencies: true,
@@ -235,18 +264,13 @@ pub fn open(
                     .iter()
                     .filter_map(|(_, instance)| {
                         let instance = instance.read(cx);
+                        let compat = InstanceCompat::of(instance, cx);
 
-                        let minecraft_version = instance.configuration.minecraft_version.as_str();
-                        let instance_loader = instance.configuration.loader;
-
-                        if let Some(loaders) = version_matrix.get(minecraft_version) {
+                        if let Some(loaders) = version_matrix.get(compat.minecraft_version) {
                             let mut valid_loader = true;
                             if project_type.has_loader_and_version() {
-                                valid_loader = instance_loader == Loader::Vanilla
-                                    || instance_loader
-                                        .compatible_modrinth_loaders()
-                                        .iter()
-                                        .any(|loader| loaders.loaders.contains(*loader));
+                                valid_loader = compat.loader == Loader::Vanilla
+                                    || !loaders.loaders.is_disjoint(usable_modrinth_loaders(&compat));
                             }
                             if valid_loader {
                                 return Some(instance.clone());
@@ -279,10 +303,14 @@ pub fn open(
                     unsupported_instances,
                     target: None,
                     fixed_minecraft_version: None,
+                    minecraft_version_choices: None,
+                    preferred_minecraft_version: None,
                     minecraft_version_select_state: None,
+                    instance: None,
                     force_target_loader: false,
                     target_loader: None,
                     loader_select_state: None,
+                    loader_options: Vec::new(),
                     last_selected_minecraft_version: None,
                     single_loader_set: None,
                     install_dependencies: true,
@@ -300,7 +328,16 @@ pub fn open(
                     alive.await_notification().await;
                     _ = cx.update(|window, cx| {
                         window.close_all_dialogs(cx);
-                        open(name.clone(), project_id.clone(), project_type, install_for, &data, window, cx);
+                        open(
+                            name.clone(),
+                            project_id.clone(),
+                            project_type,
+                            install_for,
+                            game_version_hint,
+                            &data,
+                            window,
+                            cx,
+                        );
                     });
                 })
             } else {
@@ -316,6 +353,17 @@ pub fn open(
             });
         },
     }
+}
+
+/// The Modrinth loaders whose builds an instance can load.
+fn usable_modrinth_loaders(compat: &InstanceCompat) -> EnumSet<ModrinthLoader> {
+    compat
+        .loader
+        .compatible_modrinth_loaders()
+        .iter()
+        .copied()
+        .chain(compat.bridged.iter().map(Loader::as_modrinth_loader))
+        .collect()
 }
 
 fn open_error_dialog(title: SharedString, text: SharedString, window: &mut Window, cx: &mut App) {
@@ -356,6 +404,16 @@ impl InstallDialog {
         let Some(selected_minecraft_version) = selected_minecraft_version else {
             return modal.child(content);
         };
+
+        if let Some(instance) = self.instance
+            && selected_minecraft_version.as_str() != instance.minecraft_version
+        {
+            content = content.child(install_compat::other_version_warning(
+                &selected_minecraft_version,
+                instance.minecraft_version,
+                cx,
+            ));
+        }
 
         content = content.child(self.render_select_loader(&selected_minecraft_version, window, cx));
 
@@ -398,6 +456,22 @@ impl InstallDialog {
                     .filter(|dep| dep.project_id.is_some() && dep.dependency_type == ModrinthDependencyType::Required)
                     .cloned()
                     .collect::<Vec<_>>();
+
+                // A dependency that can't load through the instance's bridge is swapped for the one
+                // that stands in for it there, such as Forgified Fabric API for Fabric API under
+                // Sinytra Connector
+                if let Some(instance) = self.instance {
+                    for dep in &mut required {
+                        let replacement = dep
+                            .project_id
+                            .as_deref()
+                            .and_then(|project_id| bridged_modrinth_dependency(project_id, instance.loader, instance.bridged));
+                        if let Some(replacement) = replacement {
+                            dep.project_id = Some(replacement.into());
+                            dep.version_id = None;
+                        }
+                    }
+                }
 
                 // Ignore projects that are already installed
                 if !required.is_empty()
@@ -542,10 +616,16 @@ impl InstallDialog {
                         reason: ContentInstallReason::Standalone,
                     });
 
+                    // An existing instance stays on its own version, which its dependencies are looked
+                    // up for, even when this file was made for another
+                    let minecraft_version = match this.instance {
+                        Some(instance) => instance.minecraft_version,
+                        None => selected_minecraft_version.as_str(),
+                    };
                     let content_install = ContentInstall {
                         target,
                         loader,
-                        minecraft_version: selected_minecraft_version.as_str().into(),
+                        minecraft_version: minecraft_version.into(),
                         files: files.into(),
                     };
 
@@ -597,13 +677,14 @@ impl InstallDialog {
                                 .success()
                                 .h_full()
                                 .label(t::instance::content::install::add_to_instance())
-                                .on_click(cx.listener(move |this, _, _, _| {
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.target = Some(InstallTarget::Instance(instance.id));
                                     this.fixed_minecraft_version =
                                         Some(instance.configuration.minecraft_version.as_str());
                                     this.force_target_loader = this.project_type.has_loader_and_version()
                                         && instance.configuration.loader != Loader::Vanilla;
                                     this.target_loader = Some(instance.configuration.loader);
+                                    this.instance = Some(InstanceCompat::of(&instance, cx));
                                 })),
                         )
                     });
@@ -616,6 +697,7 @@ impl InstallDialog {
                     this.fixed_minecraft_version = None;
                     this.force_target_loader = false;
                     this.target_loader = None;
+                    this.instance = None;
                 },
             )))
             .into_any_element()
@@ -636,25 +718,19 @@ impl InstallDialog {
                     select_state
                 })
             } else {
-                let mut keys: Vec<SharedString> =
-                    self.version_matrix.keys().cloned().map(SharedString::new_static).collect();
-                keys.sort_by(|a, b| {
-                    let a_is_snapshot = a.contains("w") || a.contains("pre") || a.contains("rc");
-                    let b_is_snapshot = b.contains("w") || b.contains("pre") || b.contains("rc");
-                    if a_is_snapshot != b_is_snapshot {
-                        if a_is_snapshot {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Less
-                        }
-                    } else {
-                        lexical_sort::natural_lexical_cmp(a, b).reverse()
-                    }
-                });
+                let mut keys: Vec<SharedString> = match &self.minecraft_version_choices {
+                    Some(choices) => choices.iter().copied().map(SharedString::new_static).collect(),
+                    None => self.version_matrix.keys().copied().map(SharedString::new_static).collect(),
+                };
+                install_compat::sort_game_versions(&mut keys);
+                let preferred = self
+                    .preferred_minecraft_version
+                    .and_then(|preferred| keys.iter().position(|key| key.as_str() == preferred))
+                    .unwrap_or(0);
                 cx.new(|cx| {
                     let mut select_state =
                         SelectState::new(SearchableVec::new(keys), None, window, cx).searchable(true);
-                    select_state.set_selected_index(Some(IndexPath::default()), window, cx);
+                    select_state.set_selected_index(Some(IndexPath::default().row(preferred)), window, cx);
                     select_state
                 })
             }
@@ -676,12 +752,35 @@ impl InstallDialog {
         let loader_select_state = self.loader_select_state.get_or_insert_with(|| {
             self.single_loader_set = None;
 
+            self.loader_options.clear();
+
             if let Some(loader) = self.target_loader
                 && self.force_target_loader
             {
-                let loader = SharedString::new_static(loader.as_modrinth_loader().pretty_name());
+                // The instance's own loader, then any it runs through a bridge mod, of those this
+                // version has builds for
+                let available = self
+                    .version_matrix
+                    .get(selected_minecraft_version.as_str())
+                    .map(|loaders| loaders.loaders)
+                    .unwrap_or_default();
+                let own: EnumSet<ModrinthLoader> = loader.compatible_modrinth_loaders().iter().copied().collect();
+                let mut options = vec![(SharedString::new_static(loader.as_modrinth_loader().pretty_name()), own)];
+                if let Some(instance) = self.instance {
+                    for bridged in instance.bridged {
+                        options.push((instance.bridged_label(bridged), EnumSet::only(bridged.as_modrinth_loader())));
+                    }
+                }
+                let mut usable: Vec<_> =
+                    options.iter().filter(|(_, matches)| !matches.is_disjoint(available)).cloned().collect();
+                if usable.is_empty() {
+                    usable.push(options.swap_remove(0));
+                }
+                self.loader_options = usable;
+
+                let labels = self.loader_options.iter().map(|(label, _)| label.clone()).collect::<Vec<_>>();
                 cx.new(|cx| {
-                    let mut select_state = SelectState::new(vec![loader], None, window, cx);
+                    let mut select_state = SelectState::new(labels, None, window, cx);
                     select_state.set_selected_index(Some(IndexPath::default()), window, cx);
                     select_state
                 })
@@ -738,8 +837,10 @@ impl InstallDialog {
             }
         });
 
+        // An instance's loader is fixed, unless it runs another's mods through a bridge too
+        let fixed_loader = self.force_target_loader && self.loader_options.len() <= 1;
         Select::new(loader_select_state)
-            .disabled(self.force_target_loader || self.single_loader_set.is_some())
+            .disabled(fixed_loader || self.single_loader_set.is_some())
             .title_prefix(format!("{}: ", t::instance::loader()))
             .into_any_element()
     }
@@ -754,10 +855,14 @@ impl InstallDialog {
         let mod_version_select_state = self.mod_version_select_state.get_or_insert_with(|| {
             let selected_game_version = selected_minecraft_version.as_str();
 
-            let selected_loader = if self.single_loader_set.is_some() {
+            let selected_loaders = if self.single_loader_set.is_some() {
                 None
+            } else if let Some((_, matches)) =
+                self.loader_options.iter().find(|(label, _)| label == selected_loader_string)
+            {
+                Some(*matches)
             } else {
-                Some(ModrinthLoader::from_name(selected_loader_string.as_str()))
+                Some(EnumSet::only(ModrinthLoader::from_name(selected_loader_string.as_str())))
             };
 
             let mod_versions: Vec<ModVersionItem> = self
@@ -774,8 +879,8 @@ impl InstallDialog {
                         return None;
                     }
                     let matches_game_version = game_versions.iter().any(|v| v.as_str() == selected_game_version);
-                    let matches_loader = if let Some(selected_loader) = selected_loader {
-                        loaders.contains(&selected_loader)
+                    let matches_loader = if let Some(selected_loaders) = selected_loaders {
+                        loaders.iter().any(|loader| selected_loaders.contains(*loader))
                     } else {
                         true
                     };

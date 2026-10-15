@@ -289,6 +289,21 @@ impl InstanceEntry {
         self.title.clone()
     }
 
+    /// The loaders other than its own whose mods this instance can also run, through a bridge mod
+    /// such as Sinytra Connector that it has enabled. Empty until its mods have loaded.
+    pub fn bridged_loaders(&self, cx: &App) -> enumset::EnumSet<schema::loader::Loader> {
+        let Some(mods) = self.content[ContentFolder::Mods].read(cx) else {
+            return enumset::EnumSet::empty();
+        };
+        let mod_ids = mods
+            .iter()
+            .filter(|summary| summary.enabled)
+            .filter_map(|summary| summary.content_summary.id.as_deref());
+        self.configuration
+            .loader
+            .bridged_loaders(self.configuration.minecraft_version.as_str(), mod_ids)
+    }
+
     fn create_title(&self) -> SharedString {
         let lower = self.name.to_ascii_lowercase();
 

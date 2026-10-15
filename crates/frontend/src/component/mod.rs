@@ -23,6 +23,7 @@ pub mod responsive_grid;
 pub mod search_helper;
 pub mod shrinking_text;
 pub mod skin_renderer;
+pub mod version_filter;
 
 pub fn create_styled_text(text: &schema::text_component::FlatTextComponent, grayscale: bool) -> gpui::StyledText {
     gpui::StyledText::new(&text.content).with_highlights(text.runs.iter().map(|run| {

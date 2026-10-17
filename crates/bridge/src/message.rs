@@ -186,12 +186,14 @@ pub enum MessageToBackend {
         live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
         modal_action: ModalAction,
     },
-    StartQuickplayInstance {
-        preset: QuickplayPreset,
-        minecraft_version: Ustr,
-        quick_play: Option<QuickPlayLaunch>,
-        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
-        modal_action: ModalAction,
+    /// Sets up the Vanilla, Performance and Expanded instances in the Pandora group, carrying the
+    /// old hidden quickplay instance over as whichever preset it was last switched to.
+    ///
+    /// Answers whether they were set up, so the frontend can try again on a later start when the
+    /// version manifest couldn't be fetched.
+    CreatePresetInstances {
+        legacy_preset: QuickplayPreset,
+        result: tokio::sync::oneshot::Sender<bool>,
     },
     RequestLoadWorlds {
         id: InstanceID,

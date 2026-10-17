@@ -447,6 +447,19 @@ impl SettingsRoot {
                             (func)(backend_config, window, cx)
                         },
                         SettingItemWidget::Any(func) => (func)(window, cx),
+                        SettingItemWidget::FullWidth(func) => {
+                            let widget = (func)(window, cx);
+                            item_elements.push(
+                                v_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(v_flex().text_sm().child((item.title)()).child(
+                                        div().text_color(cx.theme().muted_foreground).child((item.description)()),
+                                    ))
+                                    .child(widget),
+                            );
+                            continue;
+                        },
                     };
 
                     let item_element = h_flex()
@@ -521,6 +534,9 @@ enum SettingItemWidget {
     },
     Backend(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
     Any(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
+    /// Laid out under the title and description, across the whole width, for widgets too large
+    /// to sit beside them.
+    FullWidth(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
 }
 
 struct SettingItem {

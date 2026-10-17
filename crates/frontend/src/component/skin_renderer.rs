@@ -360,6 +360,14 @@ fn generate_triangles(part: &BodyPart, is_64x32: bool, cape_is_optifine_hd: bool
     tris
 }
 
+/// The texel a UV coordinate lands on, kept within the face spanning `min..max` (in 64-wide skin
+/// space) so it never reads a texel belonging to anything else.
+fn face_texel(coordinate: f32, min: f32, max: f32, scale: f32, size: u32) -> u32 {
+    let first = (min * scale).floor();
+    let last = ((max * scale).ceil() - 1.0).max(first);
+    (coordinate * scale).floor().clamp(first, last).clamp(0.0, (size - 1) as f32) as u32
+}
+
 fn edge_function(a: Vec3, b: Vec3, c: Vec3) -> f32 {
     (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)
 }
@@ -580,8 +588,21 @@ impl SkinRenderer {
                 tex
             };
 
+            // As in game and in the large model, the base layer is solid wherever it's drawn. Only
+            // the overlay (and the cape) can be see-through; dropping transparent base pixels
+            // instead opened holes in heads that showed whatever was behind them
+            let opaque = !part.is_overlay && part.limb != Limb::Cape;
+
             let tris = generate_triangles(&part, is_64x32, self.cape_is_optifine_hd);
             for t in tris {
+                // The face's own texels. A pixel on the triangle's edge can interpolate a UV just
+                // past them, which would pick up whatever the skin keeps next door, often stray
+                // pixels in the texture's unused space
+                let u_min = t.v.iter().map(|(_, (u, _))| *u).fold(f32::MAX, f32::min);
+                let u_max = t.v.iter().map(|(_, (u, _))| *u).fold(f32::MIN, f32::max);
+                let v_min = t.v.iter().map(|(_, (_, v))| *v).fold(f32::MAX, f32::min);
+                let v_max = t.v.iter().map(|(_, (_, v))| *v).fold(f32::MIN, f32::max);
+
                 // Project normal
                 let mut norm = t.normal;
                 norm = rotate_x(norm, global_pitch);
@@ -639,6 +660,8 @@ impl SkinRenderer {
                                 let u = w0 * v_proj[0].1.0 + w1 * v_proj[1].1.0 + w2 * v_proj[2].1.0;
                                 let v = w0 * v_proj[0].1.1 + w1 * v_proj[1].1.1 + w2 * v_proj[2].1.1;
 
+                                let u = u.clamp(u_min, u_max);
+                                let v = v.clamp(v_min, v_max);
                                 let (tx, ty) = if part.limb == Limb::Cape {
                                     // Cape: UVs in 64×32 space; scale by texture size (Mojang 64×32, OptiFine 46×22).
                                     // Half-texel inset for cape to avoid sampling transparent edge pixels (cf. skinview3d alpha handling).
@@ -648,25 +671,24 @@ impl SkinRenderer {
                                     let ty_f = (v * (h / 32.0)).clamp(0.5, h - 1.5);
                                     (tx_f as u32, ty_f as u32)
                                 } else {
-                                    let tx = (u * (tex_to_use.width() as f32 / 64.0))
-                                        .clamp(0.0, (tex_to_use.width() - 1) as f32)
-                                        as u32;
-                                    let ty = (v * (tex_to_use.height() as f32 / if is_64x32 { 32.0 } else { 64.0 }))
-                                        .clamp(0.0, (tex_to_use.height() - 1) as f32)
-                                        as u32;
-                                    (tx, ty)
+                                    let scale_x = tex_to_use.width() as f32 / 64.0;
+                                    let scale_y = tex_to_use.height() as f32 / if is_64x32 { 32.0 } else { 64.0 };
+                                    (
+                                        face_texel(u, u_min, u_max, scale_x, tex_to_use.width()),
+                                        face_texel(v, v_min, v_max, scale_y, tex_to_use.height()),
+                                    )
                                 };
 
                                 let pixel = tex_to_use.get_pixel(tx, ty);
                                 // Stricter alpha for cape to avoid semi-transparent edge artifacts
                                 let alpha_thresh = if part.limb == Limb::Cape { 200 } else { 128 };
-                                if pixel[3] > alpha_thresh {
+                                if opaque || pixel[3] > alpha_thresh {
                                     zbuf[idx] = z;
                                     let cidx = idx * 4;
                                     colorbuf[cidx] = (pixel[2] as f32 * light_intensity).min(255.0) as u8;
                                     colorbuf[cidx + 1] = (pixel[1] as f32 * light_intensity).min(255.0) as u8;
                                     colorbuf[cidx + 2] = (pixel[0] as f32 * light_intensity).min(255.0) as u8;
-                                    colorbuf[cidx + 3] = pixel[3];
+                                    colorbuf[cidx + 3] = if opaque { 255 } else { pixel[3] };
                                 }
                             }
                         }
@@ -771,5 +793,26 @@ impl Render for SkinRenderer {
                     ),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::face_texel;
+
+    #[test]
+    fn an_edge_sample_stays_on_its_face() {
+        // The hat's top face spans texels 40..48. A UV a hair past either edge must not read the
+        // texels on either side of it
+        assert_eq!(face_texel(39.999, 40.0, 48.0, 1.0, 64), 40);
+        assert_eq!(face_texel(48.0, 40.0, 48.0, 1.0, 64), 47);
+        assert_eq!(face_texel(44.5, 40.0, 48.0, 1.0, 64), 44);
+    }
+
+    #[test]
+    fn high_resolution_skins_scale_into_the_face() {
+        // A 128-wide skin has two texels per skin pixel
+        assert_eq!(face_texel(48.0, 40.0, 48.0, 2.0, 128), 95);
+        assert_eq!(face_texel(40.0, 40.0, 48.0, 2.0, 128), 80);
     }
 }

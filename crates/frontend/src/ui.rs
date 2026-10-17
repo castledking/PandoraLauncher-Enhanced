@@ -1,5 +1,6 @@
 use std::{collections::VecDeque, sync::Arc};
 
+use bridge::message::MessageToBackend;
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Icon, InteractiveElementExt, WindowExt, h_flex,
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     component::{
+        background_effect::SnowOverlay,
         generic_title_bar::TitleBarState,
         main_title_bar::MainTitleBar,
         menu::{MenuGroup, MenuGroupItem},
@@ -50,6 +52,7 @@ pub struct LauncherUI {
     page_history_forwards: Vec<(PageType, Arc<[PageType]>)>,
     previous_pages: FxHashMap<PageType, LauncherPage>,
     pending_page: Option<(PageType, Arc<[PageType]>)>,
+    snow: Entity<SnowOverlay>,
     _instance_added_subscription: Subscription,
     _instance_modified_subscription: Subscription,
     _instance_removed_subscription: Subscription,
@@ -195,14 +198,14 @@ impl LauncherUI {
             .values()
             .filter_map(|entry| {
                 let entry = entry.read(cx).clone();
-                if is_recentable(&entry) { Some(entry) } else { None }
+                if entry.is_recent() { Some(entry) } else { None }
             })
             .take(3)
             .collect();
 
         let _instance_added_subscription =
             cx.subscribe::<_, InstanceAddedEvent>(&data.instances, |this, _, event, cx| {
-                if !is_recentable(&event.instance) {
+                if !event.instance.is_recent() {
                     return;
                 }
                 if this.recent_instances.is_full() {
@@ -268,7 +271,7 @@ impl LauncherUI {
             });
         let _instance_moved_to_top_subscription =
             cx.subscribe::<_, InstanceMovedToTopEvent>(&data.instances, |this, _, event, cx| {
-                if !is_recentable(&event.instance) {
+                if !event.instance.is_regular_instance() {
                     return;
                 }
                 this.recent_instances.retain(|entry| entry.id != event.instance.id);
@@ -278,6 +281,8 @@ impl LauncherUI {
                 let _ = this.recent_instances.insert(0, event.instance.clone());
                 cx.notify();
             });
+
+        request_preset_instances(data, cx);
 
         let config = InterfaceConfig::get(cx);
 
@@ -339,6 +344,7 @@ impl LauncherUI {
             page_history_forwards: Vec::new(),
             previous_pages: FxHashMap::default(),
             pending_page,
+            snow: cx.new(|_| SnowOverlay::default()),
             _instance_added_subscription,
             _instance_modified_subscription,
             _instance_removed_subscription,
@@ -925,14 +931,51 @@ impl Render for LauncherUI {
             .child(sidebar_pages)
             .child(footer);
 
-        ResizePanel::new(&self.sidebar_state, sidebar, self.page.clone().render(&self, window, cx))
+        let snow = InterfaceConfig::get(cx).snow_effect;
+        div()
+            .relative()
+            .size_full()
+            .child(ResizePanel::new(
+                &self.sidebar_state,
+                sidebar,
+                self.page.clone().render(&self, window, cx),
+            ))
+            .when(snow, |this| this.child(self.snow.clone()))
     }
 }
 
-/// The sidebar's recent list is for jumping back into a game, so the quickplay instance and
-/// servers stay out of it.
-fn is_recentable(entry: &InstanceEntry) -> bool {
-    entry.name != schema::quickplay::INSTANCE_NAME && entry.configuration.server.is_none()
+/// Asks the backend for the Vanilla, Performance and Expanded instances the first time the
+/// launcher starts, or on a later start if it couldn't set them up then.
+///
+/// Only a confirmed setup is remembered, and nothing ever asks again after that, so deleting the
+/// instances or their group is permanent.
+fn request_preset_instances(data: &DataEntities, cx: &mut Context<LauncherUI>) {
+    static REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    if InterfaceConfig::get(cx).created_preset_instances || REQUESTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
+    let config = InterfaceConfig::get_mut(cx);
+    // The group starts out closed, so the presets don't crowd out instances people made themselves
+    config.instance_groups_closed.insert(schema::quickplay::GROUP_NAME.into());
+    let legacy_preset = config.quickplay_preset;
+
+    let (send, recv) = tokio::sync::oneshot::channel();
+    data.backend_handle.send(MessageToBackend::CreatePresetInstances {
+        legacy_preset,
+        result: send,
+    });
+
+    cx.spawn(async move |_, cx| {
+        if let Ok(true) = recv.await {
+            cx.update(|cx| {
+                InterfaceConfig::get_mut(cx).created_preset_instances = true;
+                InterfaceConfig::force_save(cx);
+            });
+        }
+    })
+    .detach();
 }
 
 fn enhanced_label() -> impl IntoElement {

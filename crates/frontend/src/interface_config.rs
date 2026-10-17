@@ -14,7 +14,12 @@ use schema::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    component::named_dropdown::DropdownName, pages::instance::instance_page::InstanceSubpageType, ui::PageType,
+    component::{
+        background_effect::{BackgroundEffect, EffectQuality},
+        named_dropdown::DropdownName,
+    },
+    pages::instance::instance_page::InstanceSubpageType,
+    ui::PageType,
 };
 
 struct InterfaceConfigHolder {
@@ -171,14 +176,31 @@ pub struct InterfaceConfig {
     pub player_model_animate: bool,
 
     // Quickplay
+    /// The preset the old quickplay page last had picked. Only read to tell which preset the old
+    /// hidden quickplay instance holds when it is carried over into the preset instances.
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub quickplay_preset: QuickplayPreset,
+    /// Whether the Vanilla, Performance and Expanded instances have been set up. They are only
+    /// ever set up once, so deleting them sticks.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub created_preset_instances: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub background_effect: BackgroundEffect,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub background_animated: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub background_quality: EffectQuality,
+    /// An image shown behind the quickplay page in place of the effect's own backdrop.
     #[serde(
         default,
         skip_serializing_if = "schema::skip_if_none",
         deserialize_with = "schema::try_deserialize"
     )]
-    pub quickplay_minecraft_version: Option<SharedString>,
+    pub custom_background: Option<Arc<Path>>,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub skin_animation: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub snow_effect: bool,
 
     // Groups as they were stored before upstream moved group membership onto the instance itself.
     // Kept only so `migrate_instance_groups` can carry them over, and cleared once it has.
@@ -369,9 +391,10 @@ impl InstanceContentSortKey {
                 .unwrap_or(0)
                 .cmp(&b.content_summary.filesize.unwrap_or(0))
                 .reverse(),
-            InstanceContentSortKey::Category => {
-                crate::component::content_label::compare_categories(a.label.category.as_deref(), b.label.category.as_deref())
-            },
+            InstanceContentSortKey::Category => crate::component::content_label::compare_categories(
+                a.label.category.as_deref(),
+                b.label.category.as_deref(),
+            ),
         }
     }
 }
@@ -551,7 +574,13 @@ impl Default for InterfaceConfig {
             player_model_zoom: default_zoom(),
             player_model_animate: true,
             quickplay_preset: QuickplayPreset::Vanilla,
-            quickplay_minecraft_version: None,
+            created_preset_instances: false,
+            background_effect: BackgroundEffect::default(),
+            background_animated: true,
+            background_quality: EffectQuality::default(),
+            custom_background: None,
+            skin_animation: true,
+            snow_effect: false,
         }
     }
 }

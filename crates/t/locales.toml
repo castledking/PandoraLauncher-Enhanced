@@ -1749,6 +1749,19 @@ en = "Quickplay"
 tr = "Hızlı Oyna"
 ru = "Быстрая игра"
 
+[quickplay.launch]
+en = "Launch"
+[quickplay.launching]
+en = "Launching"
+[quickplay.stopping]
+en = "Stopping"
+[quickplay.no_instances]
+en = "No instances yet"
+[quickplay.all_instances]
+en = "All instances"
+[quickplay.skin_animation]
+en = "Skin Animation"
+
 [instance.title]
 en = "Instances"
 tr = "Profiller"
@@ -2002,6 +2015,17 @@ sv = "Visa"
 ru = "Подробнее"
 fr = "Afficher"
 it = "Visualizza"
+[instance.group.ungroup]
+en = "Ungroup"
+[instance.group.delete]
+en = "Delete group"
+[instance.group.delete_dialog.title]
+en = "Delete Group: ${name: &str}"
+[instance.group.delete_dialog.warning]
+en = "This deletes every instance in the group, with all of their worlds and files. It can't be undone."
+[instance.group.delete_dialog.confirm]
+en = "Delete ${num: usize} instances"
+
 [instance.kill]
 en = "Kill"
 tr = "Sonlandır"
@@ -4829,6 +4853,64 @@ en = "Sidebar"
 en = "Show sidebar icons"
 [settings.appearance.sidebar.show_sidebar_icons_desc]
 en = "Show icons on the sidebar next to the text"
+[settings.appearance.background]
+en = "Background Effect"
+[settings.appearance.background.animated]
+en = "Animations"
+[settings.appearance.background.animated_desc]
+en = "Animate the background behind the quickplay page"
+[settings.appearance.background.skin_animation]
+en = "Skin animation"
+[settings.appearance.background.skin_animation_desc]
+en = "Let your skin breathe, sway and look around on the quickplay page"
+[settings.appearance.background.snow]
+en = "Snow effect"
+[settings.appearance.background.snow_desc]
+en = "Snow falls over the whole launcher, and keeps falling while it's in the background"
+[settings.appearance.background.quality]
+en = "Quality"
+[settings.appearance.background.quality_desc]
+en = "Lower quality draws less and redraws less often, using less CPU"
+[settings.appearance.background.quality_low]
+en = "Low"
+[settings.appearance.background.quality_high]
+en = "High"
+[settings.appearance.background.effect]
+en = "Effect"
+[settings.appearance.background.effect_desc]
+en = "Choose a background effect for the quickplay page"
+[settings.appearance.background.effects.matrix_rain]
+en = "Matrix Rain"
+[settings.appearance.background.effects.enchantment_table]
+en = "Enchantment Table"
+[settings.appearance.background.effects.nebula_waves]
+en = "Nebula Waves"
+[settings.appearance.background.effects.nebula_particles]
+en = "Nebula Particles"
+[settings.appearance.background.effects.nebula_grid]
+en = "Nebula Grid"
+[settings.appearance.background.effects.nebula_voxels]
+en = "Nebula Voxels"
+[settings.appearance.background.effects.nebula_lightning]
+en = "Nebula Lightning"
+[settings.appearance.background.effects.liquid_chrome]
+en = "Liquid Chrome"
+[settings.appearance.background.effects.retro_grid]
+en = "Retro Grid"
+[settings.appearance.background.effects.plain_color]
+en = "Plain Color"
+[settings.appearance.background.custom]
+en = "Custom background"
+[settings.appearance.background.custom_desc]
+en = "Show an image behind the quickplay page in place of the effect's backdrop"
+[settings.appearance.background.select_file]
+en = "Select File"
+[settings.appearance.background.select_prompt]
+en = "Select a background image"
+[settings.appearance.background.remove]
+en = "Remove"
+[settings.appearance.background.unsupported]
+en = "Only PNG, JPEG, GIF, WebP and BMP images can be used as a background"
 
 [settings.java]
 en = "Java"

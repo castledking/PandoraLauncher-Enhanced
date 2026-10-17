@@ -33,6 +33,29 @@ impl Mat3 {
         Self([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]])
     }
 
+    fn rotation_y(ry: f64) -> Self {
+        let (sy, cy) = ry.sin_cos();
+        Self([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]])
+    }
+
+    fn rotation_z(rz: f64) -> Self {
+        let (sz, cz) = rz.sin_cos();
+        Self([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]])
+    }
+
+    /// `self` applied after `other`.
+    fn then_after(&self, other: &Mat3) -> Mat3 {
+        let a = &self.0;
+        let b = &other.0;
+        let mut out = [[0.0; 3]; 3];
+        for row in 0..3 {
+            for col in 0..3 {
+                out[row][col] = a[row][0] * b[0][col] + a[row][1] * b[1][col] + a[row][2] * b[2][col];
+            }
+        }
+        Mat3(out)
+    }
+
     fn transform(&self, v: V3) -> V3 {
         let r = &self.0;
         V3 {
@@ -70,6 +93,9 @@ pub enum BodyPartType {
     RightLegOverlay,
     LeftLegOverlay,
     Cape,
+    /// The name floating over the head. Flat, and drawn from both sides, so it turns with the
+    /// player and reads backwards from behind.
+    Nameplate,
 }
 
 impl BodyPartType {
@@ -92,7 +118,8 @@ impl BodyPartType {
             | Self::LeftArmOverlay
             | Self::RightLegOverlay
             | Self::LeftLegOverlay
-            | Self::BodyOverlay => true,
+            | Self::BodyOverlay
+            | Self::Nameplate => true,
             _ => false,
         }
     }
@@ -117,6 +144,94 @@ impl BodyPartType {
             0.0
         }
     }
+}
+
+/// A standing pose layered over the model, so it can be animated while idle.
+///
+/// The default is the model's usual pose, so callers that don't animate pass that.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct IdlePose {
+    /// Degrees the head is tilted back; positive looks up.
+    pub head_pitch: f64,
+    /// Degrees the head is turned; positive turns it to the player's left.
+    pub head_yaw: f64,
+    /// Degrees each arm hangs out from the body.
+    pub arm_roll: f64,
+    /// Degrees the right arm swings forward, and the left arm back.
+    pub arm_swing: f64,
+    /// How far the chest has risen, in skin pixels. The head, arms and cape rise with it while
+    /// the legs stay put, so the body stretches rather than leaving a gap at the hips.
+    pub breath: f64,
+}
+
+impl IdlePose {
+    /// Moves a vertex of `part` into this pose. Returns the rotation the part's normals need.
+    fn transform(&self, part: BodyPartType, vert: V3) -> V3 {
+        match self.part_transform(part) {
+            PartTransform::None => vert,
+            PartTransform::Rotate { rotation, pivot } => {
+                let mut v = rotation.transform_with_offset(vert, pivot);
+                v.y += self.breath;
+                v
+            },
+            PartTransform::Stretch { bottom, height } => {
+                V3::new(vert.x, bottom + (vert.y - bottom) * (height + self.breath) / height, vert.z)
+            },
+            PartTransform::Rise => V3::new(vert.x, vert.y + self.breath, vert.z),
+        }
+    }
+
+    fn part_transform(&self, part: BodyPartType) -> PartTransform {
+        use BodyPartType::*;
+        match part {
+            Head | HeadOverlay => {
+                // Pitch in the head's own frame, then turn it, so looking up stays looking up
+                // whichever way the head is facing
+                let rotation = Mat3::rotation_y(self.head_yaw.to_radians())
+                    .then_after(&Mat3::rotation_x(-self.head_pitch.to_radians()));
+                PartTransform::Rotate {
+                    rotation,
+                    pivot: V3::new(0.0, 8.0, 0.0),
+                }
+            },
+            RightArm | RightArmOverlay => PartTransform::Rotate {
+                rotation: Mat3::rotation_z(-self.arm_roll.to_radians())
+                    .then_after(&Mat3::rotation_x(-self.arm_swing.to_radians())),
+                pivot: V3::new(-5.0, 6.0, 0.0),
+            },
+            LeftArm | LeftArmOverlay => PartTransform::Rotate {
+                rotation: Mat3::rotation_z(self.arm_roll.to_radians())
+                    .then_after(&Mat3::rotation_x(self.arm_swing.to_radians())),
+                pivot: V3::new(5.0, 6.0, 0.0),
+            },
+            Body | BodyOverlay => PartTransform::Stretch {
+                bottom: -4.0,
+                height: 12.0,
+            },
+            Cape | Nameplate => PartTransform::Rise,
+            RightLeg | LeftLeg | RightLegOverlay | LeftLegOverlay => PartTransform::None,
+        }
+    }
+
+    fn normal_rotation(&self, part: BodyPartType) -> Option<Mat3> {
+        match self.part_transform(part) {
+            PartTransform::Rotate { rotation, .. } => Some(rotation),
+            _ => None,
+        }
+    }
+}
+
+enum PartTransform {
+    None,
+    Rotate {
+        rotation: Mat3,
+        pivot: V3,
+    },
+    Stretch {
+        bottom: f64,
+        height: f64,
+    },
+    Rise,
 }
 
 struct BodyPartDef {
@@ -272,6 +387,7 @@ impl BodyPartDef {
         light0: V3,
         light1: V3,
         sway_progress: f64,
+        pose: &IdlePose,
     ) {
         let mut quads = self.to_quads();
         let sway_strength = self.part_type.sway_strength();
@@ -296,6 +412,18 @@ impl BodyPartDef {
                     *vert = transform.transform_with_offset(*vert, pivot);
                 }
                 quad.normal = transform.transform(quad.normal);
+            }
+        }
+
+        if *pose != IdlePose::default() {
+            let normal_rotation = pose.normal_rotation(self.part_type);
+            for quad in &mut quads {
+                for vert in &mut quad.verts {
+                    *vert = pose.transform(self.part_type, *vert);
+                }
+                if let Some(rotation) = &normal_rotation {
+                    quad.normal = rotation.transform(quad.normal);
+                }
             }
         }
 
@@ -825,6 +953,7 @@ fn collect_quads(
     yaw_deg: f64,
     pitch_deg: f64,
     sway_progress: f64,
+    pose: &IdlePose,
 ) -> Vec<ProjectedQuad> {
     let rot = Mat3::rotation_yx(yaw_deg.to_radians(), pitch_deg.to_radians());
 
@@ -841,7 +970,7 @@ fn collect_quads(
     let light1 = V3::new(-0.16169041669088866, 0.8084520834544432, 0.5659164584181102);
 
     for part in parts.iter() {
-        part.add_projected_quads(&mut projected_quads, &rot, light0, light1, sway_progress);
+        part.add_projected_quads(&mut projected_quads, &rot, light0, light1, sway_progress, pose);
     }
 
     if add_cape {
@@ -854,7 +983,7 @@ fn collect_quads(
             flip_x: false,
             part_type: BodyPartType::Cape,
         }
-        .add_projected_quads(&mut projected_quads, &rot, light0, light1, sway_progress);
+        .add_projected_quads(&mut projected_quads, &rot, light0, light1, sway_progress, pose);
     }
 
     projected_quads
@@ -914,6 +1043,8 @@ pub fn render_skin_3d(
     yaw_deg: f64,
     pitch_deg: f64,
     sway_progress: f64,
+    pose: &IdlePose,
+    nameplate: Option<&str>,
     y_offset: f64,
     zoom: f64,
 ) -> Option<RgbaImage> {
@@ -939,7 +1070,18 @@ pub fn render_skin_3d(
         SkinVariant::Other => !is_legacy && skin.get_pixel(54, 20)[3] < 20,
     };
 
-    let mut projected_quads = collect_quads(is_legacy, is_slim, cape.is_some(), yaw_deg, pitch_deg, sway_progress);
+    let mut projected_quads =
+        collect_quads(is_legacy, is_slim, cape.is_some(), yaw_deg, pitch_deg, sway_progress, pose);
+
+    let nameplate = nameplate
+        .filter(|text| !text.is_empty())
+        .map(|text| DynamicImage::ImageRgba8(crate::pixel_font::render_nameplate(text)));
+    let mut y_offset = y_offset;
+    if let Some(texture) = &nameplate {
+        let rot = Mat3::rotation_yx(yaw_deg.to_radians(), pitch_deg.to_radians());
+        projected_quads.push(nameplate_quad(texture, &rot, pose));
+        y_offset += NAMEPLATE_CENTERING;
+    }
 
     // Sort back-to-front (painter's algorithm): smaller Z = further from camera = draw first
     projected_quads.sort_by(|a, b| a.avg_z.partial_cmp(&b.avg_z).unwrap_or(std::cmp::Ordering::Equal));
@@ -958,16 +1100,66 @@ pub fn render_skin_3d(
         for i in 0..4 {
             verts[i] = V3::new(verts[i].x * scale + offset_x, verts[i].y * scale + offset_y, verts[i].z);
         }
-        if projected_quad.part_type == BodyPartType::Cape {
-            if let Some(cape) = &cape {
-                projected_quad.rasterize(&cape, &mut output, &mut zbuf);
-            }
-        } else {
-            projected_quad.rasterize(&skin, &mut output, &mut zbuf);
+        match projected_quad.part_type {
+            BodyPartType::Cape => {
+                if let Some(cape) = &cape {
+                    projected_quad.rasterize(cape, &mut output, &mut zbuf);
+                }
+            },
+            BodyPartType::Nameplate => {
+                if let Some(texture) = &nameplate {
+                    projected_quad.rasterize(texture, &mut output, &mut zbuf);
+                }
+            },
+            _ => projected_quad.rasterize(&skin, &mut output, &mut zbuf),
         }
     }
 
     Some(output)
+}
+
+/// Skin pixels per nameplate texel, so a typical name comes out about as wide as the head.
+const NAMEPLATE_SCALE: f64 = 0.22;
+/// Where the plate's bottom edge sits: clear of the head even while it's tilted back looking up.
+const NAMEPLATE_BOTTOM: f64 = 18.5;
+/// How far the model moves down to stay centred with a plate on top of it.
+pub const NAMEPLATE_CENTERING: f64 = 2.2;
+
+/// The nameplate as a single upright quad over the head, facing the way the player does.
+fn nameplate_quad(texture: &DynamicImage, rot: &Mat3, pose: &IdlePose) -> ProjectedQuad {
+    let (texels_wide, texels_high) = (texture.width() as f64, texture.height() as f64);
+    let half_width = texels_wide * NAMEPLATE_SCALE / 2.0;
+    let top = NAMEPLATE_BOTTOM + texels_high * NAMEPLATE_SCALE;
+    let corners = [
+        V3::new(-half_width, top, 0.0),
+        V3::new(half_width, top, 0.0),
+        V3::new(half_width, NAMEPLATE_BOTTOM, 0.0),
+        V3::new(-half_width, NAMEPLATE_BOTTOM, 0.0),
+    ];
+
+    let mut verts = [V3::new(0.0, 0.0, 0.0); 4];
+    let mut avg_z = 0.0;
+    for (vert, corner) in verts.iter_mut().zip(corners) {
+        let mut projected = rot.transform(pose.transform(BodyPartType::Nameplate, corner));
+        projected.y *= -1.0; // flip for screenspace (y down)
+        avg_z += projected.z / 4.0;
+        *vert = projected;
+    }
+
+    ProjectedQuad {
+        verts,
+        uvs: [
+            (0.0, 0.0),
+            (texels_wide, 0.0),
+            (texels_wide, texels_high),
+            (0.0, texels_high),
+        ],
+        avg_z,
+        allow_transparency: true,
+        // Unlit, as in game, so it stays legible whichever way it's turned
+        shade: 255,
+        part_type: BodyPartType::Nameplate,
+    }
 }
 
 // Constants calculated by brute force
@@ -996,7 +1188,8 @@ pub fn brute_force_bounds() {
                 let yaw = y as f64 / yaw_acc as f64 * scale + yaw_offset;
                 let pitch = p as f64 / pitch_acc as f64 * scale + pitch_offset;
 
-                let projected_quads = collect_quads(false, true, true, yaw, pitch, MAX_CAPE_ANGLE_SWAY_PROGRESS);
+                let projected_quads =
+                    collect_quads(false, true, true, yaw, pitch, MAX_CAPE_ANGLE_SWAY_PROGRESS, &IdlePose::default());
                 let mut w = f64::MIN;
                 for quad in &projected_quads {
                     for vert in &quad.verts {
@@ -1048,7 +1241,8 @@ pub fn brute_force_bounds() {
                 let yaw = y as f64 / yaw_acc as f64 * scale + yaw_offset;
                 let pitch = p as f64 / pitch_acc as f64 * scale + pitch_offset;
 
-                let projected_quads = collect_quads(false, true, true, yaw, pitch, MAX_CAPE_ANGLE_SWAY_PROGRESS);
+                let projected_quads =
+                    collect_quads(false, true, true, yaw, pitch, MAX_CAPE_ANGLE_SWAY_PROGRESS, &IdlePose::default());
                 let mut h = f64::MIN;
                 for quad in &projected_quads {
                     for vert in &quad.verts {

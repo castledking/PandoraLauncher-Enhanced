@@ -1,3 +1,4 @@
+pub mod background_effect;
 pub mod clipped_element;
 pub mod content_label;
 pub mod content_list;

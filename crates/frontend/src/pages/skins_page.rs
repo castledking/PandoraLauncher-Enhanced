@@ -63,7 +63,7 @@ pub struct SkinsPage {
     hovering_skin_idx: Option<usize>,
 }
 
-static DEFAULT_SKIN: Lazy<UniqueBytes> =
+pub static DEFAULT_SKIN: Lazy<UniqueBytes> =
     Lazy::new(|| UniqueBytes::new(include_bytes!("../../../../assets/images/default_skin.png")));
 
 impl SkinsPage {
@@ -770,11 +770,15 @@ impl Render for SkinsPage {
                         Skeleton::new().w(thumb_w).h(thumb_h).bg(secondary_skeleton).into_any_element()
                     }
                 } else {
+                    // Sized like the 3D thumbnails. Left unsized, the cached image fills a box
+                    // that is itself unsized and collapses to nothing
                     crate::png_render_cache::render_with_transform(
                         skin.clone(),
                         ImageTransformation::ResizeToWidth { width: 128 },
                         cx,
                     )
+                    .w(px(crate::skin_thumbnail_cache::THUMB_WIDTH as f32))
+                    .h(px(crate::skin_thumbnail_cache::THUMB_HEIGHT as f32))
                     .into_any_element()
                 };
 

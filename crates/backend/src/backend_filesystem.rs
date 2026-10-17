@@ -288,7 +288,10 @@ impl BackendState {
                     file_watching.watch_filesystem(to.clone(), WatchTarget::InstanceDir { id });
                     drop(file_watching);
 
-                    self.send.send_info(format!("Instance '{}' renamed to '{}'", old_name, instance.name));
+                    // The old quickplay instance being carried over is the launcher's own doing
+                    if old_name != schema::quickplay::INSTANCE_NAME {
+                        self.send.send_info(format!("Instance '{}' renamed to '{}'", old_name, instance.name));
+                    }
                     self.send.send(instance.create_modify_message());
 
                     true
@@ -337,7 +340,11 @@ impl BackendState {
                         return;
                     }
 
-                    let instance = self.load_instance_from_path(path, false, true);
+                    // Folders the backend creates and loads itself, such as the preset instances,
+                    // turn up here as well. Reloading them is harmless, but they haven't been updated
+                    let already_loaded =
+                        self.instance_state.read().instances.iter().any(|instance| instance.root_path == *path);
+                    let instance = self.load_instance_from_path(path, false, !already_loaded);
                     if instance.is_none() {
                         self.file_watching.write().watch_filesystem(path.clone(), WatchTarget::InvalidInstanceDir);
                     }

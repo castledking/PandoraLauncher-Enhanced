@@ -29,7 +29,6 @@ use schema::{
     loader::Loader,
     minecraft_profile::{MinecraftProfileResponse, SkinVariant},
     modrinth::ModrinthLoader,
-    quickplay::QuickplayPreset,
     version::{LaunchArgument, LaunchArgumentValue},
 };
 use serde::{Deserialize, Serialize};
@@ -403,7 +402,7 @@ impl BackendState {
                 }
 
                 if let Some(id) = id {
-                    self.start_instance(id, quick_play, None, Default::default()).await
+                    self.start_instance_installing_preset(id, quick_play, None, Default::default()).await
                 }
             },
             MessageToBackend::StartInstance {
@@ -411,18 +410,15 @@ impl BackendState {
                 quick_play,
                 live_game_output,
                 modal_action,
-            } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
-            MessageToBackend::StartQuickplayInstance {
-                preset,
-                minecraft_version,
-                quick_play,
-                live_game_output,
-                modal_action,
             } => {
-                let Some(id) = self.setup_quickplay_instance(preset, minecraft_version, &modal_action).await else {
-                    return;
-                };
-                self.start_instance(id, quick_play, live_game_output, modal_action).await
+                self.start_instance_installing_preset(id, quick_play, live_game_output, modal_action)
+                    .await
+            },
+            MessageToBackend::CreatePresetInstances { legacy_preset, result } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    _ = result.send(backend.create_preset_instances(legacy_preset).await);
+                });
             },
             MessageToBackend::SetContentEnabled {
                 id,
@@ -2618,81 +2614,26 @@ impl BackendState {
         launch_tracker.set_finished(ProgressTrackerFinishType::from_err(is_err));
     }
 
-    async fn setup_quickplay_instance(
+    /// Starts the instance, first installing its preset's mods if it's a preset instance that
+    /// hasn't been launched yet. That download runs off the message loop, like the launch itself.
+    async fn start_instance_installing_preset(
         self: &Arc<Self>,
-        preset: QuickplayPreset,
-        minecraft_version: Ustr,
-        modal_action: &ModalAction,
-    ) -> Option<InstanceID> {
-        let loader = crate::quickplay_presets::loader(preset);
-
-        let name = schema::quickplay::INSTANCE_NAME;
-        let (id, mods_folder) =
-            if let Some(existing) = self.instance_state.write().instances.iter_mut().find(|i| i.name == name) {
-                existing.configuration.modify(|cfg| {
-                    cfg.minecraft_version = minecraft_version;
-                    cfg.loader = loader;
-                    cfg.sandbox = true;
-                });
-                let mods_folder = if existing.frozen_mods_folder {
-                    None
-                } else {
-                    Some(existing.content_state[ContentFolder::Mods].path.clone())
-                };
-                (existing.id, mods_folder)
-            } else {
-                let tracker = modal_action.push_tracker("Creating instance".into());
-                tracker.add_total(2);
-
-                let path = self.create_instance(name, minecraft_version.as_str(), loader, None, None)?;
-
-                tracker.add_count(1);
-
-                let instance_id = self.load_instance_from_path(&path, true, false)?;
-
-                let mods_folder = if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
-                    instance.configuration.modify(|cfg| {
-                        cfg.minecraft_version = minecraft_version;
-                        cfg.loader = loader;
-                        cfg.sandbox = true;
-                    });
-                    if instance.frozen_mods_folder {
-                        None
-                    } else {
-                        Some(instance.content_state[ContentFolder::Mods].path.clone())
-                    }
-                } else {
-                    None
-                };
-
-                tracker.add_count(1);
-                tracker.set_finished(ProgressTrackerFinishType::Normal);
-
-                (instance_id, mods_folder)
-            };
-
-        if loader == Loader::Vanilla {
-            return Some(id);
+        id: InstanceID,
+        quick_play: Option<QuickPlayLaunch>,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
+        modal_action: ModalAction,
+    ) {
+        if !self.has_pending_preset(id) {
+            self.start_instance(id, quick_play, live_game_output, modal_action).await;
+            return;
         }
-        let Some(mods_folder) = mods_folder else {
-            return Some(id);
-        };
 
-        let files =
-            crate::quickplay_presets::resolve_installs(preset, minecraft_version, self.meta.clone(), modal_action)
-                .await;
-
-        _ = std::fs::remove_dir_all(mods_folder);
-        let install = ContentInstall {
-            target: InstallTarget::Instance(id),
-            loader,
-            minecraft_version,
-            files,
-        };
-
-        self.install_content(install, modal_action.clone()).await;
-
-        Some(id)
+        let backend = self.clone();
+        tokio::task::spawn(async move {
+            if backend.install_pending_preset(id, &modal_action).await {
+                backend.start_instance(id, quick_play, live_game_output, modal_action).await;
+            }
+        });
     }
 
     fn extract_skin_url_from_profile(profile_json: &str) -> Option<Arc<str>> {

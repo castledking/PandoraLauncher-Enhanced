@@ -289,6 +289,23 @@ impl InstanceEntry {
         self.title.clone()
     }
 
+    /// Whether this is an instance people play themselves: not a server, which has its own page,
+    /// and not the old hidden quickplay instance before it's carried over.
+    pub fn is_regular_instance(&self) -> bool {
+        self.name != schema::quickplay::INSTANCE_NAME && self.configuration.server.is_none()
+    }
+
+    /// A preset instance the launcher set up itself that hasn't been played. Being newly made
+    /// doesn't make it recent, so it shouldn't crowd the instances someone actually plays.
+    pub fn is_unplayed_preset(&self) -> bool {
+        self.configuration.preset.is_some() && self.playtime.last_played_unix_ms.is_none()
+    }
+
+    /// Whether the instance belongs in the sidebar's recent list.
+    pub fn is_recent(&self) -> bool {
+        self.is_regular_instance() && !self.is_unplayed_preset()
+    }
+
     /// The loaders other than its own whose mods this instance can also run, through a bridge mod
     /// such as Sinytra Connector that it has enabled. Empty until its mods have loaded.
     pub fn bridged_loaders(&self, cx: &App) -> enumset::EnumSet<schema::loader::Loader> {

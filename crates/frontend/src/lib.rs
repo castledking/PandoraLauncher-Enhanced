@@ -36,6 +36,7 @@ pub mod icon;
 pub mod interface_config;
 pub mod modals;
 pub mod pages;
+pub mod pixel_font;
 pub mod png_render_cache;
 pub mod processor;
 pub mod root;

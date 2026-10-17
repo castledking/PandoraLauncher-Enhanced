@@ -15,9 +15,7 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{Root, Theme, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashSet;
-use schema::quickplay::QuickplayPreset;
 use tokio::sync::mpsc::UnboundedReceiver;
-use ustr::Ustr;
 
 use crate::{
     Backwards, CloseWindow, Forwards, OpenSettings, clear_game_output_window,
@@ -338,57 +336,6 @@ fn open_game_output_window(
     if let Ok(handle) = opened {
         set_game_output_window(handle.into());
     }
-}
-
-pub fn start_quickplay(
-    preset: QuickplayPreset,
-    minecraft_version: Ustr,
-    quick_play: Option<QuickPlayLaunch>,
-    backend_handle: BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let modal_action = ModalAction::default();
-
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    let live_game_output_display = InterfaceConfig::get(cx).live_game_output_display;
-    let live_game_output = if live_game_output_display == LiveGameOutputDisplay::Hidden {
-        None
-    } else {
-        Some(sender)
-    };
-
-    backend_handle.send(MessageToBackend::StartQuickplayInstance {
-        preset,
-        minecraft_version,
-        quick_play,
-        live_game_output,
-        modal_action: modal_action.clone(),
-    });
-
-    let title: SharedString = "Starting Minecraft".into();
-    modals::generic::show_modal(window, cx, title, t::instance::start::error().into(), modal_action);
-
-    let options = game_output_window_options(cx);
-    let reuse_game_output_window = InterfaceConfig::get(cx).reuse_game_output_window;
-
-    cx.spawn(async move |cx| {
-        let Ok(receiver) = receiver.await else {
-            return;
-        };
-
-        // Nothing to act on, since a quickplay launch has no instance to point at yet
-        let receiver = if reuse_game_output_window {
-            attach_to_game_output_window(receiver, None, cx)
-        } else {
-            Some(receiver)
-        };
-        if let Some(receiver) = receiver {
-            open_game_output_window(options, receiver, None, cx);
-        }
-    })
-    .detach();
 }
 
 pub fn start_install(

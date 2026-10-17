@@ -6,12 +6,13 @@ use gpui_component::{
     ActiveTheme, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
-    menu::{DropdownMenu, PopupMenuItem},
+    menu::{DropdownMenu, PopupMenu, PopupMenuItem},
     separator::Separator,
     table::{Column, ColumnSort, TableDelegate, TableState},
     v_flex,
 };
 use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 
 use crate::{
     component::{
@@ -47,14 +48,14 @@ impl InstanceList {
             .values()
             .filter_map(|i| {
                 let entry = i.read(cx).clone();
-                if is_listed(&entry) { Some(entry) } else { None }
+                if entry.is_regular_instance() { Some(entry) } else { None }
             })
             .collect();
         cx.new(|cx| {
             let _instance_added_subscription = cx.subscribe::<_, InstanceAddedEvent>(
                 &instances,
                 |table: &mut TableState<InstanceList>, _, event, cx| {
-                    if !is_listed(&event.instance) {
+                    if !event.instance.is_regular_instance() {
                         return;
                     }
                     table.delegate_mut().items.insert(0, event.instance.clone());
@@ -68,10 +69,13 @@ impl InstanceList {
                 });
             let _instance_modified_subscription =
                 cx.subscribe::<_, InstanceModifiedEvent>(&instances, |table, _, event, cx| {
-                    if let Some(entry) =
-                        table.delegate_mut().items.iter_mut().find(|entry| entry.id == event.instance.id)
-                    {
+                    let items = &mut table.delegate_mut().items;
+                    if let Some(entry) = items.iter_mut().find(|entry| entry.id == event.instance.id) {
                         *entry = event.instance.clone();
+                        cx.notify();
+                    } else if event.instance.is_regular_instance() {
+                        // The old quickplay instance only becomes listable once it's carried over
+                        items.insert(0, event.instance.clone());
                         cx.notify();
                     }
                 });
@@ -103,16 +107,35 @@ impl InstanceList {
     }
 
     pub fn render_cards(&self, cx: &mut App) -> AnyElement {
-        let mut by_group = IndexMap::<Option<Arc<str>>, Vec<Div>>::default();
-
+        let mut members = IndexMap::<Option<Arc<str>>, Vec<&InstanceEntry>>::default();
         for item in &self.items {
-            let group = item.configuration.group.clone();
-            let rendered = self.render_card(item, cx);
-            by_group.entry(group).or_default().push(rendered);
+            members.entry(item.configuration.group.clone()).or_default().push(item);
+        }
+        for group in members.values_mut() {
+            // Stable, so everything but the presets stays most recently played first
+            group.sort_by_key(|item| preset_position(item));
+        }
+
+        let mut menus = FxHashMap::default();
+        let mut by_group = IndexMap::<Option<Arc<str>>, Vec<Div>>::default();
+        for (group, items) in members {
+            if let Some(group) = &group {
+                let members = items.iter().map(|item| (item.id, item.name.clone())).collect();
+                menus.insert(
+                    group.clone(),
+                    GroupMenu {
+                        members,
+                        backend_handle: self.data.backend_handle.clone(),
+                    },
+                );
+            }
+            let cards = items.into_iter().map(|item| self.render_card(item, cx)).collect();
+            by_group.insert(group, cards);
         }
 
         let size = Size::new(gpui::AvailableSpace::MinContent, gpui::AvailableSpace::MinContent);
-        if by_group.len() == 1 {
+        // Groups get headers whenever there is one at all, so a lone group can still be collapsed
+        if by_group.len() == 1 && by_group.contains_key(&None) {
             ResponsiveGrid::new(size)
                 .size_full()
                 .gap_4()
@@ -144,8 +167,9 @@ impl InstanceList {
                     .w_full()
                     .gap_2()
                     .children(by_group.into_iter().map(|(group_name, children)| {
+                        let menu = group_name.as_ref().and_then(|group| menus.remove(group));
                         let group_name = group_name.clone().map(SharedString::from).unwrap_or("No Group".into());
-                        Self::render_card_group(group_name, children, cx, None)
+                        Self::render_card_group(group_name, children, menu, cx, None)
                     }))
                     .into_any_element()
             } else {
@@ -179,10 +203,11 @@ impl InstanceList {
                         let Some((group_name, children)) = by_group.get_index_mut(render_index) else {
                             return div().into_any_element();
                         };
-                        let Some(group_name) = group_name.clone().map(SharedString::from) else {
+                        let Some(group) = group_name.clone() else {
                             return div().into_any_element();
                         };
-                        Self::render_card_group(group_name, std::mem::take(children), cx, Some(info))
+                        let menu = menus.get(&group).cloned();
+                        Self::render_card_group(group.into(), std::mem::take(children), menu, cx, Some(info))
                     })
                     .w_full()
                     .v_flex()
@@ -194,7 +219,7 @@ impl InstanceList {
                     .gap_2()
                     .child(reorderable)
                     .when_some(no_group_children, |this, no_group_children| {
-                        this.child(Self::render_card_group("No Group".into(), no_group_children, cx, None))
+                        this.child(Self::render_card_group("No Group".into(), no_group_children, None, cx, None))
                     })
                     .into_any_element()
             }
@@ -204,6 +229,7 @@ impl InstanceList {
     fn render_card_group(
         group_name: SharedString,
         children: Vec<Div>,
+        menu: Option<GroupMenu>,
         cx: &mut App,
         drag_info: Option<ReorderableDragInfo>,
     ) -> AnyElement {
@@ -229,9 +255,18 @@ impl InstanceList {
                     .child(group_name.clone())
                     .child(
                         h_flex()
-                            .child(
-                                Button::new((group_name.clone(), 0x23B40E19)).ghost().small().icon(PandoraIcon::Menu),
-                            )
+                            .when_some(menu, |this, menu| {
+                                this.child(
+                                    Button::new((group_name.clone(), 0x23B40E19))
+                                        .ghost()
+                                        .small()
+                                        .icon(PandoraIcon::Menu)
+                                        .dropdown_menu_with_anchor(Anchor::TopLeft, {
+                                            let group_name = group_name.clone();
+                                            move |this, _, _| menu.build(this, group_name.clone())
+                                        }),
+                                )
+                            })
                             .child(
                                 Button::new((group_name.clone(), 0x23B40E18))
                                     .ghost()
@@ -522,10 +557,51 @@ impl TableDelegate for InstanceList {
     }
 }
 
-/// The quickplay instance is managed by the quickplay page, and servers have their own page, so
-/// neither belongs in the instance list.
-fn is_listed(entry: &InstanceEntry) -> bool {
-    entry.name != schema::quickplay::INSTANCE_NAME && entry.configuration.server.is_none()
+/// Where an instance sits in its group ahead of the rest: the presets keep their own order in
+/// their group, whichever of them was played last.
+fn preset_position(item: &InstanceEntry) -> usize {
+    match (&item.configuration.group, item.configuration.preset) {
+        (Some(group), Some(preset)) if &**group == schema::quickplay::GROUP_NAME => preset.order(),
+        _ => usize::MAX,
+    }
+}
+
+/// The actions on a group's header menu, over the instances in it.
+#[derive(Clone)]
+struct GroupMenu {
+    members: Vec<(bridge::instance::InstanceID, SharedString)>,
+    backend_handle: bridge::handle::BackendHandle,
+}
+
+impl GroupMenu {
+    fn build(&self, menu: PopupMenu, group_name: SharedString) -> PopupMenu {
+        menu.item(PopupMenuItem::new(t::instance::group::ungroup()).on_click({
+            let menu = self.clone();
+            let group_name = group_name.clone();
+            move |_, _, cx| {
+                for (instance_id, _) in &menu.members {
+                    menu.backend_handle.send(MessageToBackend::MoveInstanceToGroup {
+                        instance_id: *instance_id,
+                        group: "".into(),
+                    });
+                }
+                modals::delete_group::forget_group(&group_name, cx);
+            }
+        }))
+        .separator()
+        .item(delete_menu_item(t::instance::group::delete()).on_click({
+            let menu = self.clone();
+            move |_, window, cx| {
+                modals::delete_group::open_delete_group(
+                    group_name.clone(),
+                    menu.members.clone(),
+                    menu.backend_handle.clone(),
+                    window,
+                    cx,
+                );
+            }
+        }))
+    }
 }
 
 /// Shift-clicking skips the confirmation when the user has enabled quick deletion.

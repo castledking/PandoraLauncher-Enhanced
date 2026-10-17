@@ -26,6 +26,7 @@ mod log_reader;
 mod metadata;
 mod mod_metadata;
 mod persistent;
+mod preset_instances;
 mod quickplay_presets;
 mod server;
 pub use server::ServerRegistry;

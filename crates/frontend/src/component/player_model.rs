@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, Size, Style, Task, px, size,
+    App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, SharedString, Size, Style,
+    Task, px, size,
 };
 use schema::{minecraft_profile::SkinVariant, unique_bytes::UniqueBytes};
 
-use crate::interface_config::InterfaceConfig;
+use crate::{interface_config::InterfaceConfig, skin_renderer::IdlePose};
 
 pub const DEFAULT_YAW: f64 = 22.5;
 pub const DEFAULT_PITCH: f64 = 10.5;
@@ -19,6 +20,8 @@ struct RenderedPlayerModel {
     yaw: f64,
     pitch: f64,
     animation: f64,
+    pose: IdlePose,
+    nameplate: Option<SharedString>,
     zoom: f64,
     width: u32,
     height: u32,
@@ -31,6 +34,9 @@ pub struct PlayerModelState {
     pub yaw: f64,
     pub pitch: f64,
     pub animation: f64,
+    pub pose: IdlePose,
+    /// A name drawn on a plate over the head, which turns with the model.
+    pub nameplate: Option<SharedString>,
     rendered: Option<RenderedPlayerModel>,
     render_task: Option<Task<()>>,
 }
@@ -44,6 +50,8 @@ impl PlayerModelState {
             yaw: DEFAULT_YAW,
             pitch: DEFAULT_PITCH,
             animation: DEFAULT_ANIMATION,
+            pose: IdlePose::default(),
+            nameplate: None,
             rendered: None,
             render_task: None,
         });
@@ -56,6 +64,17 @@ impl PlayerModelState {
         entity
     }
 
+    /// Whether the last finished render is of the current skin, cape and model, rather than of
+    /// whatever was set before. Pose and angle may lag a frame behind; that doesn't count.
+    pub fn shows_current_skin(&self) -> bool {
+        self.rendered.as_ref().is_some_and(|rendered| {
+            rendered.skin == self.skin
+                && rendered.cape == self.cape
+                && rendered.variant == self.variant
+                && rendered.nameplate == self.nameplate
+        })
+    }
+
     pub fn needs_rerender(&self, width: u32, height: u32, zoom: f64) -> bool {
         let Some(rendered) = &self.rendered else {
             return true;
@@ -65,6 +84,8 @@ impl PlayerModelState {
             || rendered.yaw != self.yaw
             || rendered.pitch != self.pitch
             || rendered.animation != self.animation
+            || rendered.pose != self.pose
+            || rendered.nameplate != self.nameplate
             || rendered.variant != self.variant
             || rendered.skin != self.skin
             || rendered.cape != self.cape
@@ -74,11 +95,30 @@ impl PlayerModelState {
 
 pub struct PlayerModel {
     state: Entity<PlayerModelState>,
+    zoom: Option<f64>,
+    hidden: bool,
 }
 
 impl PlayerModel {
     pub fn new(state: &Entity<PlayerModelState>) -> Self {
-        Self { state: state.clone() }
+        Self {
+            state: state.clone(),
+            zoom: None,
+            hidden: false,
+        }
+    }
+
+    /// Keeps rendering the model but doesn't draw it yet, so it can appear the moment it's ready
+    /// rather than showing a half-loaded skin first.
+    pub fn hidden(mut self, hidden: bool) -> Self {
+        self.hidden = hidden;
+        self
+    }
+
+    /// Renders at this zoom rather than the one the skins page's scroll wheel sets.
+    pub fn zoom(mut self, zoom: f64) -> Self {
+        self.zoom = Some(zoom);
+        self
     }
 }
 
@@ -155,7 +195,9 @@ impl Element for PlayerModel {
         let window_scale = window.scale_factor();
         let image_height = (element_height * window_scale) as u32;
         let image_width = (element_width * window_scale) as u32;
-        let zoom = InterfaceConfig::get(cx).player_model_zoom.clamp(50, 400) as f64 / 100.0;
+        let zoom = self
+            .zoom
+            .unwrap_or_else(|| InterfaceConfig::get(cx).player_model_zoom.clamp(50, 400) as f64 / 100.0);
         self.state.update(cx, |state, cx| {
             if state.render_task.is_none() && state.needs_rerender(image_width, image_height, zoom) {
                 let skin = state.skin.clone();
@@ -163,12 +205,16 @@ impl Element for PlayerModel {
                 let yaw = state.yaw;
                 let pitch = state.pitch;
                 let animation = state.animation;
+                let pose = state.pose;
+                let nameplate = state.nameplate.clone();
                 let variant = state.variant;
 
                 let (send, recv) = tokio::sync::oneshot::channel();
 
+                let render_nameplate = nameplate.clone();
                 cx.background_executor()
                     .spawn(async move {
+                        let nameplate = render_nameplate;
                         send.send(crate::skin_renderer::render_skin_3d(
                             &skin,
                             cape.as_deref(),
@@ -178,6 +224,8 @@ impl Element for PlayerModel {
                             yaw,
                             pitch,
                             animation,
+                            &pose,
+                            nameplate.as_deref(),
                             0.0,
                             zoom,
                         ))
@@ -209,6 +257,8 @@ impl Element for PlayerModel {
                             yaw,
                             pitch,
                             animation,
+                            pose,
+                            nameplate,
                             zoom,
                             width: image_width,
                             height: image_height,
@@ -219,7 +269,9 @@ impl Element for PlayerModel {
                 }));
             }
 
-            if let Some(rendered) = &state.rendered {
+            if let Some(rendered) = &state.rendered
+                && !self.hidden
+            {
                 let image_bounds = Bounds {
                     origin: bounds.origin,
                     size: Size::new(px(element_width), px(element_height)),

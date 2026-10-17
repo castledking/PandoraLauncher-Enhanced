@@ -11,6 +11,7 @@ use crate::{
     forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment},
     loader::Loader,
     modrinth::ModrinthVersionType,
+    quickplay::QuickplayPreset,
     server::ServerConfiguration,
 };
 
@@ -101,6 +102,21 @@ pub struct InstanceConfiguration {
         deserialize_with = "crate::try_deserialize"
     )]
     pub server: Option<ServerConfiguration>,
+    /// The built-in preset this instance was made from, on the instances Pandora sets up itself.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_none",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub preset: Option<QuickplayPreset>,
+    /// The preset's mods haven't been installed yet. That waits for the instance's first launch,
+    /// so the instances cost nothing until someone actually plays one.
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub preset_pending: bool,
 }
 
 impl InstanceConfiguration {
@@ -125,6 +141,8 @@ impl InstanceConfiguration {
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
             group: None,
             server: None,
+            preset: None,
+            preset_pending: false,
         }
     }
 }

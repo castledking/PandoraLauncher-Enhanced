@@ -79,6 +79,8 @@ pub struct ServerListSubpage {
     skins: FxHashMap<Uuid, UniqueBytes>,
     requested: FxHashSet<Uuid>,
     _load_task: Task<()>,
+    /// Waiting on changes to reach the file, each reloading the list once it has.
+    _change_tasks: Vec<Task<()>>,
     _skin_tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -124,11 +126,52 @@ impl ServerListSubpage {
             skins: FxHashMap::default(),
             requested: FxHashSet::default(),
             _load_task: Task::ready(()),
+            _change_tasks: Vec::new(),
             _skin_tasks: Vec::new(),
             _subscriptions: subscriptions,
         };
         this.reload(window, cx);
         this
+    }
+
+    /// Reloads the list once `done` says a change has been saved.
+    ///
+    /// Not straight away: a running server is asked over its console and saves the file in its
+    /// own time, so reading it at once still found it as it was, and a player just added only
+    /// showed up after leaving the page and coming back.
+    fn reload_when<T: 'static>(
+        &mut self,
+        done: tokio::sync::oneshot::Receiver<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self._change_tasks.retain(|task| !task.is_ready());
+        self._change_tasks.push(cx.spawn_in(window, async move |this, cx| {
+            _ = done.await;
+            _ = this.update_in(cx, |this, window, cx| this.reload(window, cx));
+        }));
+    }
+
+    /// Adds `names` to the list, which the backend resolves against Mojang and reports
+    /// afterwards which ones didn't match an account.
+    fn add_names(
+        &mut self,
+        names: Arc<[Arc<str>]>,
+        reason: Option<Arc<str>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The backend warns about names it couldn't resolve itself, which is the only part of
+        // the outcome worth interrupting for
+        let (send, recv) = tokio::sync::oneshot::channel();
+        self.backend_handle.send(MessageToBackend::AddServerListEntries {
+            id: self.instance_id,
+            file: self.file,
+            names,
+            reason,
+            channel: send,
+        });
+        self.reload_when(recv, window, cx);
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -259,19 +302,18 @@ impl ServerListSubpage {
         cx.notify();
     }
 
-    /// Asks for the names to be added. The backend resolves them against Mojang and reports
-    /// afterwards which ones didn't match an account.
+    /// Asks for the names to be added.
     fn open_add_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let file = self.file;
-        let body = cx.new(|cx| AddNamesDialog::new(file, self.instance_id, &self.backend_handle, window, cx));
+        let body = cx.new(|cx| AddNamesDialog::new(file, window, cx));
 
         // The dialog sits in its own window on top of this page, so nothing here is told
         // when it closes. Without this the list kept showing what it was showing until
         // something else happened to redraw the page, which meant a ban you had just made
         // only appeared after going to another tab and back.
         self._subscriptions
-            .push(cx.subscribe_in(&body, window, |this, _, _: &AddNamesDialogEvent, window, cx| {
-                this.reload(window, cx);
+            .push(cx.subscribe_in(&body, window, |this, _, event: &AddNamesDialogEvent, window, cx| {
+                this.add_names(event.names.clone(), event.reason.clone(), window, cx);
             }));
 
         // Only the frame and the title live here. The contents are a view of their own, so
@@ -282,8 +324,11 @@ impl ServerListSubpage {
     }
 }
 
-/// The dialog saying it sent something, so the page behind it can go and look again.
-struct AddNamesDialogEvent;
+/// The names the dialog was confirmed with, for the page behind it to add.
+struct AddNamesDialogEvent {
+    names: Arc<[Arc<str>]>,
+    reason: Option<Arc<str>>,
+}
 
 /// The body of the add dialog: a name box, the batch being built up, and the buttons.
 ///
@@ -293,8 +338,6 @@ struct AddNamesDialogEvent;
 /// something else happened to redraw it.
 struct AddNamesDialog {
     file: ServerListFile,
-    instance_id: InstanceID,
-    backend_handle: BackendHandle,
     draft: Entity<NameDraft>,
     name_input: Entity<InputState>,
     reason_input: Entity<InputState>,
@@ -302,13 +345,7 @@ struct AddNamesDialog {
 }
 
 impl AddNamesDialog {
-    fn new(
-        file: ServerListFile,
-        instance_id: InstanceID,
-        backend_handle: &BackendHandle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(file: ServerListFile, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let draft = cx.new(|_| NameDraft::default());
         let name_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -327,8 +364,6 @@ impl AddNamesDialog {
 
         Self {
             file,
-            instance_id,
-            backend_handle: backend_handle.clone(),
             draft,
             name_input,
             reason_input,
@@ -429,8 +464,6 @@ impl Render for AddNamesDialog {
                         let draft = draft.clone();
                         let name_input = name_input.clone();
                         let reason_input = self.reason_input.clone();
-                        let backend_handle = self.backend_handle.clone();
-                        let instance_id = self.instance_id;
                         // A handle to this view, so the event can be sent from here rather
                         // than from whoever opened the dialog
                         let dialog = cx.entity();
@@ -445,23 +478,10 @@ impl Render for AddNamesDialog {
                             let reason = reason.trim();
                             let reason = (!reason.is_empty()).then(|| Arc::from(reason));
 
-                            // The outcome isn't waited on here. The backend warns
-                            // about names it couldn't resolve, which is the only
-                            // part worth interrupting for.
-                            let (send, _recv) = tokio::sync::oneshot::channel();
-                            backend_handle.send(MessageToBackend::AddServerListEntries {
-                                id: instance_id,
-                                file,
-                                names,
-                                reason,
-                                channel: send,
-                            });
-
-                            // Says the list behind this has changed. The dialog closes
-                            // itself straight after, and the page has no other way of
-                            // hearing about it, so without this it went on showing what it
-                            // had until something else redrew it.
-                            cx.update_entity(&dialog, |_, cx| cx.emit(AddNamesDialogEvent));
+                            // Handed to the page, which adds them and reloads the list once
+                            // they're in. The dialog closes itself straight after, and the
+                            // page has no other way of hearing about it.
+                            cx.update_entity(&dialog, |_, cx| cx.emit(AddNamesDialogEvent { names, reason }));
                             window.close_dialog(cx);
                         }
                     })),
@@ -590,13 +610,15 @@ impl Render for ServerListSubpage {
             let (name, uuid) = (entry.name(), entry.uuid());
 
             let remove = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                let (send, recv) = tokio::sync::oneshot::channel();
                 backend_handle.send(MessageToBackend::RemoveServerListEntry {
                     id: instance_id,
                     file,
                     name: name.clone(),
                     uuid,
+                    channel: send,
                 });
-                this.reload(window, cx);
+                this.reload_when(recv, window, cx);
             };
 
             let picture = entry.uuid().and_then(|uuid| self.picture_for(uuid, cx));

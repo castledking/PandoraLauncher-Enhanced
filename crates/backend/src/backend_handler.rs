@@ -1622,10 +1622,49 @@ impl BackendState {
                     ));
                 }
 
-                _ = channel.send(outcome);
+                // Answered once the change is in the file, which for a running server is
+                // whenever it gets round to saving it, so anything re-reading the list on the
+                // answer sees the players that were added
+                if outcome.via_console {
+                    let backend = self.clone();
+                    tokio::task::spawn(async move {
+                        backend
+                            .wait_for_server_list(id, file, |entries| {
+                                outcome
+                                    .added
+                                    .iter()
+                                    .all(|name| entries.iter().any(|entry| entry.name().eq_ignore_ascii_case(name)))
+                            })
+                            .await;
+                        _ = channel.send(outcome);
+                    });
+                } else {
+                    _ = channel.send(outcome);
+                }
             },
-            MessageToBackend::RemoveServerListEntry { id, file, name, uuid } => {
-                self.remove_server_list_entry(id, file, name, uuid);
+            MessageToBackend::RemoveServerListEntry {
+                id,
+                file,
+                name,
+                uuid,
+                channel,
+            } => {
+                if self.remove_server_list_entry(id, file, name.clone(), uuid) {
+                    let backend = self.clone();
+                    tokio::task::spawn(async move {
+                        backend
+                            .wait_for_server_list(id, file, |entries| {
+                                !entries.iter().any(|entry| {
+                                    entry.name().eq_ignore_ascii_case(&name)
+                                        || uuid.is_some_and(|uuid| entry.uuid() == Some(uuid))
+                                })
+                            })
+                            .await;
+                        _ = channel.send(());
+                    });
+                } else {
+                    _ = channel.send(());
+                }
             },
             MessageToBackend::GetServerListRaw { id, file, channel } => {
                 _ = channel.send(self.read_server_list_raw(id, file));

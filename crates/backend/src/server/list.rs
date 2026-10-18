@@ -34,26 +34,43 @@ impl BackendState {
             return Arc::new([]);
         };
 
-        let parsed: Result<Vec<ServerListEntry>, _> = match file {
-            ServerListFile::BannedPlayers => serde_json::from_str::<Vec<BannedPlayer>>(&contents)
-                .map(|v| v.into_iter().map(ServerListEntry::BannedPlayer).collect()),
-            ServerListFile::BannedIps => serde_json::from_str::<Vec<BannedIp>>(&contents)
-                .map(|v| v.into_iter().map(ServerListEntry::BannedIp).collect()),
-            ServerListFile::Whitelist => serde_json::from_str::<Vec<WhitelistedPlayer>>(&contents)
-                .map(|v| v.into_iter().map(ServerListEntry::Whitelisted).collect()),
-            ServerListFile::Operators => serde_json::from_str::<Vec<Operator>>(&contents)
-                .map(|v| v.into_iter().map(ServerListEntry::Operator).collect()),
-            ServerListFile::UserCache => serde_json::from_str::<Vec<CachedUser>>(&contents)
-                .map(|v| v.into_iter().map(ServerListEntry::CachedUser).collect()),
-        };
-
-        match parsed {
+        match parse_server_list(file, &contents) {
             Ok(entries) => Arc::from(entries),
             Err(err) => {
                 log::error!("Unable to read {}: {err}", file.file_name());
                 self.send.send_error(format!("Unable to read {}, leaving it as it is", file.file_name()));
                 Arc::new([])
             },
+        }
+    }
+
+    /// Waits for a running server to save a change asked of it over the console, which it
+    /// does in its own time (an online server looks the player up with Mojang first), and gives
+    /// up after a while in case it turned the command down.
+    ///
+    /// Without this, whatever re-read the list straight after asking still found it unchanged.
+    pub async fn wait_for_server_list(
+        self: &Arc<Self>,
+        id: InstanceID,
+        file: ServerListFile,
+        changed: impl Fn(&[ServerListEntry]) -> bool,
+    ) {
+        let Some(server_dir) = self.server_dir(id) else {
+            return;
+        };
+        let path = server_dir.join(file.file_name());
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+
+        while tokio::time::Instant::now() < deadline {
+            // Quietly, unlike read_server_list: the server may be halfway through writing it
+            if let Ok(contents) = tokio::fs::read_to_string(&path).await
+                && let Ok(entries) = parse_server_list(file, &contents)
+                && changed(&entries)
+            {
+                return;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
 
@@ -182,15 +199,17 @@ impl BackendState {
     }
 
     /// Takes one entry back out, matched on the name it was shown under or the UUID behind it.
+    ///
+    /// Returns whether it went to a running server's console, which saves it in its own time.
     pub fn remove_server_list_entry(
         self: &Arc<Self>,
         id: InstanceID,
         file: ServerListFile,
         name: Arc<str>,
         uuid: Option<Uuid>,
-    ) {
+    ) -> bool {
         if !file.is_editable() {
-            return;
+            return false;
         }
 
         // Same as adding: a running server would rewrite the file over the top of this
@@ -198,7 +217,7 @@ impl BackendState {
             if let Some(command) = console_command(file, &name, None, Direction::Remove) {
                 self.send_server_command(id, &command);
             }
-            return;
+            return true;
         }
 
         let existing = self.read_server_list(id, file);
@@ -207,6 +226,7 @@ impl BackendState {
         if kept.len() != existing.len() {
             self.write_server_list(id, file, &kept);
         }
+        false
     }
 
     /// Reads a list file exactly as it is on disk, for the raw view.
@@ -237,6 +257,22 @@ impl BackendState {
             return false;
         }
         true
+    }
+}
+
+/// Reads one of the list files, as entries of the kind that file holds.
+fn parse_server_list(file: ServerListFile, contents: &str) -> serde_json::Result<Vec<ServerListEntry>> {
+    match file {
+        ServerListFile::BannedPlayers => serde_json::from_str::<Vec<BannedPlayer>>(contents)
+            .map(|v| v.into_iter().map(ServerListEntry::BannedPlayer).collect()),
+        ServerListFile::BannedIps => serde_json::from_str::<Vec<BannedIp>>(contents)
+            .map(|v| v.into_iter().map(ServerListEntry::BannedIp).collect()),
+        ServerListFile::Whitelist => serde_json::from_str::<Vec<WhitelistedPlayer>>(contents)
+            .map(|v| v.into_iter().map(ServerListEntry::Whitelisted).collect()),
+        ServerListFile::Operators => serde_json::from_str::<Vec<Operator>>(contents)
+            .map(|v| v.into_iter().map(ServerListEntry::Operator).collect()),
+        ServerListFile::UserCache => serde_json::from_str::<Vec<CachedUser>>(contents)
+            .map(|v| v.into_iter().map(ServerListEntry::CachedUser).collect()),
     }
 }
 
@@ -302,32 +338,35 @@ enum Direction {
 
 /// The console command a running server would do this with.
 ///
-/// Whitelist and ban-ip take a verb to say which way, while bans, operators and addresses
-/// have a different command for each direction. A reason is only passed where the command
-/// takes one, since the others have nowhere to put it and would read it as a second name.
+/// The whitelist takes a verb to say which way, while bans, operators and addresses have a
+/// different command for each direction. A reason is only passed where the command takes one,
+/// since the others have nowhere to put it and would read it as a second name.
+///
+/// Without a leading slash: vanilla's console drops one, but Paper's reads it as part of the
+/// command's name and turns the command down as unknown.
 fn console_command(file: ServerListFile, name: &str, reason: Option<&str>, direction: Direction) -> Option<String> {
     // A reason only goes on a command that has somewhere to put it
     let reason = reason.map(str::trim).filter(|reason| !reason.is_empty());
 
     Some(match (file, direction) {
-        // A ban is lifted with pardon, which takes no reason
+        // A ban is lifted with pardon, which takes no reason, and an address ban with pardon-ip
         (ServerListFile::BannedPlayers, Direction::Add) => match reason {
-            Some(reason) => format!("/ban {name} {reason}"),
-            None => format!("/ban {name}"),
+            Some(reason) => format!("ban {name} {reason}"),
+            None => format!("ban {name}"),
         },
-        (ServerListFile::BannedPlayers, Direction::Remove) => format!("/pardon {name}"),
+        (ServerListFile::BannedPlayers, Direction::Remove) => format!("pardon {name}"),
 
         (ServerListFile::BannedIps, Direction::Add) => match reason {
-            Some(reason) => format!("/ban-ip {name} {reason}"),
-            None => format!("/ban-ip {name}"),
+            Some(reason) => format!("ban-ip {name} {reason}"),
+            None => format!("ban-ip {name}"),
         },
-        (ServerListFile::BannedIps, Direction::Remove) => format!("/ban-ip remove {name}"),
+        (ServerListFile::BannedIps, Direction::Remove) => format!("pardon-ip {name}"),
 
-        (ServerListFile::Whitelist, Direction::Add) => format!("/whitelist add {name}"),
-        (ServerListFile::Whitelist, Direction::Remove) => format!("/whitelist remove {name}"),
+        (ServerListFile::Whitelist, Direction::Add) => format!("whitelist add {name}"),
+        (ServerListFile::Whitelist, Direction::Remove) => format!("whitelist remove {name}"),
 
-        (ServerListFile::Operators, Direction::Add) => format!("/op {name}"),
-        (ServerListFile::Operators, Direction::Remove) => format!("/deop {name}"),
+        (ServerListFile::Operators, Direction::Add) => format!("op {name}"),
+        (ServerListFile::Operators, Direction::Remove) => format!("deop {name}"),
 
         // The server writes this one itself as it sees players
         (ServerListFile::UserCache, _) => return None,
@@ -346,40 +385,40 @@ mod console_commands {
     fn a_ban_carries_its_reason() {
         assert_eq!(
             command(ServerListFile::BannedPlayers, "steve", Some("griefing"), Direction::Add),
-            "/ban steve griefing"
+            "ban steve griefing"
         );
     }
 
     #[test]
     fn a_ban_without_a_reason_stops_at_the_name() {
-        assert_eq!(command(ServerListFile::BannedPlayers, "steve", None, Direction::Add), "/ban steve");
+        assert_eq!(command(ServerListFile::BannedPlayers, "steve", None, Direction::Add), "ban steve");
         // A blank reason is the same as none, rather than a trailing space
-        assert_eq!(command(ServerListFile::BannedPlayers, "steve", Some("   "), Direction::Add), "/ban steve");
+        assert_eq!(command(ServerListFile::BannedPlayers, "steve", Some("   "), Direction::Add), "ban steve");
     }
 
     #[test]
     fn a_ban_is_lifted_with_pardon() {
         assert_eq!(
             command(ServerListFile::BannedPlayers, "steve", Some("griefing"), Direction::Remove),
-            "/pardon steve"
+            "pardon steve"
         );
     }
 
     #[test]
     fn the_whitelist_takes_a_verb() {
-        assert_eq!(command(ServerListFile::Whitelist, "steve", None, Direction::Add), "/whitelist add steve");
+        assert_eq!(command(ServerListFile::Whitelist, "steve", None, Direction::Add), "whitelist add steve");
         assert_eq!(
             command(ServerListFile::Whitelist, "steve", None, Direction::Remove),
-            "/whitelist remove steve"
+            "whitelist remove steve"
         );
     }
 
     #[test]
-    fn a_banned_address_is_removed_by_verb_too() {
-        assert_eq!(command(ServerListFile::BannedIps, "10.0.0.1", None, Direction::Add), "/ban-ip 10.0.0.1");
+    fn a_banned_address_is_lifted_with_pardon_ip() {
+        assert_eq!(command(ServerListFile::BannedIps, "10.0.0.1", None, Direction::Add), "ban-ip 10.0.0.1");
         assert_eq!(
             command(ServerListFile::BannedIps, "10.0.0.1", None, Direction::Remove),
-            "/ban-ip remove 10.0.0.1"
+            "pardon-ip 10.0.0.1"
         );
     }
 
@@ -387,14 +426,14 @@ mod console_commands {
     fn an_address_can_carry_a_reason() {
         assert_eq!(
             command(ServerListFile::BannedIps, "10.0.0.1", Some("flooding"), Direction::Add),
-            "/ban-ip 10.0.0.1 flooding"
+            "ban-ip 10.0.0.1 flooding"
         );
     }
 
     #[test]
     fn an_operator_is_promoted_and_demoted() {
-        assert_eq!(command(ServerListFile::Operators, "steve", None, Direction::Add), "/op steve");
-        assert_eq!(command(ServerListFile::Operators, "steve", None, Direction::Remove), "/deop steve");
+        assert_eq!(command(ServerListFile::Operators, "steve", None, Direction::Add), "op steve");
+        assert_eq!(command(ServerListFile::Operators, "steve", None, Direction::Remove), "deop steve");
     }
 
     #[test]
@@ -402,7 +441,7 @@ mod console_commands {
         // The whitelist command would read a reason as a second player name
         assert_eq!(
             command(ServerListFile::Whitelist, "steve", Some("a reason"), Direction::Add),
-            "/whitelist add steve"
+            "whitelist add steve"
         );
     }
 

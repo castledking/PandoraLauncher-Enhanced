@@ -367,6 +367,8 @@ pub enum MessageToBackend {
         file: ServerListFile,
         name: Arc<str>,
         uuid: Option<Uuid>,
+        /// Answered once the entry is gone from the file.
+        channel: tokio::sync::oneshot::Sender<()>,
     },
     /// Reads a list file exactly as it is on disk, for the raw view.
     GetServerListRaw {

@@ -19,7 +19,10 @@ use bridge::{
     modal_action::ModalAction,
     quit::QuitCoordinator,
 };
-use schema::server::{ServerPlatform, ServerProperty};
+use schema::{
+    server::{ServerPlatform, ServerProperty},
+    server_list::ServerListFile,
+};
 
 #[derive(Default)]
 struct Seen {
@@ -313,6 +316,64 @@ fn main() {
                 .unwrap_or(false)
         })
     });
+
+    step("whitelist a player and ban an address while running, then undo both");
+    // A running server is asked over its console and saves the list in its own time. The
+    // answer has to wait for that, or a page reloading on it still finds the list as it was.
+    let listed = |file: ServerListFile, name: &str| {
+        let (send, recv) = tokio::sync::oneshot::channel();
+        backend_handle.send(MessageToBackend::GetServerList {
+            id,
+            file,
+            channel: send,
+        });
+        let entries = helper.block_on(recv).unwrap();
+        entries.iter().any(|entry| entry.name().eq_ignore_ascii_case(name))
+    };
+    for (file, name) in [
+        (ServerListFile::Whitelist, "Notch"),
+        (ServerListFile::BannedIps, "10.0.0.1"),
+    ] {
+        let what = file.file_name();
+        assert!(!listed(file, name), "{what} should start out without {name}");
+
+        let start = Instant::now();
+        let (send, recv) = tokio::sync::oneshot::channel();
+        backend_handle.send(MessageToBackend::AddServerListEntries {
+            id,
+            file,
+            names: Arc::from([Arc::from(name)]),
+            reason: None,
+            channel: send,
+        });
+        let outcome = helper.block_on(recv).unwrap();
+        assert!(outcome.via_console, "a running server should be asked over its console");
+        assert!(listed(file, name), "{what} should have {name} by the time the add is answered");
+        println!("  ok: {name} added, and in {what} when answered ({:.1}s)", start.elapsed().as_secs_f32());
+
+        let start = Instant::now();
+        let (send, recv) = tokio::sync::oneshot::channel();
+        backend_handle.send(MessageToBackend::RemoveServerListEntry {
+            id,
+            file,
+            name: name.into(),
+            uuid: None,
+            channel: send,
+        });
+        helper.block_on(recv).unwrap();
+        assert!(
+            !listed(file, name),
+            "{name} should be gone from {what} by the time the removal is answered"
+        );
+        println!(
+            "  ok: {name} removed, and gone from {what} when answered ({:.1}s)",
+            start.elapsed().as_secs_f32()
+        );
+    }
+    assert!(
+        !lines.lock().unwrap().iter().any(|line| line.contains("Unknown or incomplete command")),
+        "the server should have understood every command it was sent"
+    );
 
     if custom_mode {
         assert!(

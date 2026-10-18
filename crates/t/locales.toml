@@ -4868,7 +4868,7 @@ en = "Show sidebar icons"
 [settings.appearance.sidebar.show_sidebar_icons_desc]
 en = "Show icons on the sidebar next to the text"
 [settings.appearance.background]
-en = "Background Effect"
+en = "Background"
 [settings.appearance.background.animated]
 en = "Animations"
 [settings.appearance.background.animated_desc]

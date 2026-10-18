@@ -144,6 +144,7 @@ pub fn start(
             KeyBinding::new("secondary-]", Forwards, None),
             KeyBinding::new("enter", Confirm, None),
             KeyBinding::new("secondary-c", game_output::CopySelection, None),
+            KeyBinding::new("secondary-a", game_output::SelectAll, None),
         ]);
 
         cx.on_action(|_: &Quit, cx| quit(cx));

@@ -4991,6 +4991,10 @@ en = "Copy"
 en = "Log copied to the clipboard"
 [game_output.copied_short]
 en = "Copied"
+[game_output.menu.copy]
+en = "Copy"
+[game_output.menu.select_all]
+en = "Select All"
 
 [settings.network]
 en = "Network"

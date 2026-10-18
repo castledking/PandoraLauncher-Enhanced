@@ -7,6 +7,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    menu::ContextMenuExt,
     notification::{Notification, NotificationType},
     scroll::{Scrollbar, ScrollbarHandle},
     v_flex,
@@ -22,6 +23,10 @@ use bridge::{
 };
 
 use crate::{CloseWindow, entity::instance::InstanceEntry, icon::PandoraIcon};
+
+mod formatting;
+
+use formatting::{Formatted, Span};
 
 struct CachedShapedLogLevels {
     fatal: Arc<ShapedLine>,
@@ -139,7 +144,7 @@ impl GameOutput {
             .find(|line| point.y >= line.top && point.y < line.top + line_height)?;
 
         // Monospaced, so where the point falls along the line is also where it falls among
-        // its bytes. Clamped rather than wrapped, so a point past the end selects to the end.
+        // its characters. Clamped rather than wrapped, so a point past the end selects to the end.
         let char = if line.text_width <= px(0.0) || line.char_count == 0 {
             0
         } else {
@@ -171,6 +176,30 @@ impl GameOutput {
 
     pub(crate) fn clear_selection(&mut self) {
         self.selection = None;
+    }
+
+    /// Selects everything shown so far, from the start of the first line to the end of the last.
+    pub(crate) fn select_all(&mut self) {
+        let Some(last) = self.item_state.as_ref().and_then(|item_state| item_state.items.len().checked_sub(1)) else {
+            return;
+        };
+        self.selection = Some(LogSelection {
+            anchor: LogPosition {
+                item: 0,
+                line: 0,
+                char: 0,
+            },
+            focused: LogPosition {
+                item: last,
+                line: usize::MAX,
+                char: usize::MAX,
+            },
+        });
+    }
+
+    /// Whether anything is selected, rather than a click having left an empty selection.
+    pub(crate) fn has_selection(&self) -> bool {
+        self.selection.is_some_and(|selection| selection.start() < selection.end())
     }
 
     /// The selected text as it reads on screen: the wrapped lines in order, each one cut to
@@ -253,12 +282,17 @@ impl GameOutput {
                 let to = if item_ix == end.item && line_ix == end.line {
                     end.char
                 } else {
-                    shaped.text.len()
+                    usize::MAX
                 };
 
-                let from = from.min(shaped.text.len());
-                let to = to.min(shaped.text.len());
-                if to <= from {
+                let chars = shaped.text.chars().count();
+                let from = from.min(chars);
+                let to = to.min(chars);
+                // A blank line the selection runs right across is still one of its lines, as
+                // opposed to one it only starts or ends on with nothing of it selected
+                let runs_across =
+                    (item_ix, line_ix) != (start.item, start.line) && (item_ix, line_ix) != (end.item, end.line);
+                if to < from || to == from && !runs_across {
                     continue;
                 }
 
@@ -266,7 +300,8 @@ impl GameOutput {
                     out.push_str(&item.prefix);
                     out.push(' ');
                 }
-                out.push_str(&shaped.text[from..to]);
+                let byte = |char: usize| shaped.text.char_indices().nth(char).map_or(shaped.text.len(), |(ix, _)| ix);
+                out.push_str(&shaped.text[byte(from)..byte(to)]);
                 out.push('\n');
             }
         }
@@ -423,10 +458,14 @@ impl GameOutput {
                 GameOutputLogLevel::Other => self.shaped_log_levels.as_ref().unwrap().other.clone(),
             };
 
+            // The colour codes come out here, so everything from search to copying works on
+            // the text as it reads
+            let Formatted { text, spans } = formatting::format_lines(&msg.text);
+
             let mut highlighted_text = None;
 
             if !item_state.search_query.is_empty() {
-                for (line_index, line) in msg.text.iter().enumerate() {
+                for (line_index, line) in text.iter().enumerate() {
                     if let Some(found) = line.find(item_state.search_query.as_str()) {
                         highlighted_text = Some((line_index, found..found + item_state.search_query.as_str().len()));
                         break;
@@ -434,13 +473,14 @@ impl GameOutput {
                 }
                 if highlighted_text.is_none() {
                     // Item doesn't match search query, push skipped item
-                    let backup_total_lines_while_skipped = msg.text.len();
+                    let backup_total_lines_while_skipped = text.len();
                     item_state.item_sizes.push(0);
                     item_state.items.push(GameOutputItem {
                         time: TimeShapedLine::Timestamp(msg.time),
                         level: shaped_level.clone(),
                         prefix: item_prefix(&msg),
-                        text: msg.text.clone(),
+                        text,
+                        spans,
                         index: item_state.items.len(),
                         backup_total_lines_while_skipped,
                         total_lines: 0,
@@ -451,14 +491,15 @@ impl GameOutput {
                 }
             }
 
-            let total_lines = msg.text.len();
+            let total_lines = text.len();
             item_state.item_sizes.push(total_lines);
             item_state.total_line_count += total_lines;
             item_state.items.push(GameOutputItem {
                 time: TimeShapedLine::Timestamp(msg.time),
                 level: shaped_level.clone(),
                 prefix: item_prefix(&msg),
-                text: msg.text.clone(),
+                text,
+                spans,
                 index: item_state.items.len(),
                 backup_total_lines_while_skipped: total_lines,
                 total_lines,
@@ -486,7 +527,10 @@ struct GameOutputItem {
     /// shaped and copying the log needs them back as text
     prefix: Arc<str>,
 
+    /// The lines with their colour codes taken out
     text: Arc<[Arc<str>]>,
+    /// What the colour codes said, one per line, or empty if there weren't any
+    spans: Box<[Box<[Span]>]>,
     index: usize,
     backup_total_lines_while_skipped: usize,
     total_lines: usize,
@@ -530,53 +574,16 @@ impl GameOutputItem {
                 let fragments = [LineFragment::Text { text: line }];
                 let boundaries = line_wrapper.wrap_line(&fragments, wrap_width);
 
+                let spans = self.spans.get(original_line_index).map_or(&[][..], |spans| &spans[..]);
+                let highlight = self
+                    .highlighted_text
+                    .as_ref()
+                    .filter(|(highlight_line, _)| *highlight_line == original_line_index)
+                    .map(|(_, range)| range);
+
                 let mut handle_segment = |wrapped_line: SharedString, from, to| {
-                    let runs: &[TextRun] = if let Some((highlight_line, highlight_range)) = &self.highlighted_text
-                        && *highlight_line == original_line_index
-                        && highlight_range.start < to
-                        && highlight_range.end > from
-                    {
-                        let highlight_start = highlight_range.start.max(from);
-                        let highlight_end = highlight_range.end.min(to);
-
-                        &[
-                            TextRun {
-                                len: highlight_start - from,
-                                font: font.clone(),
-                                color: text_style.color,
-                                background_color: text_style.background_color,
-                                underline: text_style.underline,
-                                strikethrough: text_style.strikethrough,
-                            },
-                            TextRun {
-                                len: highlight_end - highlight_start,
-                                font: font.clone(),
-                                color: gpui::black(),
-                                background_color: Some(gpui::yellow()),
-                                underline: text_style.underline,
-                                strikethrough: text_style.strikethrough,
-                            },
-                            TextRun {
-                                len: to - highlight_end,
-                                font: font.clone(),
-                                color: text_style.color,
-                                background_color: text_style.background_color,
-                                underline: text_style.underline,
-                                strikethrough: text_style.strikethrough,
-                            },
-                        ]
-                    } else {
-                        &[TextRun {
-                            len: wrapped_line.len(),
-                            font: font.clone(),
-                            color: text_style.color,
-                            background_color: text_style.background_color,
-                            underline: text_style.underline,
-                            strikethrough: text_style.strikethrough,
-                        }]
-                    };
-
-                    let shaped = text_system.shape_line(wrapped_line, font_size, runs, None);
+                    let runs = segment_runs(from, to, spans, highlight, font, text_style);
+                    let shaped = text_system.shape_line(wrapped_line, font_size, &runs, None);
                     wrapped.push(shaped);
                 };
 
@@ -610,16 +617,86 @@ impl GameOutputItem {
     }
 }
 
-actions!([CopySelection]);
+/// The runs to shape the stretch `from..to` of a line with: the colours its codes asked for,
+/// with a search match drawn over the top of them.
+fn segment_runs(
+    from: usize,
+    to: usize,
+    spans: &[Span],
+    highlight: Option<&Range<usize>>,
+    font: &Font,
+    text_style: &TextStyle,
+) -> Vec<TextRun> {
+    let plain = TextRun {
+        len: 0,
+        font: font.clone(),
+        color: text_style.color,
+        background_color: text_style.background_color,
+        underline: text_style.underline,
+        strikethrough: text_style.strikethrough,
+    };
+
+    // Everywhere in the stretch the look changes
+    let mut cuts = vec![from, to];
+    for range in spans.iter().map(|span| &span.range).chain(highlight) {
+        cuts.push(range.start.clamp(from, to));
+        cuts.push(range.end.clamp(from, to));
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    let mut runs: Vec<TextRun> = cuts
+        .windows(2)
+        .map(|cut| {
+            let (start, end) = (cut[0], cut[1]);
+            let mut run = TextRun {
+                len: end - start,
+                ..plain.clone()
+            };
+
+            if highlight.is_some_and(|highlight| highlight.start <= start && end <= highlight.end) {
+                run.color = gpui::black();
+                run.background_color = Some(gpui::yellow());
+            } else if let Some(span) = spans.iter().find(|span| span.range.start <= start && end <= span.range.end) {
+                if let Some(color) = span.style.color {
+                    run.color = formatting::readable(color, text_style.color);
+                }
+                if span.style.underline {
+                    run.underline = Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    });
+                }
+                if span.style.strikethrough {
+                    run.strikethrough = Some(StrikethroughStyle {
+                        thickness: px(1.0),
+                        color: None,
+                    });
+                }
+            }
+            run
+        })
+        .collect();
+
+    // An empty line still shapes, from a run with nothing in it
+    if runs.is_empty() {
+        runs.push(plain);
+    }
+    runs
+}
+
+actions!([CopySelection, SelectAll]);
 
 struct WrappedLines {
     wrap_width: Pixels,
     lines: Vec<ShapedLine>,
 }
 
-/// A spot in the log: which message, which wrapped line of it, and a byte offset in that
-/// line. The offset is in bytes because that is what the shaped lines index by, and the log
-/// font is monospaced so one byte is also one column.
+/// A spot in the log: which message, which wrapped line of it, and a character offset in that
+/// line. The log font is monospaced, so one character is also one column. Not a byte offset,
+/// which lands inside a character as soon as a line has one that takes more than a byte (box
+/// drawing in a plugin's banner, say), and cutting the text there panics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LogPosition {
     item: usize,
@@ -656,7 +733,7 @@ struct VisibleLine {
     /// Where the wrapped text of this line starts, past the time and level columns.
     text_left: Pixels,
     text_width: Pixels,
-    /// How many bytes the wrapped text runs to, for scaling a point along it.
+    /// How many characters the wrapped text runs to, for scaling a point along it.
     char_count: usize,
 }
 
@@ -1025,8 +1102,8 @@ impl GameOutput {
 }
 
 /// Paints the selected slice of one wrapped line, as a quad behind the text so nothing about
-/// the text itself changes. The font is monospaced, so a byte offset maps straight onto a
-/// distance along the line.
+/// the text itself changes. The font is monospaced, so a character offset maps straight onto
+/// a distance along the line.
 ///
 /// A selection that starts partway along a line only highlights from there on, which is what
 /// keeps a selection spanning several messages reading as the messages it covers rather than
@@ -1070,24 +1147,21 @@ fn paint_selection_range(
     let to = if item.index == end.item && end.line == line_ix {
         end.char
     } else {
-        shaped.text.len()
+        usize::MAX
     };
 
-    let from = from.min(shaped.text.len());
-    let to = to.min(shaped.text.len());
+    let chars = shaped.text.chars().count();
+    let from = from.min(chars);
+    let to = to.min(chars);
     if to <= from {
         return;
     }
 
     _ = visible_lines;
 
-    // Monospaced, so the proportion of the line a byte offset sits at is also the proportion
-    // of its width
-    let char_width = if shaped.text.is_empty() {
-        px(0.0)
-    } else {
-        shaped.width / shaped.text.len().max(1) as f32
-    };
+    // Monospaced, so the proportion of the line a character offset sits at is also the
+    // proportion of its width
+    let char_width = shaped.width / chars as f32;
 
     let left = origin.x + char_width * from as f32;
     let right = origin.x + char_width * to as f32;
@@ -1171,7 +1245,7 @@ fn paint_lines<'a, const REVERSE: bool>(
                         top: line_origin.y,
                         text_left: line_origin.x,
                         text_width: shaped.width,
-                        char_count: shaped.text.len(),
+                        char_count: shaped.text.chars().count(),
                     });
                 }
                 line_origin.y -= line_height;
@@ -1194,7 +1268,7 @@ fn paint_lines<'a, const REVERSE: bool>(
                         top: line_origin.y,
                         text_left: line_origin.x,
                         text_width: shaped.width,
-                        char_count: shaped.text.len(),
+                        char_count: shaped.text.chars().count(),
                     });
                 }
                 line_origin.y += line_height;
@@ -1533,6 +1607,12 @@ impl GameOutputRoot {
         root.copy_selection(window, cx);
     }
 
+    fn on_select_all(root: &mut Self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        root.game_output.update(cx, |game_output, _| game_output.select_all());
+        cx.notify();
+    }
+
     fn on_copy_log(root: &mut Self, _: &gpui::ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let text = root.game_output.read(cx).text();
         if text.is_empty() {
@@ -1767,7 +1847,23 @@ impl Render for GameOutputRoot {
                         cx.listener(|root, _event: &MouseUpEvent, _, cx| {
                             root.finish_selection(cx);
                         }),
-                    ),
+                    )
+                    // The actions go to the log rather than the menu, so they're the same ones
+                    // the keyboard shortcuts shown beside them do
+                    .context_menu({
+                        let game_output = self.game_output.clone();
+                        let focus_handle = self.focus_handle.clone();
+                        move |menu, _, cx| {
+                            let has_selection = game_output.read(cx).has_selection();
+                            menu.action_context(focus_handle.clone())
+                                .menu_with_disabled(
+                                    t::game_output::menu::copy(),
+                                    Box::new(CopySelection),
+                                    !has_selection,
+                                )
+                                .menu(t::game_output::menu::select_all(), Box::new(SelectAll))
+                        }
+                    }),
             )
             .children(kill_bar)
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
@@ -1785,6 +1881,7 @@ impl Render for GameOutputRoot {
             }))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_copy_selection))
+            .on_action(cx.listener(Self::on_select_all))
             .on_action(|_: &CloseWindow, window, _| {
                 window.remove_window();
             })

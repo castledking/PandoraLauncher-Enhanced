@@ -163,6 +163,11 @@ impl BackendState {
         // Servers have no use for the built-in GUI, and it costs memory
         command.arg(std::ffi::OsString::from("nogui"));
 
+        // The console draws colours, but a server only prints them when its environment says
+        // something will: Paper strips a plugin's colours unless COLORTERM is set, which it
+        // only is when the launcher itself was started from a terminal
+        command.env("COLORTERM", "truecolor");
+
         command.stdin(PandoraStdioWriteMode::Pipe);
         command.stdout(PandoraStdioReadMode::Pipe);
         command.stderr(PandoraStdioReadMode::Pipe);

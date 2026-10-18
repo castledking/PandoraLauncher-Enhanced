@@ -1916,12 +1916,11 @@ impl BackendState {
             },
             MessageToBackend::CreateInstanceShortcut { id, path } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let Ok(current_exe) = std::env::current_exe() else {
-                        return;
-                    };
+                    // Not current_exe: inside an AppImage that's in a mount that's gone once it exits
+                    let executable = &bridge::launcher::current().executable;
 
                     let args = &["--run-instance", instance.name.as_str()];
-                    crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args);
+                    crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), executable, args);
                 }
             },
             MessageToBackend::RelocateInstance { id, path } => {

@@ -7,7 +7,7 @@ use bridge::{
 };
 use gpui::{AnyWindowHandle, App, SharedString, Window};
 use gpui_component::{
-    Root, WindowExt,
+    WindowExt,
     notification::{Notification, NotificationType},
 };
 
@@ -19,7 +19,7 @@ use crate::{
         metadata::FrontendMetadata,
     },
     interface_config::InterfaceConfig,
-    root::LauncherRoot,
+    modals::update_prompt::{self, PendingRestart, PendingUpdate},
 };
 
 pub struct Processor {
@@ -66,6 +66,27 @@ impl Processor {
 
         _ = handle.update(cx, |_, window, cx| {
             (func)(self, message, window, cx);
+        });
+    }
+
+    /// Someone opening the launcher while this one runs means to open what's installed now. If
+    /// that isn't this version any more, because it was updated or reinstalled underneath us,
+    /// they'd otherwise be handed this old one without a word.
+    fn offer_restart_if_replaced(&self, cx: &mut App) {
+        let install = bridge::launcher::current();
+        let Some(handle) = self.main_window_handle else {
+            return;
+        };
+        if !install.has_been_replaced() {
+            return;
+        }
+
+        let restart = PendingRestart {
+            relaunch: install.executable.clone().into(),
+            version: None,
+        };
+        _ = handle.update(cx, |_, window, cx| {
+            update_prompt::offer_restart(restart, &self.data, window, cx);
         });
     }
 
@@ -234,16 +255,20 @@ impl Processor {
                         unreachable!();
                     };
 
-                    if let Some(root) = window.root::<Root>().flatten() {
-                        if let Ok(launcher_root) = root.read(cx).view().clone().downcast::<LauncherRoot>() {
-                            launcher_root.update(cx, |launcher_root, cx| {
-                                launcher_root.ui.update(cx, |ui, cx| {
-                                    ui.update = Some(update);
-                                    cx.notify();
-                                });
-                            });
-                        }
-                    }
+                    update_prompt::set_pending_update(PendingUpdate::Available(update), window, cx);
+                });
+            },
+            MessageToFrontend::UpdateInstalled { .. } => {
+                self.with_main_window(message, cx, |processor, message, window, cx| {
+                    let MessageToFrontend::UpdateInstalled { version, relaunch } = message else {
+                        unreachable!();
+                    };
+
+                    let restart = PendingRestart {
+                        relaunch: relaunch.into(),
+                        version: Some(version),
+                    };
+                    update_prompt::offer_restart(restart, &processor.data, window, cx);
                 });
             },
             MessageToFrontend::ManualCurseforgeDownloadsRequired { request: _ } => {
@@ -261,6 +286,7 @@ impl Processor {
                     });
                     if res.is_ok() {
                         crate::sync_quit_state(&self.quit_coordinator, &self.main_window_hidden, cx);
+                        self.offer_restart_if_replaced(cx);
                         return;
                     }
                 }
@@ -270,6 +296,7 @@ impl Processor {
                 self.process_messages_waiting_for_window(cx);
 
                 crate::sync_quit_state(&self.quit_coordinator, &self.main_window_hidden, cx);
+                self.offer_restart_if_replaced(cx);
             },
             MessageToFrontend::OpenUrl { url } => {
                 cx.open_url(&url);

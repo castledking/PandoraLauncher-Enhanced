@@ -6,6 +6,7 @@ pub mod install;
 pub mod instance;
 pub mod java_runtime;
 pub mod keep_alive;
+pub mod launcher;
 pub mod manual_download;
 pub mod message;
 pub mod meta;

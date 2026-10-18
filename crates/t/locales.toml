@@ -1622,6 +1622,20 @@ sv = "Senare"
 ru = "Позже"
 fr = "Plus tard"
 it = "Più tardi"
+[system.update.restart.title]
+en = "Restart Pandora?"
+[system.update.restart.button]
+en = "Restart to Update"
+[system.update.restart.now]
+en = "Restart Now"
+[system.update.restart.installed]
+en = "Pandora ${ver: &str} is installed. Restart the launcher to start using it."
+[system.update.restart.replaced]
+en = "Pandora was updated while it was running. Restart the launcher to start using the new version."
+[system.update.restart.instances_running]
+en = "Stop your running games and servers, then restart"
+[system.update.restart.error]
+en = "Unable to restart Pandora: ${err: std::io::Error}"
 [system.update.install_error]
 en = "Unable to install update"
 tr = "Güncelleme yüklenemedi"

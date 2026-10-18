@@ -6,7 +6,7 @@ use std::{
 };
 
 use base64::Engine;
-use bridge::{handle::FrontendHandle, message::MessageToFrontend, modal_action::ModalAction};
+use bridge::{handle::FrontendHandle, launcher::LauncherKind, message::MessageToFrontend, modal_action::ModalAction};
 use rand::RngCore;
 use reqwest::StatusCode;
 use schema::pandora_update::{UpdateInstallType, UpdateManifest, UpdatePrompt};
@@ -136,41 +136,17 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
 }
 
 fn determine_update_install_type() -> Option<UpdateInstallType> {
-    if let Some(appimage) = std::env::var_os("APPIMAGE") {
-        return Some(UpdateInstallType::AppImage(appimage.into()));
-    }
+    let install = bridge::launcher::current();
 
-    let current_exe = std::env::current_exe().ok()?;
-
-    if cfg!(target_os = "macos")
-        && let Some(app) = determine_macos_app_path(&current_exe)
-    {
-        return Some(UpdateInstallType::App(app.to_path_buf()));
-    }
-
-    return Some(UpdateInstallType::Executable);
-}
-
-fn determine_macos_app_path(current_exe: &Path) -> Option<&Path> {
-    let parent = current_exe.parent()?;
-
-    if parent.file_name()? != OsStr::new("MacOS") {
+    if install.executable.as_os_str().is_empty() {
         return None;
     }
 
-    let parent2 = parent.parent()?;
-
-    if parent2.file_name()? != OsStr::new("Contents") {
-        return None;
-    }
-
-    let parent3 = parent2.parent()?;
-
-    if parent3.extension()? != OsStr::new("app") {
-        return None;
-    }
-
-    Some(parent3)
+    Some(match install.kind {
+        LauncherKind::AppImage => UpdateInstallType::AppImage(install.path.clone()),
+        LauncherKind::MacApp => UpdateInstallType::App(install.path.clone()),
+        LauncherKind::Executable => UpdateInstallType::Executable,
+    })
 }
 
 pub async fn install_update(
@@ -180,21 +156,24 @@ pub async fn install_update(
     update: UpdatePrompt,
     modal_action: ModalAction,
 ) {
-    if let Err(error) = install_update_inner(http_client, &dirs, send.clone(), update, modal_action.clone()).await {
-        modal_action.set_finished_with_error(error);
+    let version = update.new_version.clone();
+
+    match install_update_inner(http_client, dirs, update, modal_action.clone()).await {
+        Ok(relaunch) => send.send(MessageToFrontend::UpdateInstalled { version, relaunch }),
+        Err(error) => modal_action.set_finished_with_error(error),
     }
 
     modal_action.set_finished();
     send.send(MessageToFrontend::Refresh);
 }
 
+/// Downloads and installs the update, returning what to run to start the new version.
 async fn install_update_inner(
     http_client: reqwest::Client,
-    dirs: &LauncherDirectories,
-    send: FrontendHandle,
+    dirs: Arc<LauncherDirectories>,
     update: UpdatePrompt,
     modal_action: ModalAction,
-) -> Result<(), Arc<str>> {
+) -> Result<PathBuf, Arc<str>> {
     let title = format!("Downloading Pandora {}", update.new_version);
     let tracker = modal_action.push_tracker(title.into());
 
@@ -239,11 +218,23 @@ async fn install_update_inner(
         return Err("Unable to update, missing PANDORA_UPDATE_PUBKEY at compile time".into());
     };
 
-    let pubkey = base64::engine::general_purpose::STANDARD.decode(pubkey).unwrap();
-    let sig = base64::engine::general_purpose::STANDARD.decode(&*update.exe.sig).unwrap();
+    let pk = base64::engine::general_purpose::STANDARD
+        .decode(pubkey)
+        .ok()
+        .and_then(|pubkey| String::from_utf8(pubkey).ok())
+        .and_then(|pubkey| minisign_verify::PublicKey::decode(&pubkey).ok());
+    let Some(pk) = pk else {
+        return Err("Unable to update, PANDORA_UPDATE_PUBKEY is not a valid public key".into());
+    };
 
-    let pk = minisign_verify::PublicKey::decode(std::str::from_utf8(&pubkey).unwrap()).unwrap();
-    let signature = minisign_verify::Signature::decode(std::str::from_utf8(&sig).unwrap()).unwrap();
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(&*update.exe.sig)
+        .ok()
+        .and_then(|sig| String::from_utf8(sig).ok())
+        .and_then(|sig| minisign_verify::Signature::decode(&sig).ok());
+    let Some(signature) = signature else {
+        return Err("Invalid signature, unable to decode it".into());
+    };
 
     match pk.verify(&bytes, &signature, false) {
         Err(minisign_verify::Error::InvalidSignature) => {
@@ -255,6 +246,18 @@ async fn install_update_inner(
         Ok(_) => {},
     }
 
+    // Replacing the launcher can wait on a password prompt, which mustn't hold up the backend
+    match tokio::task::spawn_blocking(move || replace_launcher(update, &bytes, &dirs)).await {
+        Ok(result) => result,
+        Err(err) => {
+            log::error!("Update install task failed: {err}");
+            Err("Error while installing update, see logs for more details".into())
+        },
+    }
+}
+
+/// Puts the verified update in place of the running launcher, returning what to run to start it.
+fn replace_launcher(update: UpdatePrompt, bytes: &[u8], dirs: &LauncherDirectories) -> Result<PathBuf, Arc<str>> {
     match update.install_type {
         UpdateInstallType::AppImage(appimage) => {
             let Some(filename) = appimage.file_name() else {
@@ -266,17 +269,17 @@ async fn install_update_inner(
             let new_filename = replace_os_str(filename, &format!("-{}", &update.old_version), "");
             let new_appimage = appimage.with_file_name(new_filename);
 
-            replace_exe(appimage.clone(), new_appimage.clone(), &bytes, dirs)?;
+            replace_exe(appimage.clone(), new_appimage.clone(), bytes, dirs)?;
 
             // AppImageLauncher keys its generated desktop entries on the AppImage's path, so
             // updating (and especially moving) the AppImage leaves the old entry behind and the
             // launcher shows up several times in menus like rofi.
             cleanup_appimage_desktop_entries(Some(&new_appimage));
+
+            Ok(new_appimage)
         },
         UpdateInstallType::Executable => {
-            let Ok(current_exe) = std::env::current_exe() else {
-                return Err("Unable to determine current exe path".into());
-            };
+            let current_exe = bridge::launcher::current().executable.clone();
 
             let Some(filename) = current_exe.file_name() else {
                 return Err("Current exe path has no filename".into());
@@ -287,7 +290,9 @@ async fn install_update_inner(
             let new_filename = replace_os_str(filename, &format!("-{}", &update.old_version), "");
             let new_exe = current_exe.with_file_name(new_filename);
 
-            replace_exe(current_exe, new_exe, &bytes, dirs)?;
+            replace_exe(current_exe, new_exe.clone(), bytes, dirs)?;
+
+            Ok(new_exe)
         },
         UpdateInstallType::App(current_app_folder) => {
             let mut temp_extract = dirs.temp_dir.join(format!("app_unpack_{}", rand::thread_rng().next_u64()));
@@ -305,20 +310,17 @@ async fn install_update_inner(
                 temp_backup = dirs.temp_dir.join(format!("app_backup_{}", rand::thread_rng().next_u64()));
             }
 
-            let result = install_app_update(current_app_folder, &bytes, &temp_extract, &temp_backup);
+            let result = install_app_update(current_app_folder, bytes, &temp_extract, &temp_backup);
 
             _ = std::fs::remove_dir_all(temp_backup);
             _ = std::fs::remove_dir_all(temp_extract);
 
-            if let Err(err) = result {
-                return Err(err);
-            }
+            result?;
+
+            // The bundle was replaced where it was, so its executable is where ours was
+            Ok(bridge::launcher::current().executable.clone())
         },
     }
-
-    send.send_success("Pandora update successful. Restart to apply changes");
-
-    Ok(())
 }
 
 /// Removes redundant AppImageLauncher-generated desktop entries for this launcher.
@@ -331,14 +333,17 @@ async fn install_update_inner(
 /// Only files generated by AppImageLauncher are ever deleted; hand-written `.desktop` files are
 /// left alone, and are treated as the entry the user actually wants.
 ///
-/// `current` is the AppImage to treat as the running one, defaulting to `$APPIMAGE`.
+/// `current` is the AppImage to treat as the running one, defaulting to the one we were started from.
 pub fn cleanup_appimage_desktop_entries(current: Option<&Path>) {
     let current = match current {
         Some(current) => current.to_path_buf(),
-        None => match std::env::var_os("APPIMAGE") {
-            Some(appimage) => PathBuf::from(appimage),
+        None => {
+            let install = bridge::launcher::current();
             // Not running as an AppImage, so there is nothing AppImageLauncher could have made
-            None => return,
+            if install.kind != LauncherKind::AppImage {
+                return;
+            }
+            install.path.clone()
         },
     };
 
@@ -512,20 +517,59 @@ fn is_pandora_appimage(desktop_entry: &DesktopEntry) -> bool {
     matches_filename || undisambiguated_name(&desktop_entry.name) == "Pandora Launcher"
 }
 
-fn add_new_extension(path: &Path) -> PathBuf {
-    let mut new_exe_data = path.with_added_extension(format!("{}.new", rand::thread_rng().next_u64()));
-    while new_exe_data.exists() {
-        log::warn!(
-            "Randomly generated new_exe_data file exists... what are the chances? ({:?})",
-            new_exe_data
-        );
-        new_exe_data = path.with_added_extension(format!("{}.new", rand::thread_rng().next_u64()));
+/// `path` with `.<random number>.<extension>` added, picking a name that isn't taken.
+fn add_random_extension(path: &Path, extension: &str) -> PathBuf {
+    loop {
+        let candidate = path.with_added_extension(format!("{}.{extension}", rand::thread_rng().next_u64()));
+        if !candidate.exists() {
+            return candidate;
+        }
+        log::warn!("Randomly generated file name exists... what are the chances? ({:?})", candidate);
     }
-    return new_exe_data;
+}
+
+/// Deletes what an earlier update left beside the launcher: on Windows the old executable that
+/// was moved aside to make room, and anywhere a downloaded update that never made it into place.
+pub fn cleanup_previous_update() {
+    let executable = &bridge::launcher::current().executable;
+    let (Some(dir), Some(name)) = (executable.parent(), executable.file_name()) else {
+        return;
+    };
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in read_dir.flatten() {
+        if !is_left_over_from_update(name, &entry.file_name()) {
+            continue;
+        }
+
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => log::info!("Removed {:?} left over from an earlier update", entry.path()),
+            // Most likely an older launcher that hasn't exited yet
+            Err(err) => log::debug!("Unable to remove {:?} left over from an earlier update: {err}", entry.path()),
+        }
+    }
+}
+
+/// Whether `file_name` is one of the `<executable>.<random number>.new`/`.old` files
+/// [`add_random_extension`] names.
+fn is_left_over_from_update(executable_name: &OsStr, file_name: &OsStr) -> bool {
+    let (Some(executable_name), Some(file_name)) = (executable_name.to_str(), file_name.to_str()) else {
+        return false;
+    };
+    let Some(rest) = file_name.strip_prefix(executable_name).and_then(|rest| rest.strip_prefix('.')) else {
+        return false;
+    };
+    let Some(random) = rest.strip_suffix(".new").or_else(|| rest.strip_suffix(".old")) else {
+        return false;
+    };
+
+    !random.is_empty() && random.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn write_new_exe_temp(new_exe: &Path, data: &[u8], dirs: &LauncherDirectories) -> Result<PathBuf, String> {
-    let new_exe_data = add_new_extension(new_exe);
+    let new_exe_data = add_random_extension(new_exe, "new");
 
     let Err(err) = std::fs::write(&new_exe_data, data) else {
         return Ok(new_exe_data);
@@ -536,7 +580,7 @@ fn write_new_exe_temp(new_exe: &Path, data: &[u8], dirs: &LauncherDirectories) -
         return Err("Error while writing new executable, see logs for more details".into());
     }
 
-    let new_exe_data = add_new_extension(&dirs.temp_dir.join("new_exe_data"));
+    let new_exe_data = add_random_extension(&dirs.temp_dir.join("new_exe_data"), "new");
 
     if let Err(err) = std::fs::write(&new_exe_data, data) {
         log::error!("Error while writing new executable: {}", err);
@@ -550,16 +594,13 @@ fn replace_exe(old_exe: PathBuf, new_exe: PathBuf, data: &[u8], dirs: &LauncherD
     let new_exe_temp = write_new_exe_temp(&new_exe, data, dirs)?;
 
     #[cfg(unix)]
-    {
-        let result = move_new_exe_into(old_exe, new_exe, &new_exe_temp);
-        _ = std::fs::remove_file(new_exe_temp);
-        return result;
-    }
+    let result = move_new_exe_into(old_exe, new_exe, &new_exe_temp);
     #[cfg(windows)]
-    {
-        launch_update_helper(old_exe, new_exe, &new_exe_temp);
-        return Ok(());
-    }
+    let result = swap_exe_into_place(&old_exe, &new_exe, &new_exe_temp);
+
+    // Already moved into place unless something went wrong
+    _ = std::fs::remove_file(new_exe_temp);
+    result
 }
 
 fn try_canonicalize(path: &Path) -> Option<PathBuf> {
@@ -581,58 +622,96 @@ fn try_canonicalize(path: &Path) -> Option<PathBuf> {
     }
 }
 
-// Windows doesn't like replacing currently running executables, so we spawn a powershell script that waits for the program to exit
+/// Windows won't let a running executable be overwritten or deleted, but it will let it be
+/// renamed. So the running one is moved aside and the update takes its name straight away, ready
+/// for the next start, rather than waiting on a helper to do it once the launcher has exited. The
+/// copy moved aside is deleted on the next start by [`cleanup_previous_update`].
 #[cfg(windows)]
-fn launch_update_helper(old_exe_path: PathBuf, new_exe_path: PathBuf, new_exe_data: &Path) {
-    let mut ps_arguments: Vec<&OsStr> = Vec::new();
+fn swap_exe_into_place(old_exe: &Path, new_exe: &Path, new_exe_temp: &Path) -> Result<(), String> {
+    let aside = add_random_extension(old_exe, "old");
 
-    let id_string = format!("{}", std::process::id());
+    if let Err(err) = std::fs::rename(old_exe, &aside) {
+        if err.kind() == std::io::ErrorKind::PermissionDenied {
+            log::info!("Permission denied while moving the running executable aside, need to elevate");
+            return swap_exe_into_place_elevated(old_exe, new_exe, new_exe_temp, &aside);
+        }
 
-    ps_arguments.push(OsStr::new("Write-Host"));
-    ps_arguments.push(OsStr::new("Waiting for launcher to close..."));
-    ps_arguments.push(OsStr::new(";"));
-
-    ps_arguments.push(OsStr::new("Wait-Process"));
-    ps_arguments.push(OsStr::new("-Id"));
-    ps_arguments.push(OsStr::new(&id_string));
-    ps_arguments.push(OsStr::new("-ErrorAction"));
-    ps_arguments.push(OsStr::new("SilentlyContinue;"));
-
-    ps_arguments.push(OsStr::new("if"));
-    ps_arguments.push(OsStr::new("($?)"));
-    ps_arguments.push(OsStr::new("{"));
-
-    ps_arguments.push(OsStr::new("Move-Item"));
-    ps_arguments.push(OsStr::new("-Path"));
-    ps_arguments.push(new_exe_data.as_os_str());
-    ps_arguments.push(OsStr::new("-Destination"));
-    ps_arguments.push(new_exe_path.as_os_str());
-
-    if old_exe_path == new_exe_path {
-        ps_arguments.push(OsStr::new("-Force"));
-    } else {
-        ps_arguments.push(OsStr::new("-Force;"));
-        ps_arguments.push(OsStr::new("if"));
-        ps_arguments.push(OsStr::new("($?)"));
-        ps_arguments.push(OsStr::new("{"));
-        ps_arguments.push(OsStr::new("Remove-Item"));
-        ps_arguments.push(OsStr::new("-Path"));
-        ps_arguments.push(old_exe_path.as_os_str());
-        ps_arguments.push(OsStr::new("-Force"));
-        ps_arguments.push(OsStr::new("}"));
+        log::error!("Unable to move the running executable {:?} aside: {}", old_exe, err);
+        return Err("Error while replacing executable, see logs for more details".into());
     }
 
-    ps_arguments.push(OsStr::new("}"));
+    if let Err(err) = rename_retrying(new_exe_temp, new_exe) {
+        log::error!("Unable to move the update {:?} into place at {:?}: {}", new_exe_temp, new_exe, err);
+        if let Err(err) = std::fs::rename(&aside, old_exe) {
+            log::error!("Unable to put the running executable back from {:?}: {}", aside, err);
+        }
+        return Err("Error while replacing executable, see logs for more details".into());
+    }
 
-    let ps_command = crate::join_windows_shell_os(&ps_arguments);
+    Ok(())
+}
 
-    log::info!("Running with powershell.exe: {}", ps_command.to_string_lossy());
+/// Renames, retrying for a few seconds: antivirus software tends to hold on to an executable
+/// that was just written while it scans it.
+#[cfg(windows)]
+fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempts = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(err) if attempts < 10 && err.kind() != std::io::ErrorKind::NotFound => {
+                log::warn!("Unable to rename {:?} to {:?}, retrying: {}", from, to, err);
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            },
+            result => return result,
+        }
+    }
+}
 
-    std::process::Command::new("powershell.exe")
-        .arg("-Command")
-        .arg(ps_command)
-        .spawn()
-        .unwrap();
+/// [`swap_exe_into_place`] for a launcher installed somewhere only an administrator can change,
+/// such as Program Files.
+#[cfg(windows)]
+fn swap_exe_into_place_elevated(
+    old_exe: &Path,
+    new_exe: &Path,
+    new_exe_temp: &Path,
+    aside: &Path,
+) -> Result<(), String> {
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; \
+         Move-Item -LiteralPath {old} -Destination {aside}; \
+         try {{ Move-Item -LiteralPath {temp} -Destination {new} -Force }} \
+         catch {{ Move-Item -LiteralPath {aside} -Destination {old}; exit 1 }}",
+        old = powershell_quote(old_exe),
+        aside = powershell_quote(aside),
+        temp = powershell_quote(new_exe_temp),
+        new = powershell_quote(new_exe),
+    );
+
+    log::info!("Running with elevated powershell.exe: {}", script);
+    let status = run_admin_powershell(OsStr::new(&script));
+
+    if status.success() {
+        Ok(())
+    } else {
+        log::error!("Error completing elevated executable install: {}", status);
+        Err("Error completing elevated executable installation, see logs for more details".into())
+    }
+}
+
+/// `path` as a single-quoted PowerShell string, which takes everything literally but quotes.
+#[cfg(windows)]
+fn powershell_quote(path: &Path) -> String {
+    let mut quoted = String::from("'");
+    for char in path.to_string_lossy().chars() {
+        // PowerShell treats the typographic single quotes as quotes too
+        if matches!(char, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(char);
+        }
+        quoted.push(char);
+    }
+    quoted.push('\'');
+    quoted
 }
 
 #[cfg(unix)]
@@ -701,6 +780,14 @@ fn install_app_update(
     temp_extract: &Path,
     temp_backup: &Path,
 ) -> Result<(), Arc<str>> {
+    // An app that was opened without being moved out of Downloads runs from a read-only copy macOS
+    // makes of it (App Translocation), or straight off the disk image, and replacing either of
+    // those wouldn't update the app the user actually opens
+    if current_app_folder.to_string_lossy().contains("/AppTranslocation/") || current_app_folder.starts_with("/Volumes")
+    {
+        return Err("Move Pandora Launcher into your Applications folder, open it from there and update again".into());
+    }
+
     let gz_decoder = flate2::bufread::GzDecoder::new(Cursor::new(bytes));
     let mut archive = tar::Archive::new(gz_decoder);
 
@@ -797,7 +884,7 @@ fn run_admin_powershell(script: &OsStr) -> std::process::ExitStatus {
         );
 
         use std::os::windows::ffi::OsStrExt;
-        let encoded = crate::join_windows_shell_os(&[OsStr::new("-Command"), script])
+        let encoded = crate::join_windows_shell_os(&[OsStr::new("-NoProfile"), OsStr::new("-Command"), script])
             .encode_wide()
             .chain(OsStr::new("\0").encode_wide())
             .collect::<Vec<_>>();
@@ -807,7 +894,7 @@ fn run_admin_powershell(script: &OsStr) -> std::process::ExitStatus {
         sei.lpVerb = windows::core::w!("runas");
         sei.lpFile = windows::core::w!("powershell.exe");
         sei.lpParameters = windows::core::PCWSTR::from_raw(encoded.as_ptr());
-        sei.nShow = windows::Win32::UI::WindowsAndMessaging::SW_NORMAL.0;
+        sei.nShow = windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0;
 
         if windows::Win32::UI::Shell::ShellExecuteExW(&mut sei).is_err() || sei.hProcess.is_invalid() {
             return std::mem::transmute(!0);
@@ -867,7 +954,7 @@ fn find_child_with_extension(folder: &Path, extension: &OsStr) -> std::io::Resul
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{cleanup_appimage_desktop_entries_in, undisambiguated_name};
+    use super::{cleanup_appimage_desktop_entries_in, is_left_over_from_update, undisambiguated_name};
 
     struct TempDir(PathBuf);
 
@@ -1027,6 +1114,23 @@ mod tests {
 
         assert!(!running.exists(), "the redundant entry for the running AppImage should go");
         assert!(beta_entry.exists(), "a different AppImage keeps its own entry");
+    }
+
+    #[test]
+    fn recognises_only_files_an_update_leaves_behind() {
+        use std::ffi::OsStr;
+
+        let exe = OsStr::new("PandoraLauncher-Windows-x86_64.exe");
+        let left_over = |name: &str| is_left_over_from_update(exe, OsStr::new(name));
+
+        assert!(left_over("PandoraLauncher-Windows-x86_64.exe.8213490713.old"));
+        assert!(left_over("PandoraLauncher-Windows-x86_64.exe.17.new"));
+
+        assert!(!left_over("PandoraLauncher-Windows-x86_64.exe"));
+        assert!(!left_over("PandoraLauncher-Windows-x86_64.exe.old"));
+        assert!(!left_over("PandoraLauncher-Windows-x86_64.exe.backup.old"));
+        assert!(!left_over("PandoraLauncher-Windows-x86_64.exe.17.new.txt"));
+        assert!(!left_over("Other.exe.17.old"));
     }
 
     #[test]

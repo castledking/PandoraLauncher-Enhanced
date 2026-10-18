@@ -582,6 +582,11 @@ pub enum MessageToFrontend {
     UpdateAvailable {
         update: UpdatePrompt,
     },
+    /// The update is in place and takes effect once the launcher is started again from `relaunch`.
+    UpdateInstalled {
+        version: Arc<str>,
+        relaunch: PathBuf,
+    },
     OpenOrFocusMainWindow,
     ManualCurseforgeDownloadsRequired {
         request: ManualCurseforgeDownloadRequest,

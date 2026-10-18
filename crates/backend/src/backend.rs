@@ -357,6 +357,7 @@ impl BackendState {
         // it does so asynchronously, so the duplicate entries it leaves behind can only be cleaned
         // up on the next start
         tokio::task::spawn_blocking(|| crate::update::cleanup_appimage_desktop_entries(None));
+        tokio::task::spawn_blocking(crate::update::cleanup_previous_update);
 
         // Pre-fetch version manifest
         self.meta.preload(MinecraftVersionManifestMetadataItem);

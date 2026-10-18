@@ -7,7 +7,8 @@ use std::{
 };
 
 use bridge::{
-    handle::{BackendHandle, FrontendReceiver},
+    handle::{BackendHandle, FrontendHandle, FrontendReceiver},
+    message::MessageToFrontend,
     quit::QuitCoordinator,
 };
 use gpui::*;
@@ -75,112 +76,119 @@ pub fn start(
     panic_message: Arc<RwLock<Option<String>>>,
     deadlock_message: Arc<RwLock<Option<String>>>,
     backend_handle: BackendHandle,
+    frontend_handle: FrontendHandle,
     mut recv: FrontendReceiver,
     quit_coordinator: QuitCoordinator,
 ) {
     let http_client = Arc::new(reqwest_client::ReqwestClient::user_agent(&*schema::USER_AGENT).unwrap());
 
-    gpui_platform::application()
-        .with_http_client(http_client)
-        .with_assets(Assets)
-        .run(move |cx: &mut App| {
-            let _ = cx.text_system().add_fonts(vec![
-                Assets.load("fonts/inter/Inter-Regular.ttf").unwrap().unwrap(),
-                Assets.load("fonts/roboto-mono/RobotoMono-Regular.ttf").unwrap().unwrap(),
-                Assets.load("fonts/minecraft.ttf").unwrap().unwrap(),
-            ]);
+    let application = gpui_platform::application().with_http_client(http_client).with_assets(Assets);
 
-            gpui_component::init(cx);
-            InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
+    // Opening the launcher again while it's running goes through the socket everywhere but on
+    // macOS, which hands the running app the reopen instead of starting it a second time
+    application.on_reopen(move |_| frontend_handle.send(MessageToFrontend::OpenOrFocusMainWindow));
 
-            t::set_lang(&InterfaceConfig::get(cx).language);
+    application.run(move |cx: &mut App| {
+        let _ = cx.text_system().add_fonts(vec![
+            Assets.load("fonts/inter/Inter-Regular.ttf").unwrap().unwrap(),
+            Assets.load("fonts/roboto-mono/RobotoMono-Regular.ttf").unwrap().unwrap(),
+            Assets.load("fonts/minecraft.ttf").unwrap().unwrap(),
+        ]);
 
-            gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+        gpui_component::init(cx);
+        InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
 
-            let theme_folder = launcher_dir.join("themes");
+        t::set_lang(&InterfaceConfig::get(cx).language);
 
-            _ = gpui_component::ThemeRegistry::watch_dir(theme_folder.clone(), cx, move |cx| {
-                InterfaceConfig::apply_theme(cx, true);
-            });
-            InterfaceConfig::apply_theme(cx, false);
+        gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
 
-            cx.set_quit_mode(QuitMode::Explicit);
+        let theme_folder = launcher_dir.join("themes");
 
-            cx.on_app_quit(|cx| {
-                InterfaceConfig::force_save(cx);
-                async {}
-            })
-            .detach();
-
-            let main_window_hidden = Arc::new(AtomicBool::new(false));
-
-            cx.on_window_closed({
-                let main_window_hidden = main_window_hidden.clone();
-                let quit_coordinator = quit_coordinator.clone();
-                move |cx, _window| {
-                    // The main window is hidden while a game runs to get it out of the way,
-                    // so a window closing at that point isn't the user closing the launcher
-                    if !main_window_hidden.load(std::sync::atomic::Ordering::SeqCst)
-                        && InterfaceConfig::get(cx).quit_on_main_closed
-                    {
-                        close_windows_beside_the_main_window(cx);
-                    }
-
-                    sync_quit_state(&quit_coordinator, &main_window_hidden, cx);
-                }
-            })
-            .detach();
-
-            cx.bind_keys([
-                KeyBinding::new("secondary-q", Quit, None),
-                KeyBinding::new("secondary-w", CloseWindow, None),
-                KeyBinding::new("secondary-,", OpenSettings, None),
-                KeyBinding::new("secondary-[", Backwards, None),
-                KeyBinding::new("secondary-]", Forwards, None),
-                KeyBinding::new("enter", Confirm, None),
-                KeyBinding::new("secondary-c", game_output::CopySelection, None),
-            ]);
-
-            cx.on_action(|_: &Quit, cx| {
-                for window in cx.windows() {
-                    _ = window.update(cx, |_, window, _| {
-                        window.remove_window();
-                    });
-                }
-            });
-
-            let instances = cx.new(|_| InstanceEntries {
-                entries: IndexMap::new(),
-            });
-            let metadata = cx.new(|_| FrontendMetadata::new(backend_handle.clone()));
-            let accounts = cx.new(|_| AccountEntries::default());
-            let data = DataEntities {
-                instances,
-                metadata,
-                backend_handle,
-                accounts,
-                theme_folder: theme_folder.into(),
-                panic_messages: Arc::new(PanicMessages {
-                    panic_message,
-                    deadlock_message,
-                }),
-            };
-
-            let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
-
-            while let Some(message) = recv.try_recv() {
-                processor.process(message, cx);
-            }
-
-            cx.spawn(async move |cx| {
-                while let Some(message) = recv.recv().await {
-                    _ = cx.update(|cx| {
-                        processor.process(message, cx);
-                    });
-                }
-            })
-            .detach();
+        _ = gpui_component::ThemeRegistry::watch_dir(theme_folder.clone(), cx, move |cx| {
+            InterfaceConfig::apply_theme(cx, true);
         });
+        InterfaceConfig::apply_theme(cx, false);
+
+        cx.set_quit_mode(QuitMode::Explicit);
+
+        cx.on_app_quit(|cx| {
+            InterfaceConfig::force_save(cx);
+            async {}
+        })
+        .detach();
+
+        let main_window_hidden = Arc::new(AtomicBool::new(false));
+
+        cx.on_window_closed({
+            let main_window_hidden = main_window_hidden.clone();
+            let quit_coordinator = quit_coordinator.clone();
+            move |cx, _window| {
+                // The main window is hidden while a game runs to get it out of the way,
+                // so a window closing at that point isn't the user closing the launcher
+                if !main_window_hidden.load(std::sync::atomic::Ordering::SeqCst)
+                    && InterfaceConfig::get(cx).quit_on_main_closed
+                {
+                    close_windows_beside_the_main_window(cx);
+                }
+
+                sync_quit_state(&quit_coordinator, &main_window_hidden, cx);
+            }
+        })
+        .detach();
+
+        cx.bind_keys([
+            KeyBinding::new("secondary-q", Quit, None),
+            KeyBinding::new("secondary-w", CloseWindow, None),
+            KeyBinding::new("secondary-,", OpenSettings, None),
+            KeyBinding::new("secondary-[", Backwards, None),
+            KeyBinding::new("secondary-]", Forwards, None),
+            KeyBinding::new("enter", Confirm, None),
+            KeyBinding::new("secondary-c", game_output::CopySelection, None),
+        ]);
+
+        cx.on_action(|_: &Quit, cx| quit(cx));
+
+        let instances = cx.new(|_| InstanceEntries {
+            entries: IndexMap::new(),
+        });
+        let metadata = cx.new(|_| FrontendMetadata::new(backend_handle.clone()));
+        let accounts = cx.new(|_| AccountEntries::default());
+        let data = DataEntities {
+            instances,
+            metadata,
+            backend_handle,
+            accounts,
+            theme_folder: theme_folder.into(),
+            panic_messages: Arc::new(PanicMessages {
+                panic_message,
+                deadlock_message,
+            }),
+        };
+
+        let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
+
+        while let Some(message) = recv.try_recv() {
+            processor.process(message, cx);
+        }
+
+        cx.spawn(async move |cx| {
+            while let Some(message) = recv.recv().await {
+                _ = cx.update(|cx| {
+                    processor.process(message, cx);
+                });
+            }
+        })
+        .detach();
+    });
+}
+
+/// Closes every window, after which the launcher exits as soon as no game or server needs it.
+pub(crate) fn quit(cx: &mut App) {
+    for window in cx.windows() {
+        _ = window.update(cx, |_, window, _| {
+            window.remove_window();
+        });
+    }
 }
 
 // Global storage for the game output window handle.

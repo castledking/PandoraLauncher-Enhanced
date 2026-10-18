@@ -10,7 +10,6 @@ use gpui_component::{
     v_flex,
 };
 use rustc_hash::FxHashMap;
-use schema::pandora_update::UpdatePrompt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -45,7 +44,7 @@ use crate::{
 pub struct LauncherUI {
     data: DataEntities,
     page: LauncherPage,
-    pub update: Option<UpdatePrompt>,
+    pub update: Option<crate::modals::update_prompt::PendingUpdate>,
     sidebar_state: ResizePanelState,
     recent_instances: heapless::Vec<InstanceEntry, 3>,
     page_history_backwards: VecDeque<(PageType, Arc<[PageType]>)>,
@@ -173,7 +172,7 @@ impl LauncherPage {
             page_path,
             controls,
             update: ui.update.clone(),
-            send: ui.data.backend_handle.clone(),
+            data: ui.data.clone(),
         };
 
         if scrollable {
@@ -1046,7 +1045,7 @@ fn open_bug_report_url(window: &mut Window, cx: &mut App) {
         if let Some(snap_name) = std::env::var_os("FLATPAK_ID") {
             _ = writeln!(&mut body, "Flatpak ID: {}", snap_name.to_string_lossy());
         }
-        if std::env::var_os("APPIMAGE").is_some() {
+        if bridge::launcher::current().kind == bridge::launcher::LauncherKind::AppImage {
             body.push_str("AppImage: true\n");
         }
     }

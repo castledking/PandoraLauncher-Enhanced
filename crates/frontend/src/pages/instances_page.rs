@@ -101,7 +101,13 @@ impl Render for InstancesPage {
                 let cards = self.instance_table.update(cx, |table, cx| table.delegate().render_cards(cx));
                 div().size_full().p_4().child(cards).into_any_element()
             },
-            ViewMode::List => DataTable::new(&self.instance_table).bordered(false).into_any_element(),
+            ViewMode::List => DataTable::new(&self.instance_table)
+                .bordered(false)
+                // Every column is pinned, so there's never anything to scroll sideways to. The
+                // scrollbar's track trails a resized column by a frame, though, which made it
+                // flash up while a column was being made narrower.
+                .scrollbar_visible(true, false)
+                .into_any_element(),
         }
     }
 }

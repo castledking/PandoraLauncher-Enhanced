@@ -172,7 +172,13 @@ impl Render for ServersPage {
             },
             // The table brings its own scrolling and its own header, so the card summary
             // above would be sitting on top of the columns
-            ViewMode::List => DataTable::new(&self.server_table).bordered(false).into_any_element(),
+            ViewMode::List => DataTable::new(&self.server_table)
+                .bordered(false)
+                // Every column is pinned, so there's never anything to scroll sideways to. The
+                // scrollbar's track trails a resized column by a frame, though, which made it
+                // flash up while a column was being made narrower.
+                .scrollbar_visible(true, false)
+                .into_any_element(),
         }
     }
 }

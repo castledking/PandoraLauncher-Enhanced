@@ -87,6 +87,15 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                 title: Some(t::settings::appearance::window),
                 items: vec![
                     SettingItem {
+                        title: t::settings::appearance::window::settings_separate_window,
+                        description: t::settings::appearance::window::settings_separate_window_desc,
+                        widget: SettingItemWidget::Switch(
+                            |cfg| cfg.settings_separate_window,
+                            |cfg, val| cfg.settings_separate_window = val,
+                        ),
+                        ..Default::default()
+                    },
+                    SettingItem {
                         title: t::settings::appearance::window::use_os_titlebar,
                         description: t::settings::appearance::window::use_os_titlebar_desc,
                         widget: SettingItemWidget::Switch(

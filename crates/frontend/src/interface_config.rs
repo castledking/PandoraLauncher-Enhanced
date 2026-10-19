@@ -58,6 +58,8 @@ pub struct InterfaceConfig {
     // Window state
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub main_window_bounds: WindowBounds,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub settings_separate_window: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub game_output_window_bounds: WindowBounds,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -524,6 +526,7 @@ impl Default for InterfaceConfig {
             font_family: None,
             font_size: None,
             main_window_bounds: Default::default(),
+            settings_separate_window: true,
             game_output_window_bounds: Default::default(),
             main_page: Default::default(),
             page_path: Default::default(),

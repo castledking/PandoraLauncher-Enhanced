@@ -91,6 +91,7 @@ pub enum PageType {
     },
     /// The notes of every release.
     Changelog,
+    Settings,
 }
 
 impl PageType {
@@ -124,6 +125,7 @@ impl PageType {
                 InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
             },
             PageType::Changelog => t::system::update::changelog::title().into(),
+            PageType::Settings => t::settings::title().into(),
         }
     }
 }
@@ -142,10 +144,14 @@ pub enum LauncherPage {
     Servers(Entity<ServersPage>),
     ServerPage(Entity<ServerPage>),
     Changelog(Entity<ChangelogPage>),
+    Settings(Entity<crate::settings::SettingsRoot>),
 }
 
 impl LauncherPage {
     fn render(self, ui: &LauncherUI, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let Self::Settings(entity) = &self {
+            return entity.clone().into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -169,6 +175,7 @@ impl LauncherPage {
             LauncherPage::Servers(entity) => process(entity, window, cx),
             LauncherPage::ServerPage(entity) => process(entity, window, cx),
             LauncherPage::Changelog(entity) => process(entity, window, cx),
+            LauncherPage::Settings(_) => unreachable!(),
         };
 
         let config = InterfaceConfig::get(cx);
@@ -187,8 +194,9 @@ impl LauncherPage {
                     .overflow_hidden()
                     .child(v_flex().size_full().overflow_y_scrollbar().child(page)),
             )
+            .into_any_element()
         } else {
-            v_flex().size_full().child(title_bar).child(page)
+            v_flex().size_full().child(title_bar).child(page).into_any_element()
         }
     }
 }
@@ -430,6 +438,9 @@ impl LauncherUI {
                 Ok(LauncherPage::ServerPage(cx.new(|cx| ServerPage::new(id, data, window, cx))))
             },
             PageType::Changelog => Ok(LauncherPage::Changelog(cx.new(|cx| ChangelogPage::new(data, window, cx)))),
+            PageType::Settings => {
+                Ok(LauncherPage::Settings(crate::settings::SettingsRoot::new_embedded(data, window, cx)))
+            },
         }
     }
 

@@ -37,11 +37,12 @@ mod general;
 mod java;
 mod network;
 
-struct SettingsRoot {
+pub struct SettingsRoot {
     settings: Settings,
     search_state: Entity<InputState>,
     group_list_state: ListState,
     use_custom_titlebar: bool,
+    embedded: bool,
     sidebar_state: ResizePanelState,
     backend_handle: BackendHandle,
     get_configuration_task: Option<Task<()>>,
@@ -60,6 +61,37 @@ enum OnReceiveBackendConfig {
 }
 
 impl SettingsRoot {
+    pub(crate) fn new_embedded(
+        data: &DataEntities,
+        window: &mut Window,
+        cx: &mut Context<crate::ui::LauncherUI>,
+    ) -> Entity<Self> {
+        let use_custom_titlebar = crate::root::should_render_custom_titlebar();
+        let root = cx.new(|cx| {
+            let sidebar_state = ResizePanelState::new(px(175.0), px(150.0), px(225.0));
+            let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()));
+            cx.subscribe(&search_state, SettingsRoot::on_search).detach();
+            let mut root = SettingsRoot {
+                settings: create_settings(data, window, cx),
+                search_state,
+                use_custom_titlebar,
+                embedded: true,
+                sidebar_state,
+                group_list_state: ListState::new(0, ListAlignment::Top, px(100.)),
+                backend_handle: data.backend_handle.clone(),
+                get_configuration_task: None,
+                actual_backend_config: None,
+                temp_backend_config: None,
+                on_receive_backend_config: OnReceiveBackendConfig::DoNothing,
+                _select_file_task: Task::ready(()),
+                _java_runtimes_task: Task::ready(()),
+            };
+            root.update_backend_configuration(cx);
+            root
+        });
+        root
+    }
+
     fn backend_config(&self) -> Option<&BackendConfig> {
         self.temp_backend_config.as_ref().or(self.actual_backend_config.as_ref())
     }
@@ -213,11 +245,16 @@ impl Render for SettingsRoot {
                             .link()
                             .small()
                             .label(t::system::update::changelog::title())
-                            .on_click(|_, window, cx| {
-                                crate::root::show_in_main_window(PageType::Changelog, cx);
-                                // Some window managers won't bring the main window forward when
-                                // asked, and this one would be in front of the changelog
-                                window.remove_window();
+                            .on_click({
+                                let embedded = self.embedded;
+                                move |_, window, cx| {
+                                    crate::root::show_in_main_window(PageType::Changelog, cx);
+                                    // Some window managers won't bring the main window forward when
+                                    // asked, and this one would be in front of the changelog
+                                    if !embedded {
+                                        window.remove_window();
+                                    }
+                                }
                             }),
                     ),
             );
@@ -787,6 +824,10 @@ impl Settings {
 }
 
 pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut App) {
+    if !InterfaceConfig::get(cx).settings_separate_window {
+        crate::root::show_in_main_window(PageType::Settings, cx);
+        return;
+    }
     let existing = cx.windows().into_iter().find_map(|w| {
         let root = w.downcast::<Root>()?;
         if !root.read(cx).ok()?.view().clone().downcast::<SettingsRoot>().is_ok() {
@@ -829,6 +870,7 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
                 settings: create_settings(data, window, cx),
                 search_state,
                 use_custom_titlebar,
+                embedded: false,
                 sidebar_state,
                 group_list_state: ListState::new(0, ListAlignment::Top, px(100.)),
                 backend_handle: data.backend_handle.clone(),

@@ -4874,6 +4874,10 @@ sv = "Använd operativsystemets titlebar"
 ru = "Использовать системный заголовок окна"
 fr = "Utiliser la barre de titre du système d'exploitation"
 it = "Usa la barra del titolo del sistema operativo"
+[settings.appearance.window.settings_separate_window]
+en = "Open settings in a separate window"
+[settings.appearance.window.settings_separate_window_desc]
+en = "When off, settings open inside the main launcher window"
 [settings.appearance.window.use_os_titlebar_desc]
 en = "Use the default operating system titlebar instead of the custom titlebar (requires restart!)"
 tr = "Özel başlık çubuğu yerine işletim sisteminin varsayılan başlık çubuğunu kullan (yeniden başlatma gerekir!)"

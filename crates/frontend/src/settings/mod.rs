@@ -239,12 +239,13 @@ impl Render for SettingsRoot {
                     .overflow_x_hidden()
                     .whitespace_nowrap()
                     .child(version_icon.clone())
-                    .child(version)
                     .child(
-                        Button::new("changelog")
-                            .link()
-                            .small()
-                            .label(t::system::update::changelog::title())
+                        div()
+                            .id("version-changelog")
+                            .text_color(white())
+                            .underline()
+                            .cursor_pointer()
+                            .child(version)
                             .on_click({
                                 let embedded = self.embedded;
                                 move |_, window, cx| {

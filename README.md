@@ -1,41 +1,56 @@
-# Pandora Launcher
+<p align="center">
+  <img src="https://castled.codes/assets/PE/pe-banner.png" alt="Pandora Enhanced" width="100%">
+</p>
 
-Work in progress
+# Pandora Launcher Enhanced
+
+Pandora Launcher is a native Minecraft launcher focused on performance, a clean interface, and practical tools for managing instances and game content.
 
 ## Features
-- (Optional) sandboxing, to prevent mods from harming your system
-- Cross-instance file syncing (options, saves, etc.) (https://youtu.be/wb5EY2VsMKg)
-- Mod deduplication when installed through launcher (using reflinks or hard links)
+
+- Optional sandboxing to help prevent mods from harming your system
+- Cross-instance file syncing for options, saves, and other files
+- Mod deduplication using reflinks or hard links when available
 - Secure account credential management using platform keyrings
 - Uncapped live game log output
-- Content browser providing mods from Modrinth and CurseForge
-- Unique approach to modpack management (https://youtu.be/cdRVqd7b2BQ)
-- Native application (no Electron/Tauri)
-- No third-party metadata servers (no downtime, no delay when MC updates)
-- Automatic redaction of sensitive information (i.e. access tokens) in logs
+- Modrinth and CurseForge content browsing
+- Modpack management designed around fast, flexible workflows
+- Automatic redaction of sensitive information, including access tokens, in logs
+- Native application with no Electron or Tauri runtime
+- No third-party metadata servers
+
+## Screenshots
+
+### Quickplay
+
+![Pandora Enhanced Quickplay](https://castled.codes/assets/PE/quickplay.png)
+
+### Servers
+
+![Pandora Enhanced server list](https://castled.codes/assets/PE/servers.png)
+
+### Skins
+
+![Pandora Enhanced skins](https://castled.codes/assets/PE/skins.png)
+
+### Appearance settings
+
+![Pandora Enhanced appearance settings](https://castled.codes/assets/PE/settings.png)
 
 ## FAQ
 
-### Discord Server
+### Discord server
 
-https://discord.com/invite/pCKdCX6nYr
+Join the [Pandora Launcher Discord](https://discord.com/invite/pCKdCX6nYr).
 
-### Where can I suggest a feature/report a bug?
+### Where can I suggest a feature or report a bug?
 
-Please use GitHub issues.
+Please use [GitHub Issues](https://github.com/Moulberry/PandoraLauncher-Enhanced/issues).
 
-### Why should I use Pandora over other launchers?
+### Why use Pandora?
 
-1. If you like one of the features above
-2. If you like the general design/ux of the launcher, personally I find it very easy to use
-3. The launcher is designed to be performant, from storage space to cpu and memory usage
+Pandora is built for people who value its instance and content management features, its straightforward interface, and its focus on storage, CPU, and memory efficiency.
 
 ### Will Pandora be monetized?
 
-Unlikely, for a few reasons:
-- I believe that it is wrong for launchers to be monetized without distributing revenue back to mod creators that give the launcher value in the first place. Since I don't have the infrastructure to be able to redistribute revenue to mod creators, this is a big barrier.
-- Dealing with monetization takes a lot of (ongoing) work, probably more work than creating the launcher itself.
-- I personally dislike advertisements.
-
-## Instance Page
-![Instance Page](https://raw.githubusercontent.com/Moulberry/PandoraLauncher/refs/heads/master/screenshots/instance.png)
+Unlikely. Monetization would require ongoing work, and we believe revenue should be shared with the mod creators who make the launcher useful. We also prefer an ad-free experience.

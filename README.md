@@ -2,8 +2,6 @@
   <img src="https://castled.codes/assets/PE/pe-banner.png" alt="Pandora Enhanced" width="100%">
 </p>
 
-# Pandora Launcher Enhanced
-
 Pandora Launcher is a native Minecraft launcher focused on performance, a clean interface, and practical tools for managing instances and game content.
 
 ## Features

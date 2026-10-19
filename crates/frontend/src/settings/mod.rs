@@ -249,10 +249,16 @@ impl Render for SettingsRoot {
                             .on_click({
                                 let embedded = self.embedded;
                                 move |_, window, cx| {
-                                    crate::root::show_in_main_window(PageType::Changelog, cx);
-                                    // Some window managers won't bring the main window forward when
-                                    // asked, and this one would be in front of the changelog
-                                    if !embedded {
+                                    if embedded {
+                                        // Defer routing because this click comes from Settings, a
+                                        // child entity of LauncherUI, which owns the page switch.
+                                        window.defer(cx, |window, cx| {
+                                            crate::root::switch_page(PageType::Changelog, &[], window, cx);
+                                        });
+                                    } else {
+                                        crate::root::show_in_main_window(PageType::Changelog, cx);
+                                        // Some window managers won't bring the main window forward
+                                        // when asked, and this one would be in front of the changelog.
                                         window.remove_window();
                                     }
                                 }

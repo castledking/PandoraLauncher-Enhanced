@@ -824,10 +824,18 @@ impl Settings {
 }
 
 pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut App) {
-    if !InterfaceConfig::get(cx).settings_separate_window {
-        crate::root::show_in_main_window(PageType::Settings, cx);
+    let separate_window = InterfaceConfig::get(cx).settings_separate_window;
+    log::debug!("[settings-open] Settings button activated; separate_window={separate_window}");
+    if !separate_window {
+        log::debug!("[settings-open] Scheduling embedded Settings page after the current UI event");
+        main_window.defer(cx, |window, cx| {
+            log::debug!("[settings-open] Deferred embedded Settings page route running");
+            crate::root::switch_page(PageType::Settings, &[], window, cx);
+            log::debug!("[settings-open] Main window page after switch: {:?}", InterfaceConfig::get(cx).main_page);
+        });
         return;
     }
+    log::debug!("[settings-open] Looking for an existing separate Settings window");
     let existing = cx.windows().into_iter().find_map(|w| {
         let root = w.downcast::<Root>()?;
         if !root.read(cx).ok()?.view().clone().downcast::<SettingsRoot>().is_ok() {

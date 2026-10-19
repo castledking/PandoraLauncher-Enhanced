@@ -80,6 +80,7 @@ pub struct InstanceSettingsSubpage {
     disable_file_syncing: bool,
     sandbox_available: bool,
     sandbox: bool,
+    skip_integrity_checks: bool,
 
     memory_override_enabled: bool,
     memory_min_input_state: Entity<InputState>,
@@ -145,6 +146,7 @@ impl InstanceSettingsSubpage {
         let account = entry.configuration.preferred_account;
         let disable_file_syncing = entry.configuration.disable_file_syncing;
         let sandbox = entry.configuration.sandbox;
+        let skip_integrity_checks = entry.configuration.skip_integrity_checks;
 
         let sandbox_available = if cfg!(target_os = "linux") {
             command::is_command_available("bwrap") && command::is_command_available("xdg-dbus-proxy")
@@ -294,6 +296,7 @@ impl InstanceSettingsSubpage {
             disable_file_syncing,
             sandbox_available,
             sandbox,
+            skip_integrity_checks,
             memory_override_enabled: memory.enabled,
             memory_min_input_state,
             memory_max_input_state,
@@ -1270,6 +1273,26 @@ impl Render for InstanceSettingsSubpage {
                             })),
                     )
                     .child(Textarea::new(&self.wrapper_command_input_state).disabled(!wrapper_command_enabled)),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Checkbox::new("skip_integrity_checks")
+                            .label(t::instance::skip_integrity_checks())
+                            .checked(self.skip_integrity_checks)
+                            .on_click(cx.listener(|page, value, _, cx| {
+                                if page.skip_integrity_checks != *value {
+                                    page.skip_integrity_checks = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceSkipIntegrityChecks {
+                                        id: page.instance_id,
+                                        skip_integrity_checks: *value,
+                                    });
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .child(div().text_xs().opacity(0.6).child(t::instance::skip_integrity_checks_desc())),
             );
 
         #[cfg(target_os = "linux")]

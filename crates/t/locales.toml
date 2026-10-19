@@ -2632,6 +2632,10 @@ it = "Seleziona il binario JVM"
 en = "Override Java Runtime"
 [instance.java_runtime_desc]
 en = "Run on one of Minecraft's own Java runtimes instead of the one this version asks for. The runtime is downloaded on first use."
+[instance.skip_integrity_checks]
+en = "Skip Integrity Checks"
+[instance.skip_integrity_checks_desc]
+en = "Launch faster by using the game files already downloaded as they are, instead of checking every one of them. Missing files are still downloaded."
 [server.settings.java_runtime]
 en = "Override Java Runtime"
 [server.settings.java_runtime_desc]

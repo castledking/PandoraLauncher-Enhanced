@@ -256,6 +256,16 @@ impl BackendState {
                     });
                 }
             },
+            MessageToBackend::SetInstanceSkipIntegrityChecks {
+                id,
+                skip_integrity_checks,
+            } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.skip_integrity_checks = skip_integrity_checks;
+                    });
+                }
+            },
             MessageToBackend::SetInstanceMemory { id, memory } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {

@@ -190,9 +190,18 @@ impl Launcher {
             modal_action,
             launch_tracker,
         );
-        let load_assets_future =
-            self.load_assets(&self.meta, http_client, &dot_minecraft_path, &version_info, modal_action, launch_tracker);
-        let load_libraries_future = self.load_libraries(http_client, &artifacts, modal_action, launch_tracker);
+        let file_check = FileCheck::for_instance(&instance_info);
+        let load_assets_future = self.load_assets(
+            &self.meta,
+            http_client,
+            &dot_minecraft_path,
+            &version_info,
+            file_check,
+            modal_action,
+            launch_tracker,
+        );
+        let load_libraries_future =
+            self.load_libraries(http_client, &artifacts, file_check, modal_action, launch_tracker);
         let load_log_configuration = self.load_log_configuration(http_client, version_info.logging.as_ref());
 
         log::debug!("Loading java, assets, libraries and log configuration");
@@ -569,7 +578,13 @@ impl Launcher {
             modal_action,
             launch_tracker,
         );
-        let load_installer_library_future = self.load_libraries(http_client, artifacts, modal_action, launch_tracker);
+        let load_installer_library_future = self.load_libraries(
+            http_client,
+            artifacts,
+            FileCheck::for_instance(instance_info),
+            modal_action,
+            launch_tracker,
+        );
 
         let (artifact_load_result, java_load_result) = futures::future::try_join(
             load_installer_library_future.map_err(LaunchError::from),
@@ -732,7 +747,14 @@ impl Launcher {
             })
             .collect::<Vec<_>>();
 
-        self.load_libraries(http_client, &libraries, modal_action, launch_tracker).await?;
+        self.load_libraries(
+            http_client,
+            &libraries,
+            FileCheck::for_instance(instance_info),
+            modal_action,
+            launch_tracker,
+        )
+        .await?;
 
         let forge_temp = self.directories.temp_dir.join("forge_installer");
 
@@ -962,7 +984,14 @@ impl Launcher {
                 })
                 .collect::<Vec<_>>();
 
-            self.load_libraries(http_client, &libraries, modal_action, launch_tracker).await?;
+            self.load_libraries(
+                http_client,
+                &libraries,
+                FileCheck::for_instance(instance_info),
+                modal_action,
+                launch_tracker,
+            )
+            .await?;
         }
 
         Ok((Arc::new(version.apply_to(&base_version)), AddVanillaJar::Yes))
@@ -1183,17 +1212,27 @@ impl Launcher {
             })
             .await?;
 
+        let file_check = FileCheck::for_instance(configuration);
         let initial_title = if fresh_install {
             "Downloading Java Runtime"
         } else {
-            "Verifying integrity of Java Runtime"
+            match file_check {
+                FileCheck::Hash => "Verifying integrity of Java Runtime",
+                FileCheck::Size => "Checking Java Runtime",
+            }
         };
 
         let java_runtime_tracker = modal_action.push_tracker(initial_title.into());
 
-        let result =
-            do_java_runtime_load(http_client, runtime_component_dir, fresh_install, runtime, &java_runtime_tracker)
-                .await;
+        let result = do_java_runtime_load(
+            http_client,
+            runtime_component_dir,
+            fresh_install,
+            runtime,
+            file_check,
+            &java_runtime_tracker,
+        )
+        .await;
 
         java_runtime_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
 
@@ -1208,6 +1247,7 @@ impl Launcher {
         http_client: &reqwest::Client,
         game_dir: &Arc<Path>,
         version_info: &MinecraftVersion,
+        file_check: FileCheck,
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
     ) -> Result<String, LoadAssetObjectsError> {
@@ -1221,7 +1261,10 @@ impl Launcher {
             })
             .await?;
 
-        let initial_title = Arc::from("Verifying integrity of game assets");
+        let initial_title = Arc::from(match file_check {
+            FileCheck::Hash => "Verifying integrity of game assets",
+            FileCheck::Size => "Checking game assets",
+        });
         let assets_tracker = modal_action.push_tracker(initial_title);
 
         let assets_dir = if assets_index.map_to_resources == Some(true) {
@@ -1232,7 +1275,7 @@ impl Launcher {
             self.directories.assets_objects_dir.clone()
         };
 
-        let result = do_asset_objects_load(http_client, assets_index, assets_dir, &assets_tracker).await;
+        let result = do_asset_objects_load(http_client, assets_index, assets_dir, file_check, &assets_tracker).await;
 
         assets_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
 
@@ -1247,14 +1290,24 @@ impl Launcher {
         &self,
         http_client: &reqwest::Client,
         artifacts: &[GameLibraryArtifact],
+        file_check: FileCheck,
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
     ) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
-        let initial_title = Arc::from("Verifying integrity of game libraries");
+        let initial_title = Arc::from(match file_check {
+            FileCheck::Hash => "Verifying integrity of game libraries",
+            FileCheck::Size => "Checking game libraries",
+        });
         let libraries_tracker = modal_action.push_tracker(initial_title);
 
-        let result =
-            do_libraries_load(http_client, artifacts, self.directories.libraries_dir.clone(), &libraries_tracker).await;
+        let result = do_libraries_load(
+            http_client,
+            artifacts,
+            self.directories.libraries_dir.clone(),
+            file_check,
+            &libraries_tracker,
+        )
+        .await;
 
         libraries_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
 
@@ -1632,11 +1685,43 @@ pub enum LoadJavaRuntimeError {
     UnableToFindExternalBinary(u32, Vec<u32>),
 }
 
+/// How the files a launch needs, already downloaded, are checked before they're used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileCheck {
+    /// Every file is hashed, and one that doesn't match is downloaded again.
+    Hash,
+    /// A file that's there at the size it should be is used as it is. What's missing or the wrong
+    /// size is still downloaded and hashed. For an instance that skips integrity checks, where
+    /// hashing the runtime, every asset and every library on each launch is too slow.
+    Size,
+}
+
+impl FileCheck {
+    pub(crate) fn for_instance(configuration: &InstanceConfiguration) -> Self {
+        if configuration.skip_integrity_checks {
+            FileCheck::Size
+        } else {
+            FileCheck::Hash
+        }
+    }
+
+    /// Whether the file at `path` can be used without downloading it again. Blocks on the disk.
+    fn is_usable(self, path: &Path, expected_hash: [u8; 20], expected_size: Option<u32>) -> bool {
+        match self {
+            FileCheck::Hash => crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false),
+            FileCheck::Size => std::fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && expected_size.is_none_or(|size| metadata.len() == u64::from(size))
+            }),
+        }
+    }
+}
+
 async fn do_java_runtime_load(
     http_client: &reqwest::Client,
     runtime_component_dir: PathBuf,
     fresh_install: bool,
     runtime: Arc<JavaRuntimeComponentManifest>,
+    file_check: FileCheck,
     java_runtime_tracker: &ProgressTracker,
 ) -> Result<PathBuf, LoadJavaRuntimeError> {
     let mut links = HashMap::new();
@@ -1676,12 +1761,12 @@ async fn do_java_runtime_load(
                 let task = async move {
                     let valid_hash_on_disk = {
                         let path = path.clone();
+                        let size = downloads.raw.size;
                         let permit = disk_semaphore.acquire().await.unwrap();
-                        let result = tokio::task::spawn_blocking(move || {
-                            crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
-                        })
-                        .await
-                        .unwrap();
+                        let result =
+                            tokio::task::spawn_blocking(move || file_check.is_usable(&path, expected_hash, Some(size)))
+                                .await
+                                .unwrap();
                         drop(permit);
                         result
                     };
@@ -1848,6 +1933,7 @@ async fn do_asset_objects_load(
     http_client: &reqwest::Client,
     assets_index: Arc<AssetsIndex>,
     assets_objects_dir: Arc<Path>,
+    file_check: FileCheck,
     assets_tracker: &ProgressTracker,
 ) -> Result<(), LoadAssetObjectsError> {
     // Limit max concurrent connections to 8 to avoid ratelimiting issues
@@ -1882,12 +1968,12 @@ async fn do_asset_objects_load(
         let task = async move {
             let valid_hash_on_disk = {
                 let path = path.clone();
+                let size = asset.size;
                 let permit = disk_semaphore.acquire().await.unwrap();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
-                })
-                .await
-                .unwrap();
+                let result =
+                    tokio::task::spawn_blocking(move || file_check.is_usable(&path, expected_hash, Some(size)))
+                        .await
+                        .unwrap();
                 drop(permit);
                 result
             };
@@ -1963,6 +2049,7 @@ async fn do_libraries_load(
     http_client: &reqwest::Client,
     artifacts: &[GameLibraryArtifact],
     libraries_dir: Arc<Path>,
+    file_check: FileCheck,
     libraries_tracker: &ProgressTracker,
 ) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
     // Limit max concurrent connections to 8 to avoid ratelimiting issues
@@ -2007,12 +2094,12 @@ async fn do_libraries_load(
         let task = async move {
             let valid_hash_on_disk = if let Some(expected_hash) = expected_hash {
                 let artifact_path = artifact_path.clone();
+                let size = artifact.size;
                 let permit = disk_semaphore.acquire().await.unwrap();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::fs::check_sha1_hash(&artifact_path, expected_hash).unwrap_or(false)
-                })
-                .await
-                .unwrap();
+                let result =
+                    tokio::task::spawn_blocking(move || file_check.is_usable(&artifact_path, expected_hash, size))
+                        .await
+                        .unwrap();
                 drop(permit);
                 result
             } else {
@@ -2795,5 +2882,58 @@ mod tests {
     fn a_version_name_without_a_number_sorts_last_rather_than_panicking() {
         assert_eq!(java_major_version("ea"), 0);
         assert_eq!(java_major_version(""), 0);
+    }
+
+    mod file_check {
+        use std::path::PathBuf;
+
+        use sha1::{Digest, Sha1};
+
+        use super::super::FileCheck;
+
+        fn scratch(name: &str) -> PathBuf {
+            let dir = std::env::temp_dir().join(format!("pandora-file-check-{}-{name}", std::process::id()));
+            _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        fn sha1(bytes: &[u8]) -> [u8; 20] {
+            Sha1::digest(bytes).into()
+        }
+
+        #[test]
+        fn hashing_catches_a_file_changed_in_place() {
+            let dir = scratch("hash");
+            let path = dir.join("asset");
+            std::fs::write(&path, b"original").unwrap();
+            let expected = sha1(b"original");
+
+            assert!(FileCheck::Hash.is_usable(&path, expected, Some(8)));
+            // Same size, different contents: only hashing notices
+            std::fs::write(&path, b"tampered").unwrap();
+            assert!(!FileCheck::Hash.is_usable(&path, expected, Some(8)));
+            assert!(FileCheck::Size.is_usable(&path, expected, Some(8)));
+
+            _ = std::fs::remove_dir_all(dir);
+        }
+
+        #[test]
+        fn skipping_still_fetches_what_is_missing_or_cut_short() {
+            let dir = scratch("size");
+            let path = dir.join("library.jar");
+            let expected = sha1(b"0123456789");
+
+            assert!(!FileCheck::Size.is_usable(&path, expected, Some(10)), "a missing file");
+            std::fs::write(&path, b"01234").unwrap();
+            assert!(!FileCheck::Size.is_usable(&path, expected, Some(10)), "a download that stopped halfway");
+            std::fs::write(&path, b"0123456789").unwrap();
+            assert!(FileCheck::Size.is_usable(&path, expected, Some(10)));
+            // Some libraries come without a size, and then being there is all there is to go on
+            assert!(FileCheck::Size.is_usable(&path, expected, None));
+            assert!(!FileCheck::Size.is_usable(&dir, expected, None), "a folder where the file should be");
+
+            _ = std::fs::remove_dir_all(dir);
+        }
     }
 }

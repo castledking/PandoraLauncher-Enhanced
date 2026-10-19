@@ -372,7 +372,6 @@ fn create_java_runtime_widget() -> SettingItemWidget {
         let java_runtime = backend.java_runtime.clone().unwrap_or_default();
         let selected = java_runtime.component.clone();
 
-        let entity = cx.entity();
         let mut created = false;
         let state = window.use_keyed_state("default-java-runtime", cx, |window, cx| {
             created = true;
@@ -380,21 +379,19 @@ fn create_java_runtime_widget() -> SettingItemWidget {
         });
 
         if created {
-            let backend_handle = cx.update_entity(&entity, |root, _| root.backend_handle.clone());
-            let window_handle = window.window_handle();
-
-            let task = cx.spawn({
+            // Deferred, because this runs while the settings root is being rendered, so it's
+            // already being updated, and updating it again from here panics
+            cx.defer_in(window, {
                 let state = state.clone();
-                async move |_, cx| {
-                    let runtimes = java_runtime_picker::request_runtimes(&backend_handle).await.unwrap_or_default();
-                    _ = cx.update_window(window_handle, |_, window, cx| {
-                        java_runtime_picker::fill_select(&state, &runtimes, window, cx);
+                move |root, window, cx| {
+                    let backend_handle = root.backend_handle.clone();
+                    // Kept on the root, since dropping a task cancels it
+                    root._java_runtimes_task = cx.spawn_in(window, async move |_, cx| {
+                        let runtimes = java_runtime_picker::request_runtimes(&backend_handle).await.unwrap_or_default();
+                        _ = cx.update(|window, cx| java_runtime_picker::fill_select(&state, &runtimes, window, cx));
                     });
                 }
             });
-
-            // The task has to outlive this render, since dropping one cancels it
-            cx.update_entity(&entity, |root, _| root._java_runtimes_task = task);
 
             cx.subscribe(&state, |root, _, event: &SelectEvent<_>, cx| {
                 let SelectEvent::Confirm(Some(component)) = event else {

@@ -45,7 +45,7 @@ Join the [Pandora Launcher Discord](https://discord.com/invite/pCKdCX6nYr).
 
 ### Where can I suggest a feature or report a bug?
 
-Please use [GitHub Issues](https://github.com/Moulberry/PandoraLauncher-Enhanced/issues).
+Please use [GitHub Issues](https://github.com/castledking/PandoraLauncher-Enhanced/issues).
 
 ### Why use Pandora?
 

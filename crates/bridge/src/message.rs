@@ -141,6 +141,10 @@ pub enum MessageToBackend {
         id: InstanceID,
         sandbox: bool,
     },
+    SetInstanceSkipIntegrityChecks {
+        id: InstanceID,
+        skip_integrity_checks: bool,
+    },
     SetInstanceMemory {
         id: InstanceID,
         memory: InstanceMemoryConfiguration,

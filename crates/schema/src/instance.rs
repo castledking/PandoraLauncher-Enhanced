@@ -89,6 +89,14 @@ pub struct InstanceConfiguration {
     pub show_shader_tab: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub sandbox: bool, // Default sandbox to false when loading old configuration json
+    /// Use the game files already downloaded as they are, rather than hashing every one of them
+    /// on each launch. Anything missing or the wrong size is still downloaded and checked.
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub skip_integrity_checks: bool,
     #[serde(
         default,
         skip_serializing_if = "crate::skip_if_none",
@@ -139,6 +147,7 @@ impl InstanceConfiguration {
             created_shortcuts: Vec::new(),
             show_shader_tab: false,
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
+            skip_integrity_checks: false,
             group: None,
             server: None,
             preset: None,

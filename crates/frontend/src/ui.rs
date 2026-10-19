@@ -349,7 +349,9 @@ impl LauncherUI {
         Self {
             data: data.clone(),
             page,
-            update: None,
+            // Keep an available update visible if the main window was closed while a server
+            // kept the launcher process running.
+            update: crate::modals::update_prompt::pending_update(cx),
             sidebar_state,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),

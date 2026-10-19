@@ -22,9 +22,9 @@ use sha1::{Digest, Sha1};
 
 use crate::{HttpClientProvider, directories::LauncherDirectories};
 
-/// How long to wait between looking for updates. The launcher can stay open for days looking after
-/// a game or server, and only checking when it started missed every release in that time.
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
+/// How long to wait between looking for updates. A release can become available while the launcher
+/// is open, including after a temporary 404 while its assets are still being published.
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Set once an update is in place, after which there's nothing newer to find until the restart.
 static UPDATE_INSTALLED: AtomicBool = AtomicBool::new(false);

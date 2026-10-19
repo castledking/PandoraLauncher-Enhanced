@@ -64,9 +64,23 @@ impl Processor {
             return;
         };
 
-        _ = handle.update(cx, |_, window, cx| {
-            (func)(self, message, window, cx);
-        });
+        // The user can close the main window while a server keeps the backend alive. In that
+        // case the handle is still present but no longer updates, so retain the message for the
+        // next main window instead of silently dropping it.
+        let mut message = Some(message);
+        if handle
+            .update(cx, |_, window, cx| {
+                if let Some(message) = message.take() {
+                    (func)(self, message, window, cx);
+                }
+            })
+            .is_err()
+        {
+            self.main_window_handle = None;
+            if let Some(message) = message {
+                self.waiting_for_window.push(message);
+            }
+        }
     }
 
     /// Someone opening the launcher while this one runs means to open what's installed now. If

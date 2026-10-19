@@ -2,19 +2,47 @@ use std::{
     ffi::{OsStr, OsString},
     io::Cursor,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use base64::Engine;
 use bridge::{handle::FrontendHandle, launcher::LauncherKind, message::MessageToFrontend, modal_action::ModalAction};
 use rand::RngCore;
 use reqwest::StatusCode;
-use schema::pandora_update::{UpdateInstallType, UpdateManifest, UpdatePrompt};
+use schema::{
+    forge::VersionFragment,
+    pandora_update::{ReleaseNotes, UpdateInstallType, UpdateManifest, UpdatePrompt},
+};
+use serde::Deserialize;
 use sha1::{Digest, Sha1};
 
-use crate::directories::LauncherDirectories;
+use crate::{HttpClientProvider, directories::LauncherDirectories};
 
-pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandle) {
+/// How long to wait between looking for updates. The launcher can stay open for days looking after
+/// a game or server, and only checking when it started missed every release in that time.
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
+
+/// Set once an update is in place, after which there's nothing newer to find until the restart.
+static UPDATE_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+pub async fn check_for_updates_periodically(http_client: HttpClientProvider, send: FrontendHandle) {
+    // Problems are only reported for the check at startup. A later one failing because the
+    // connection dropped for a moment isn't worth interrupting a game for
+    let mut quiet = false;
+    loop {
+        if !UPDATE_INSTALLED.load(Ordering::Relaxed) {
+            check_for_updates(http_client.redirecting(), send.clone(), quiet).await;
+        }
+        quiet = true;
+        tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+    }
+}
+
+pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandle, quiet: bool) {
     if option_env!("PANDORA_UPDATE_PUBKEY").is_none() {
         return;
     }
@@ -23,7 +51,9 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
         log::warn!("Skipping update check because PANDORA_RELEASE_VERSION isn't set");
 
         #[cfg(not(debug_assertions))] // Don't show error in non-release builds
-        send.send_warning("Unable to check for updates, missing PANDORA_RELEASE_VERSION");
+        if !quiet {
+            send.send_warning("Unable to check for updates, missing PANDORA_RELEASE_VERSION");
+        }
         return;
     };
 
@@ -31,11 +61,19 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
         log::warn!("Skipping update check because GITHUB_REPOSITORY_URL isn't set");
 
         #[cfg(not(debug_assertions))] // Don't show error in non-release builds
-        send.send_warning("Unable to check for updates, missing GITHUB_REPOSITORY_URL");
+        if !quiet {
+            send.send_warning("Unable to check for updates, missing GITHUB_REPOSITORY_URL");
+        }
         return;
     };
 
-    let current_version = schema::forge::VersionFragment::string_to_parts(version);
+    let report_error = |message: String| {
+        if !quiet {
+            send.send_error(message);
+        }
+    };
+
+    let current_version = VersionFragment::string_to_parts(version);
 
     let manifest_names = [
         format!("update_{}.json", std::env::consts::OS),
@@ -52,7 +90,7 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
             Ok(response) => response,
             Err(err) => {
                 log::error!("Error while requesting update manifest: {}", err);
-                send.send_error("Unable to fetch Pandora update manifest, see logs for more details");
+                report_error("Unable to fetch Pandora update manifest, see logs for more details".into());
                 return;
             },
         };
@@ -66,7 +104,7 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
             Ok(manifest_bytes) => Some(manifest_bytes),
             Err(err) => {
                 log::error!("Error while downloading update manifest: {}", err);
-                send.send_error("Unable to download Pandora update manifest, see logs for more details");
+                report_error("Unable to download Pandora update manifest, see logs for more details".into());
                 return;
             },
         };
@@ -74,7 +112,8 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
     }
 
     let Some(manifest_bytes) = manifest_bytes else {
-        send.send_error(format!(
+        log::error!("Unable to fetch update manifest: {:?}", last_status);
+        report_error(format!(
             "Unable to fetch Pandora update manifest, non-200 status code: {}",
             last_status.unwrap_or(StatusCode::NOT_FOUND)
         ));
@@ -85,12 +124,12 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
         Ok(manifest) => manifest,
         Err(err) => {
             log::error!("Error while parsing update manifest: {}", err);
-            send.send_error("Unable to parse update manifest, see logs for more details");
+            report_error("Unable to parse update manifest, see logs for more details".into());
             return;
         },
     };
 
-    let update_version = schema::forge::VersionFragment::string_to_parts(&manifest.version);
+    let update_version = VersionFragment::string_to_parts(&manifest.version);
 
     if current_version >= update_version {
         log::info!("Pandora is up-to-date");
@@ -135,6 +174,77 @@ pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandl
     });
 }
 
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: Arc<str>,
+    name: Option<Arc<str>>,
+    body: Option<Arc<str>>,
+    published_at: Option<Arc<str>>,
+    html_url: Arc<str>,
+    #[serde(default)]
+    draft: bool,
+}
+
+/// The notes of every release, newest first. They come from the GitHub releases, the same place
+/// the updates themselves do.
+pub async fn fetch_release_notes(http_client: reqwest::Client) -> Result<Arc<[ReleaseNotes]>, Arc<str>> {
+    let Some(repository_url) = option_env!("GITHUB_REPOSITORY_URL") else {
+        return Err("This build doesn't know where its releases are published".into());
+    };
+    let Some(repository) = repository_url.strip_prefix("https://github.com/") else {
+        return Err(format!("Release notes can only be fetched from GitHub, not {repository_url}").into());
+    };
+
+    // GitHub hands them out 100 at a time
+    let mut releases: Vec<GithubRelease> = Vec::new();
+    for page in 1..=5 {
+        let url = format!("https://api.github.com/repos/{repository}/releases?per_page=100&page={page}");
+        let response = http_client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|err| {
+                log::error!("Error while requesting release notes: {err}");
+                Arc::<str>::from(format!("Unable to fetch the release notes: {err}"))
+            })?;
+        let page: Vec<GithubRelease> = response.json().await.map_err(|err| {
+            log::error!("Error while reading release notes: {err}");
+            Arc::<str>::from(format!("Unable to read the release notes: {err}"))
+        })?;
+
+        let last_page = page.len() < 100;
+        releases.extend(page);
+        if last_page {
+            break;
+        }
+    }
+
+    let mut notes: Vec<(Vec<VersionFragment>, ReleaseNotes)> = releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .map(|release| {
+            let version = release.tag_name.trim_start_matches('v');
+            let notes = ReleaseNotes {
+                version: version.into(),
+                title: release.name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| version.into()),
+                published: release.published_at.map(|date| date.get(..10).unwrap_or(&date).into()),
+                url: release.html_url,
+                body: release.body.unwrap_or_default(),
+            };
+            (VersionFragment::string_to_parts(version), notes)
+        })
+        .collect();
+
+    if notes.is_empty() {
+        return Err("No releases were found".into());
+    }
+
+    notes.sort_by(|(a, _), (b, _)| b.cmp(a));
+    Ok(notes.into_iter().map(|(_, notes)| notes).collect())
+}
+
 fn determine_update_install_type() -> Option<UpdateInstallType> {
     let install = bridge::launcher::current();
 
@@ -159,7 +269,10 @@ pub async fn install_update(
     let version = update.new_version.clone();
 
     match install_update_inner(http_client, dirs, update, modal_action.clone()).await {
-        Ok(relaunch) => send.send(MessageToFrontend::UpdateInstalled { version, relaunch }),
+        Ok(relaunch) => {
+            UPDATE_INSTALLED.store(true, Ordering::Relaxed);
+            send.send(MessageToFrontend::UpdateInstalled { version, relaunch });
+        },
         Err(error) => modal_action.set_finished_with_error(error),
     }
 

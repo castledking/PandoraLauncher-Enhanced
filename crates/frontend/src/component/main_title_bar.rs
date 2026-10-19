@@ -22,32 +22,24 @@ pub struct MainTitleBar {
 impl RenderOnce for MainTitleBar {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let update_button = self.update.map(|update| {
-            let button = Button::new("update").success().compact().small().ml_2();
-
-            match update {
-                PendingUpdate::Available(update) => {
-                    button.label(t::system::update::available()).icon(PandoraIcon::Download).on_click({
-                        let send = self.data.backend_handle.clone();
-                        move |_, window, cx| {
-                            crate::modals::update_prompt::open_update_prompt(update.clone(), send.clone(), window, cx);
-                        }
-                    })
-                },
-                PendingUpdate::Restart(restart) => {
-                    button.label(t::system::update::restart::button()).icon(PandoraIcon::Download).on_click({
-                        let data = self.data.clone();
-                        move |_, window, cx| {
-                            crate::modals::update_prompt::open_restart_prompt(
-                                restart.clone(),
-                                data.clone(),
-                                window,
-                                cx,
-                            );
-                        }
-                    })
-                },
-            }
-            .into_any_element()
+            let label = match update {
+                PendingUpdate::Available(_) => t::system::update::available(),
+                PendingUpdate::Restart(_) => t::system::update::restart::button(),
+            };
+            Button::new("update")
+                .success()
+                .compact()
+                .small()
+                .ml_2()
+                .label(label)
+                .icon(PandoraIcon::Download)
+                .on_click({
+                    let data = self.data.clone();
+                    move |_, window, cx| {
+                        crate::modals::update_prompt::open_update_dialog(update.clone(), &data, window, cx);
+                    }
+                })
+                .into_any_element()
         });
 
         TitleBar {

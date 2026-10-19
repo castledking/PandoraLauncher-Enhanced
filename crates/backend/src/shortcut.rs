@@ -24,13 +24,6 @@ fn normalize_shortcut_path(mut path: PathBuf) -> PathBuf {
     path
 }
 
-pub fn known_shortcut_filenames(instance_name: &str) -> [String; 2] {
-    [
-        format!("{instance_name}.{}", shortcut_extension()),
-        format!("Launch {instance_name}.{}", shortcut_extension()),
-    ]
-}
-
 fn maybe_rename_shortcut_path(path: &Path, old_instance_name: &str, new_instance_name: &str) -> PathBuf {
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
         return path.to_path_buf();

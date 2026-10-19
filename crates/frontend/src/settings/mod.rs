@@ -3,7 +3,9 @@ use std::{path::Path, rc::Rc, sync::Arc};
 use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Root, StyledExt, WindowExt, h_flex,
+    ActiveTheme, Root, Sizable, StyledExt, WindowExt,
+    button::{Button, ButtonVariants},
+    h_flex,
     input::{Input, InputEvent, InputState},
     notification::{Notification, NotificationType},
     separator::Separator,
@@ -27,6 +29,7 @@ use crate::{
     entity::DataEntities,
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
+    ui::PageType,
 };
 
 mod appearance;
@@ -183,11 +186,6 @@ impl SettingsRoot {
 impl Render for SettingsRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or("Dev");
-        let version_string = if let Some(git_rev) = option_env!("GIT_REVISION") {
-            SharedString::new(format!("{} ({})", version, git_rev))
-        } else {
-            version.into()
-        };
         let version_icon = if version == "Dev" {
             PandoraIcon::GitBranch
         } else {
@@ -202,7 +200,27 @@ impl Render for SettingsRoot {
             .child(Input::new(&self.search_state).prefix(PandoraIcon::Search).w_full())
             .children(self.render_sidebar_items(cx))
             .child(div().flex_1())
-            .child(h_flex().text_sm().gap_2().child(version_icon.clone()).child(version_string.clone()));
+            .child(
+                h_flex()
+                    .text_sm()
+                    .gap_2()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .child(version_icon.clone())
+                    .child(version)
+                    .child(
+                        Button::new("changelog")
+                            .link()
+                            .small()
+                            .label(t::system::update::changelog::title())
+                            .on_click(|_, window, cx| {
+                                crate::root::show_in_main_window(PageType::Changelog, cx);
+                                // Some window managers won't bring the main window forward when
+                                // asked, and this one would be in front of the changelog
+                                window.remove_window();
+                            }),
+                    ),
+            );
 
         let left_content = if let Some(selected_page) = self.settings.selected_page {
             vec![(self.settings.pages[selected_page].title)().into_any_element()]

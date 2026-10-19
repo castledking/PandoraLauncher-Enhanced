@@ -6,7 +6,7 @@ use std::sync::{
 use bridge::{handle::BackendHandle, instance::InstanceID};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable, WindowExt,
+    ActiveTheme, Disableable, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
     v_flex,
@@ -25,6 +25,7 @@ pub fn open_delete_instance(
     let title: SharedString = t::instance::delete_dialog::title(&instance_name).into();
     let warning_message: SharedString = t::instance::delete_dialog::warning(&instance_name).into();
     let confirm_message: SharedString = t::instance::delete_dialog::confirm_text(&instance_name).into();
+    let running_message: SharedString = t::instance::delete_dialog::running(&instance_name).into();
 
     let input_state = cx.new(|cx| InputState::new(window, cx));
 
@@ -37,8 +38,14 @@ pub fn open_delete_instance(
         }
     });
 
-    window.open_dialog(cx, move |dialog, _, _| {
+    // Deleting it closes it first, which is worth saying for a game someone's playing. Checked
+    // now, since the dialog is drawn while the launcher root is, which can't be read then
+    let running = crate::root::is_instance_running(instance, cx);
+
+    window.open_dialog(cx, move |dialog, _, cx| {
         let _ = &_input_subscription;
+
+        let running = running.then(|| div().text_color(cx.theme().warning).child(running_message.clone()));
 
         let stage_val = stage.load(Ordering::Relaxed);
         let correct = correct_name.load(Ordering::Relaxed);
@@ -95,6 +102,6 @@ pub fn open_delete_instance(
                 }
             })
             .title(title.clone())
-            .child(content)
+            .child(v_flex().gap_3().children(running).child(content))
     });
 }

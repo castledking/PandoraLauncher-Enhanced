@@ -268,7 +268,7 @@ impl Processor {
                         relaunch: relaunch.into(),
                         version: Some(version),
                     };
-                    update_prompt::offer_restart(restart, &processor.data, window, cx);
+                    update_prompt::update_installed(restart, &processor.data, window, cx);
                 });
             },
             MessageToFrontend::ManualCurseforgeDownloadsRequired { request: _ } => {

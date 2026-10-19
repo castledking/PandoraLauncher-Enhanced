@@ -27,6 +27,19 @@ pub struct UpdatePrompt {
     pub exe: UpdateManifestExe,
 }
 
+/// What changed in one release, as written in its GitHub release.
+#[derive(Debug, Clone)]
+pub struct ReleaseNotes {
+    pub version: Arc<str>,
+    pub title: Arc<str>,
+    /// The day it was released, as `YYYY-MM-DD`.
+    pub published: Option<Arc<str>>,
+    /// The release's page on GitHub.
+    pub url: Arc<str>,
+    /// Markdown.
+    pub body: Arc<str>,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct UpdateManifest {
     pub version: Arc<str>,

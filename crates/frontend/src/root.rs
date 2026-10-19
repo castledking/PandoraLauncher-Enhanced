@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 use bridge::{
     handle::BackendHandle,
     install::ContentInstall,
-    instance::{InstanceContentID, InstanceID},
+    instance::{InstanceContentID, InstanceID, InstanceStatus},
     message::{GameOutputMsg, MessageToBackend, QuickPlayLaunch},
     modal_action::ModalAction,
 };
@@ -34,6 +34,19 @@ pub struct LauncherRootGlobal {
 }
 
 impl Global for LauncherRootGlobal {}
+
+/// Whether the instance `id` is running, or launching or stopping. Not for use while drawing,
+/// which happens while the launcher root is being updated.
+pub fn is_instance_running(id: InstanceID, cx: &App) -> bool {
+    let Some(global) = cx.try_global::<LauncherRootGlobal>() else {
+        return false;
+    };
+    let instances = global.root.read(cx).data.instances.read(cx);
+    instances
+        .entries
+        .get(&id)
+        .is_some_and(|entry| entry.read(cx).status != InstanceStatus::NotRunning)
+}
 
 pub struct LauncherRoot {
     pub ui: Entity<LauncherUI>,
@@ -435,6 +448,30 @@ pub fn upload_log_file(path: Arc<Path>, backend_handle: &BackendHandle, window: 
 
     let title: SharedString = t::instance::logs::upload::title().into();
     modals::generic::show_modal(window, cx, title, t::instance::logs::upload::error().into(), modal_action);
+}
+
+/// Shows `page` in the main window and brings the window to the front, for windows beside it, such
+/// as the settings, that lead to one of its pages.
+pub fn show_in_main_window(page: PageType, cx: &mut App) {
+    let main_window = cx.windows().into_iter().find_map(|window| {
+        let root = window.downcast::<Root>()?;
+        root.read(cx).ok()?.view().clone().downcast::<LauncherRoot>().ok()?;
+        Some(root)
+    });
+    if let Some(main_window) = main_window {
+        _ = main_window.update(cx, |_, window, cx| {
+            switch_page(page, &[], window, cx);
+            window.activate_window();
+        });
+    }
+}
+
+pub fn go_back(window: &mut Window, cx: &mut App) {
+    cx.update_global::<LauncherRootGlobal, ()>(|global, cx| {
+        global.root.update(cx, |launcher_root, cx| {
+            launcher_root.ui.update(cx, |ui, cx| ui.go_back(window, cx));
+        });
+    });
 }
 
 pub fn switch_page(page: PageType, breadcrumbs: &[PageType], window: &mut Window, cx: &mut App) {

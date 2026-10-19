@@ -277,22 +277,26 @@ impl BackendState {
     ) -> bool {
         match from_target {
             WatchTarget::InstanceDir { id } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id)
+                let mut instance_state = self.instance_state.write();
+                if let Some(instance) = instance_state.instances.get_mut(id)
                     && from.parent() == to.parent()
                 {
                     let old_name = instance.name;
                     instance.on_root_renamed(self, to);
+                    let new_name = instance.name;
 
                     let mut file_watching = self.file_watching.write();
                     instance.rewatch_directories(&mut *file_watching);
                     file_watching.watch_filesystem(to.clone(), WatchTarget::InstanceDir { id });
                     drop(file_watching);
 
-                    // The old quickplay instance being carried over is the launcher's own doing
-                    if old_name != schema::quickplay::INSTANCE_NAME {
-                        self.send.send_info(format!("Instance '{}' renamed to '{}'", old_name, instance.name));
+                    // The old quickplay instance being carried over is the launcher's own doing,
+                    // and a rename that waited for the instance to stop already showed its name
+                    if old_name != schema::quickplay::INSTANCE_NAME && old_name != new_name {
+                        self.send.send_info(format!("Instance '{}' renamed to '{}'", old_name, new_name));
                     }
                     self.send.send(instance.create_modify_message());
+                    self.follow_instance_rename(&mut instance_state, id, &old_name, &new_name);
 
                     true
                 } else {

@@ -233,7 +233,7 @@ pub async fn duplicate_instance(
         modal_action.set_finished_with_error(format!("Unable to duplicate instance, name is invalid: {name}").into());
         return;
     }
-    if backend.instance_state.read().instances.iter().any(|i| i.name == name) {
+    if backend.instance_state.read().is_name_taken(name, None) {
         modal_action.set_finished_with_error("Unable to duplicate instance, name is already used".to_string().into());
         return;
     }

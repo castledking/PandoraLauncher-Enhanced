@@ -6,6 +6,7 @@
 //! [`std::env::current_exe`].
 
 use std::{
+    ffi::OsStr,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::OnceLock,
@@ -66,8 +67,14 @@ pub fn current() -> &'static LauncherInstall {
 }
 
 fn detect() -> LauncherInstall {
-    if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|appimage| !appimage.is_empty()) {
-        let appimage = PathBuf::from(appimage);
+    let executable = std::env::current_exe().unwrap_or_default();
+
+    let appimage = own_appimage(
+        &executable,
+        std::env::var_os("APPIMAGE").as_deref(),
+        std::env::var_os("APPDIR").as_deref(),
+    );
+    if let Some(appimage) = appimage {
         return LauncherInstall {
             kind: LauncherKind::AppImage,
             stamp: FileStamp::of(&appimage),
@@ -76,7 +83,6 @@ fn detect() -> LauncherInstall {
         };
     }
 
-    let executable = std::env::current_exe().unwrap_or_default();
     let stamp = FileStamp::of(&executable);
 
     if cfg!(target_os = "macos")
@@ -122,6 +128,17 @@ pub fn spawn_restart(executable: &Path) -> std::io::Result<()> {
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
 
     command.spawn().map(drop)
+}
+
+/// The AppImage the launcher is running from, going by the variables the AppImage runtime sets.
+/// They're only the launcher's own when it runs from inside the AppImage's mount. A launcher
+/// started from a terminal in some other AppImage inherits that one's, and taking them at their
+/// word would have updating write the launcher over that other app.
+fn own_appimage(executable: &Path, appimage: Option<&OsStr>, appdir: Option<&OsStr>) -> Option<PathBuf> {
+    let appimage = appimage.filter(|appimage| !appimage.is_empty())?;
+    let appdir = Path::new(appdir.filter(|appdir| !appdir.is_empty())?);
+    let appdir = std::fs::canonicalize(appdir).unwrap_or_else(|_| appdir.to_path_buf());
+    executable.starts_with(appdir).then(|| PathBuf::from(appimage))
 }
 
 /// Enough of a file's metadata to tell it apart from a file put in its place.
@@ -210,7 +227,37 @@ fn without_appdir_entries(value: &std::ffi::OsStr, appdir: &Path) -> Option<std:
 mod tests {
     use std::path::Path;
 
-    use super::macos_app_bundle;
+    use super::{macos_app_bundle, own_appimage};
+
+    #[test]
+    fn only_takes_the_appimage_it_runs_from() {
+        use std::ffi::OsStr;
+
+        let appimage = Some(OsStr::new("/home/me/Applications/Pandora.AppImage"));
+        let appdir = Some(OsStr::new("/tmp/.mount_PandorXyz"));
+
+        assert_eq!(
+            own_appimage(Path::new("/tmp/.mount_PandorXyz/usr/bin/PandoraLauncher"), appimage, appdir),
+            Some(Path::new("/home/me/Applications/Pandora.AppImage").to_path_buf())
+        );
+        // Started from a terminal inside another AppImage, whose variables it inherited
+        assert_eq!(
+            own_appimage(
+                Path::new("/home/me/pandora_launcher"),
+                Some(OsStr::new("/home/me/Applications/Editor.AppImage")),
+                Some(OsStr::new("/tmp/.mount_EditorAbc"))
+            ),
+            None
+        );
+        assert_eq!(
+            own_appimage(Path::new("/tmp/.mount_PandorXyz/usr/bin/PandoraLauncher"), appimage, None),
+            None
+        );
+        assert_eq!(
+            own_appimage(Path::new("/tmp/.mount_PandorXyz/usr/bin/PandoraLauncher"), Some(OsStr::new("")), appdir),
+            None
+        );
+    }
 
     #[test]
     fn finds_the_bundle_an_executable_is_in() {

@@ -72,6 +72,12 @@ pub struct Instance {
 
     pub frozen_mods_folder: bool,
     pub content_state: enum_map::EnumMap<ContentFolder, ContentFolderState>,
+
+    /// Set when the instance was renamed while running. `name` already has the new name, and the
+    /// folder is renamed to match once it stops, since the game has its folder open by path.
+    pub rename_folder_when_stopped: bool,
+    /// Set when the instance was deleted while running. It's stopped, then deleted once it has.
+    pub delete_when_stopped: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -148,6 +154,8 @@ impl Instance {
 
         self.name = path.file_name().unwrap().to_string_lossy().into_owned().into();
         self.root_path = path.into();
+        // Whatever moved it, the name now matches the folder again
+        self.rename_folder_when_stopped = false;
         self.configuration = Persistent::load_or(path.join("info_v1.json").into(), self.configuration.get().clone());
         self.stats = Persistent::load_or(path.join("stats_v1.json").into(), self.stats.get().clone());
 
@@ -864,6 +872,9 @@ impl Instance {
 
             frozen_mods_folder: false,
             content_state,
+
+            rename_folder_when_stopped: false,
+            delete_when_stopped: false,
         })
     }
 
@@ -993,6 +1004,20 @@ impl Instance {
 
     pub fn has_active_session(&self) -> bool {
         self.session_started_at.is_some()
+    }
+
+    /// Whether nothing is running from the instance's folder, so it can be moved or swapped about.
+    /// A launch in progress counts as running, since it's already working in the folder.
+    pub fn is_stopped(&self) -> bool {
+        self.processes.is_empty()
+            && self.closing_processes.is_empty()
+            && !self.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive())
+    }
+
+    /// The name of the instance's folder, which differs from `name` while a rename is waiting for
+    /// the instance to stop.
+    pub fn folder_name(&self) -> Option<&str> {
+        self.root_path.file_name().and_then(|name| name.to_str())
     }
 
     pub fn status(&self) -> InstanceStatus {

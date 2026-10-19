@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use bridge::{
     handle::BackendHandle,
-    instance::InstanceID,
+    instance::{InstanceID, InstanceStatus},
     message::{EmbeddedOrRaw, MessageToBackend},
     meta::MetadataRequest,
 };
@@ -861,6 +861,15 @@ impl Render for InstanceSettingsSubpage {
 
         let header = h_flex().gap_3().mb_1().ml_1().child(div().text_lg().child(t::settings::title()));
 
+        let (is_running, rename_pending) = {
+            let instance = self.instance.read(cx);
+            let folder_name = instance.root_path.file_name();
+            (
+                instance.status != InstanceStatus::NotRunning,
+                folder_name.is_some_and(|folder_name| folder_name != std::ffi::OsStr::new(instance.name.as_str())),
+            )
+        };
+
         let memory_override_enabled = self.memory_override_enabled;
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
@@ -887,28 +896,39 @@ impl Render for InstanceSettingsSubpage {
             .overflow_y_scrollbar()
             .child(crate::labelled(
                 t::instance::instance_name(),
-                h_flex().gap_2().child(Input::new(&self.new_name_input_state)).when(
-                    self.new_name_change_state != NewNameChangeState::NoChange,
-                    |this| {
-                        if self.new_name_change_state == NewNameChangeState::InvalidName {
-                            this.child(t::instance::invalid_name())
-                        } else {
-                            this.child(Button::new("setname").label(t::common::update()).on_click({
-                                let instance = self.instance.clone();
-                                let backend_handle = self.backend_handle.clone();
-                                let new_name = self.new_name_input_state.read(cx).value();
-                                move |_, _, cx| {
-                                    let instance = instance.read(cx);
-                                    let id = instance.id;
-                                    backend_handle.send(MessageToBackend::RenameInstance {
-                                        id,
-                                        name: new_name.as_str().into(),
-                                    });
-                                }
-                            }))
-                        }
-                    },
-                ),
+                v_flex()
+                    .gap_1()
+                    .child(h_flex().gap_2().child(Input::new(&self.new_name_input_state)).when(
+                        self.new_name_change_state != NewNameChangeState::NoChange,
+                        |this| {
+                            if self.new_name_change_state == NewNameChangeState::InvalidName {
+                                this.child(t::instance::invalid_name())
+                            } else {
+                                this.child(Button::new("setname").label(t::common::update()).on_click({
+                                    let instance = self.instance.clone();
+                                    let backend_handle = self.backend_handle.clone();
+                                    let new_name = self.new_name_input_state.read(cx).value();
+                                    move |_, _, cx| {
+                                        let instance = instance.read(cx);
+                                        let id = instance.id;
+                                        backend_handle.send(MessageToBackend::RenameInstance {
+                                            id,
+                                            name: new_name.as_str().into(),
+                                        });
+                                    }
+                                }))
+                            }
+                        },
+                    ))
+                    // Renamed while running, so the folder shown below still has the old name
+                    .when(rename_pending, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(t::instance::rename_pending()),
+                        )
+                    }),
             ))
             .child(crate::labelled(t::common::icon(), {
                 let mut row = h_flex().gap_2().child(
@@ -1370,35 +1390,39 @@ impl Render for InstanceSettingsSubpage {
             .overflow_y_scrollbar()
             .child(crate::labelled(
                 t::instance::folder(),
-                self.instance_root_label.button("relocate").on_click({
-                    let instance = self.instance.clone();
-                    let backend_handle = self.backend_handle.clone();
-                    move |_: &ClickEvent, _, cx| {
-                        let instance = instance.read(cx);
-                        let id = instance.id;
+                self.instance_root_label
+                    .button("relocate")
+                    .disabled(is_running)
+                    .when(is_running, |button| button.tooltip(t::instance::relocate_while_running()))
+                    .on_click({
+                        let instance = self.instance.clone();
+                        let backend_handle = self.backend_handle.clone();
+                        move |_: &ClickEvent, _, cx| {
+                            let instance = instance.read(cx);
+                            let id = instance.id;
 
-                        let receiver = cx.prompt_for_paths(PathPromptOptions {
-                            files: false,
-                            directories: true,
-                            multiple: false,
-                            prompt: Some(t::instance::select_empty_directory().into()),
-                        });
-                        let backend_handle = backend_handle.clone();
-                        cx.spawn(async move |_| {
-                            let Ok(Ok(Some(mut paths))) = receiver.await else {
-                                return;
-                            };
-                            if paths.is_empty() {
-                                return;
-                            }
-                            backend_handle.send(MessageToBackend::RelocateInstance {
-                                id,
-                                path: paths.swap_remove(0),
+                            let receiver = cx.prompt_for_paths(PathPromptOptions {
+                                files: false,
+                                directories: true,
+                                multiple: false,
+                                prompt: Some(t::instance::select_empty_directory().into()),
                             });
-                        })
-                        .detach();
-                    }
-                }),
+                            let backend_handle = backend_handle.clone();
+                            cx.spawn(async move |_| {
+                                let Ok(Ok(Some(mut paths))) = receiver.await else {
+                                    return;
+                                };
+                                if paths.is_empty() {
+                                    return;
+                                }
+                                backend_handle.send(MessageToBackend::RelocateInstance {
+                                    id,
+                                    path: paths.swap_remove(0),
+                                });
+                            })
+                            .detach();
+                        }
+                    }),
             ))
             .child(
                 Button::new("shortcut")

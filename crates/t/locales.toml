@@ -1632,10 +1632,50 @@ en = "Restart Now"
 en = "Pandora ${ver: &str} is installed. Restart the launcher to start using it."
 [system.update.restart.replaced]
 en = "Pandora was updated while it was running. Restart the launcher to start using the new version."
-[system.update.restart.instances_running]
-en = "Stop your running games and servers, then restart"
 [system.update.restart.error]
 en = "Unable to restart Pandora: ${err: std::io::Error}"
+[system.update.close_and_update]
+en = "Close Them and Update"
+[system.update.close_and_restart]
+en = "Close Them and Restart"
+[system.update.force_close]
+en = "Force Close"
+[system.update.running.update]
+en = "Updating restarts Pandora, so these are closed first:"
+[system.update.running.restart]
+en = "Restarting Pandora closes these first:"
+[system.update.running.waiting]
+en = "Waiting for these to close…"
+[system.update.running.game]
+en = "Game"
+[system.update.running.server]
+en = "Server"
+[system.update.running.launching]
+en = "Launching"
+[system.update.running.running]
+en = "Running"
+[system.update.running.closing]
+en = "Closing…"
+[system.update.changelog.view]
+en = "View Changelog"
+[system.update.changelog.title]
+en = "Changelog"
+[system.update.changelog.loading]
+en = "Loading release notes…"
+[system.update.changelog.error]
+en = "Unable to load the release notes"
+[system.update.changelog.open_github]
+en = "Open on GitHub"
+[system.update.changelog.technical]
+en = "Technical Details"
+[system.update.changelog.back]
+en = "Back"
+[system.update.changelog.new]
+en = "New"
+[system.update.changelog.installed]
+en = "Installed"
+[system.update.changelog.older]
+en = "Show Older Versions"
 [system.update.install_error]
 en = "Unable to install update"
 tr = "Güncelleme yüklenemedi"
@@ -2085,6 +2125,10 @@ sv = "Skapa en genväg"
 ru = "Создать ярлык"
 fr = "Créer un raccourci"
 it = "Crea collegamento"
+[instance.rename_pending]
+en = "The folder is renamed to match once this instance stops."
+[instance.relocate_while_running]
+en = "Close this instance before moving its folder"
 [instance.folder]
 en = "Instance Folder (click to relocate)"
 tr = "Profil Klasörü (değiştirmek için tıklayın)"
@@ -2832,6 +2876,8 @@ sv = "Föra att konfirmera, skriv '${name: &str}' i lådan under"
 ru = "Для подтверждения введите \"${name: &str}\" в поле ниже"
 fr = "Pour confirmer, saisissez '${name: &str}' dans le champ ci-dessous"
 it = "Per confermare, digita '${name: &str}' nella casella qui sotto"
+[instance.delete_dialog.running]
+en = "'${name: &str}' is running. It's closed first, then deleted."
 [instance.delete_dialog.warning]
 en = "This will permanently delete the '${name: &str}' instance and associated saves, resourcepacks, mods, configuration files, and more. These files will not be recoverable"
 tr = "'${name: &str}' profili ile ilişkili kayıtlar, kaynak paketleri, modlar, yapılandırma dosyaları ve diğer veriler kalıcı olarak silinecektir. Bu dosyalar kurtarılamaz"

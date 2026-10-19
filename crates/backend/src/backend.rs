@@ -287,6 +287,17 @@ pub struct BackendStateInstances {
     pub instances_generation: usize,
 }
 
+impl BackendStateInstances {
+    /// Whether an instance other than `except` goes by `name`, either as its name or as its
+    /// folder's. The two differ while a rename waits for the instance to stop, and until then
+    /// the old folder is just as much in use.
+    pub fn is_name_taken(&self, name: &str, except: Option<InstanceID>) -> bool {
+        self.instances.iter().any(|instance| {
+            Some(instance.id) != except && (instance.name == name || instance.folder_name() == Some(name))
+        })
+    }
+}
+
 pub struct BackendStateFileWatching {
     watcher: notify_debouncer_full::Debouncer<notify::RecommendedWatcher, notify_debouncer_full::RecommendedCache>,
     watching: HashMap<Arc<Path>, WatchTarget>,
@@ -348,8 +359,8 @@ impl BackendState {
     async fn start(self, recv: BackendReceiver, watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
         log::info!("Starting backend");
 
-        tokio::task::spawn(crate::update::check_for_updates(
-            self.http_client_provider.redirecting(),
+        tokio::task::spawn(crate::update::check_for_updates_periodically(
+            self.http_client_provider.clone(),
             self.send.clone(),
         ));
 
@@ -585,17 +596,23 @@ impl BackendState {
         self.send.send(MessageToFrontend::Quit);
     }
 
-    fn handle_tick(&self) {
+    fn handle_tick(self: &Arc<Self>) {
         self.meta.expire();
         self.mod_metadata_manager.write_changes();
         self.check_child_processes();
     }
 
-    fn check_child_processes(&self) {
+    fn check_child_processes(self: &Arc<Self>) {
         let mut any_process_alive = false;
+        let mut deferred_changes = Vec::new();
 
         let mut instance_state = self.instance_state.write();
         for instance in instance_state.instances.iter_mut() {
+            // Deleted while it was still launching, so it's only now got something to stop
+            if instance.delete_when_stopped && !instance.processes.is_empty() {
+                self.kill_instance(instance);
+            }
+
             let mut killed = false;
 
             instance.processes.retain_mut(|process| match process.try_wait() {
@@ -652,7 +669,14 @@ impl BackendState {
             }
 
             self.restore_mods_folder_if_stopped(instance);
+            if (instance.rename_folder_when_stopped || instance.delete_when_stopped) && instance.is_stopped() {
+                deferred_changes.push(instance.id);
+            }
             any_process_alive |= !instance.processes.is_empty() || !instance.closing_processes.is_empty();
+        }
+
+        for id in deferred_changes {
+            self.apply_deferred_changes(&mut instance_state, id);
         }
 
         self.quit_coordinator.set_can_quit(!any_process_alive);
@@ -900,12 +924,7 @@ impl BackendState {
     }
 
     pub fn restore_mods_folder_if_stopped(&self, instance: &mut Instance) {
-        if !instance.processes.is_empty() || !instance.closing_processes.is_empty() {
-            return;
-        }
-        if let Some(keepalive) = &instance.launch_keepalive
-            && keepalive.is_alive()
-        {
+        if !instance.is_stopped() {
             return;
         }
 
@@ -1561,7 +1580,7 @@ impl BackendState {
             self.send.send_warning(format!("Unable to create instance, name is invalid: {}", name));
             return None;
         }
-        if self.instance_state.read().instances.iter().any(|i| i.name == name) {
+        if self.instance_state.read().is_name_taken(name, None) {
             self.send.send_warning("Unable to create instance, name is already used".to_string());
             return None;
         }
@@ -1617,22 +1636,178 @@ impl BackendState {
             self.send.send_warning(format!("Unable to rename instance, name is invalid: {}", name));
             return;
         }
-        if self.instance_state.read().instances.iter().any(|i| i.name == name) {
+        let mut instance_state = self.instance_state.write();
+        if instance_state.is_name_taken(name, Some(id)) {
             self.send.send_warning("Unable to rename instance, name is already used".to_string());
             return;
         }
+        let Some(instance) = instance_state.instances.get_mut(id) else {
+            return;
+        };
 
-        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            if cfg!(windows) {
-                self.file_watching.write().unwatch_subdirectories_of_instance(id);
-                instance.mark_all_dirty(self, false);
+        if instance.folder_name() == Some(name) {
+            // Back to the name its folder still has, which calls off a rename waiting for it to stop
+            if instance.name != name {
+                let old_name = std::mem::replace(&mut instance.name, name.into());
+                instance.rename_folder_when_stopped = false;
+                self.send.send(instance.create_modify_message());
+                self.follow_instance_rename(&mut instance_state, id, &old_name, name);
             }
+            return;
+        }
 
-            let new_instance_dir = self.directories.instances_dir.join(name);
-            if let Err(err) = std::fs::rename(&instance.root_path, new_instance_dir) {
-                self.send.send_error(format!("Unable to rename instance folder: {}", err));
+        if !instance.is_stopped() {
+            // The game was given its folder by path, so moving the folder now would pull it out
+            // from under the game, which then finds its server list and worlds gone and writes
+            // its settings into a folder that no longer exists. The new name shows straight
+            // away, and the folder follows once the game stops
+            let old_name = std::mem::replace(&mut instance.name, name.into());
+            instance.rename_folder_when_stopped = true;
+            self.send.send(instance.create_modify_message());
+            self.follow_instance_rename(&mut instance_state, id, &old_name, name);
+            return;
+        }
+
+        self.move_instance_folder(&mut instance_state, id, name);
+    }
+
+    /// Renames the folder of the instance `id` to `name`. The filesystem watcher sees the rename
+    /// and updates the instance from it.
+    fn move_instance_folder(self: &Arc<Self>, instance_state: &mut BackendStateInstances, id: InstanceID, name: &str) {
+        let Some(instance) = instance_state.instances.get_mut(id) else {
+            return;
+        };
+        instance.rename_folder_when_stopped = false;
+
+        if cfg!(windows) {
+            self.file_watching.write().unwatch_subdirectories_of_instance(id);
+            instance.mark_all_dirty(self, false);
+        }
+
+        let new_instance_dir = self.directories.instances_dir.join(name);
+        let Err(err) = std::fs::rename(&instance.root_path, new_instance_dir) else {
+            return;
+        };
+
+        self.send.send_error(format!("Unable to rename instance folder: {}", err));
+        if cfg!(windows) {
+            instance.rewatch_directories(&mut self.file_watching.write());
+        }
+
+        // A rename that waited for the instance to stop has already given it the new name
+        if let Some(folder_name) = instance.folder_name().map(Ustr::from)
+            && instance.name != folder_name
+        {
+            let old_name = std::mem::replace(&mut instance.name, folder_name);
+            self.send.send(instance.create_modify_message());
+            self.follow_instance_rename(instance_state, id, &old_name, &folder_name);
+        }
+    }
+
+    /// Carries out what had to wait for the instance `id` to stop: deleting it, or renaming its
+    /// folder to the name it was given while it ran.
+    fn apply_deferred_changes(self: &Arc<Self>, instance_state: &mut BackendStateInstances, id: InstanceID) {
+        let Some(instance) = instance_state.instances.get_mut(id) else {
+            return;
+        };
+        if !instance.is_stopped() {
+            return;
+        }
+
+        if instance.delete_when_stopped {
+            instance.delete_when_stopped = false;
+            instance.rename_folder_when_stopped = false;
+            if let Err(err) = std::fs::remove_dir_all(&instance.root_path) {
+                self.send.send_error(format!("Unable to delete instance folder: {}", err));
+            }
+        } else if instance.rename_folder_when_stopped {
+            let name = instance.name;
+            self.move_instance_folder(instance_state, id, &name);
+        }
+    }
+
+    /// Updates what refers to the instance `id` by name once it's renamed: the servers made from
+    /// it, and the shortcuts made to launch it.
+    pub fn follow_instance_rename(
+        &self,
+        instance_state: &mut BackendStateInstances,
+        id: InstanceID,
+        old_name: &str,
+        new_name: &str,
+    ) {
+        if old_name == new_name {
+            return;
+        }
+
+        for instance in instance_state.instances.iter_mut() {
+            let is_linked = instance
+                .configuration
+                .get()
+                .server
+                .as_ref()
+                .is_some_and(|server| server.linked_instance.as_deref() == Some(old_name));
+            if !is_linked {
+                continue;
+            }
+            instance.configuration.modify(|configuration| {
+                if let Some(server) = &mut configuration.server {
+                    server.linked_instance = Some(new_name.into());
+                }
+            });
+            self.send.send(instance.create_modify_message());
+        }
+
+        // Shortcuts start the instance by name, so they'd stop working
+        let Some(instance) = instance_state.instances.get_mut(id) else {
+            return;
+        };
+        if instance.configuration.get().created_shortcuts.is_empty() {
+            return;
+        }
+        let executable = &bridge::launcher::current().executable;
+        let args = &["--run-instance", new_name];
+        let shortcuts: Vec<Arc<str>> = instance
+            .configuration
+            .get()
+            .created_shortcuts
+            .iter()
+            .map(|path| PathBuf::from(&**path))
+            .filter(|path| path.exists())
+            .filter_map(|path| crate::shortcut::update_shortcut(path, old_name, new_name, executable, args))
+            .map(|path| path.to_string_lossy().into())
+            .collect();
+        instance.configuration.modify(|configuration| configuration.created_shortcuts = shortcuts);
+    }
+
+    /// Asks the instance's processes to close, and kills them if they haven't within 3 seconds.
+    pub fn kill_instance(&self, instance: &mut Instance) {
+        for (process, _) in instance.closing_processes.drain(..) {
+            let result = process.kill();
+
+            if let Err(err) = result {
+                self.send.send_error("Failed to kill instance");
+                log::error!("Failed to kill instance: {err:?}");
             }
         }
+
+        let now = Instant::now();
+        for mut process in instance.processes.drain(..) {
+            let mut result = process.close();
+            if result.is_err() {
+                result = process.kill();
+            } else {
+                instance.closing_processes.push((process, now + Duration::from_secs(3)));
+            }
+
+            if let Err(err) = result {
+                self.send.send_error("Failed to kill instance");
+                log::error!("Failed to kill instance: {err:?}");
+            }
+        }
+
+        instance.update_session();
+        self.send.send(instance.create_modify_message());
+        self.restore_mods_folder_if_stopped(instance);
     }
 
     pub async fn get_login_info(

@@ -33,10 +33,10 @@ use crate::{
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::{
-        curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage,
-        instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage,
-        page::Page, quickplay::QuickplayPage, server::server_page::ServerPage, servers_page::ServersPage,
-        skins_page::SkinsPage, syncing_page::SyncingPage,
+        changelog_page::ChangelogPage, curseforge_page::CurseforgeSearchPage, import::ImportPage,
+        instance::instance_page::InstancePage, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage,
+        modrinth_project_page::ModrinthProjectPage, page::Page, quickplay::QuickplayPage,
+        server::server_page::ServerPage, servers_page::ServersPage, skins_page::SkinsPage, syncing_page::SyncingPage,
     },
     png_render_cache,
 };
@@ -89,6 +89,8 @@ pub enum PageType {
     ServerPage {
         name: SharedString,
     },
+    /// The notes of every release.
+    Changelog,
 }
 
 impl PageType {
@@ -121,6 +123,7 @@ impl PageType {
             PageType::ServerPage { name } => {
                 InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
             },
+            PageType::Changelog => t::system::update::changelog::title().into(),
         }
     }
 }
@@ -138,6 +141,7 @@ pub enum LauncherPage {
     InstancePage(Entity<InstancePage>),
     Servers(Entity<ServersPage>),
     ServerPage(Entity<ServerPage>),
+    Changelog(Entity<ChangelogPage>),
 }
 
 impl LauncherPage {
@@ -164,6 +168,7 @@ impl LauncherPage {
             LauncherPage::InstancePage(entity) => process(entity, window, cx),
             LauncherPage::Servers(entity) => process(entity, window, cx),
             LauncherPage::ServerPage(entity) => process(entity, window, cx),
+            LauncherPage::Changelog(entity) => process(entity, window, cx),
         };
 
         let config = InterfaceConfig::get(cx);
@@ -424,6 +429,7 @@ impl LauncherUI {
 
                 Ok(LauncherPage::ServerPage(cx.new(|cx| ServerPage::new(id, data, window, cx))))
             },
+            PageType::Changelog => Ok(LauncherPage::Changelog(cx.new(|cx| ChangelogPage::new(data, window, cx)))),
         }
     }
 
@@ -484,6 +490,21 @@ impl LauncherUI {
         }
 
         cx.notify();
+    }
+
+    /// Goes back a page, or to the first page when there's nothing to go back to, as after a
+    /// restart.
+    pub fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.page_history_backwards.is_empty() {
+            self.nav_backwards(window, cx);
+            return;
+        }
+        let page = if InterfaceConfig::get(cx).show_quickplay_page {
+            PageType::Quickplay
+        } else {
+            PageType::Instances
+        };
+        self.switch_page(page, &[], window, cx);
     }
 
     pub fn nav_backwards(&mut self, window: &mut Window, cx: &mut Context<Self>) {

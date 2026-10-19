@@ -1,3 +1,4 @@
+pub mod changelog_page;
 pub mod curseforge_page;
 pub mod import;
 pub mod instance;

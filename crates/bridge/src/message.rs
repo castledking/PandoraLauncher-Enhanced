@@ -15,7 +15,7 @@ use schema::{
     },
     loader::Loader,
     minecraft_profile::{MinecraftProfileCape, SkinVariant},
-    pandora_update::UpdatePrompt,
+    pandora_update::{ReleaseNotes, UpdatePrompt},
     quickplay::QuickplayPreset,
     server::{ServerPlatform, ServerProperty},
     server_list::{ServerListAddOutcome, ServerListEntry, ServerListFile},
@@ -306,6 +306,10 @@ pub enum MessageToBackend {
     /// a failure worth reporting.
     GetJavaRuntimes {
         channel: tokio::sync::oneshot::Sender<Vec<JavaRuntimeEntry>>,
+    },
+    /// The notes of every release, newest first.
+    GetReleaseNotes {
+        channel: tokio::sync::oneshot::Sender<Result<Arc<[ReleaseNotes]>, Arc<str>>>,
     },
     SetSyncing {
         target: Arc<str>,

@@ -170,6 +170,15 @@ impl BackendState {
             },
             MessageToBackend::DeleteInstance { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if !instance.is_stopped() {
+                        // Deleting the folder out from under a running game only half works on
+                        // Windows, where the files it has open can't be deleted, so it's stopped
+                        // first and deleted once it has
+                        instance.delete_when_stopped = true;
+                        self.kill_instance(instance);
+                        return;
+                    }
+
                     let result = std::fs::remove_dir_all(&instance.root_path);
                     if let Err(err) = result {
                         self.send.send_error(format!("Unable to delete instance folder: {}", err));
@@ -371,33 +380,7 @@ impl BackendState {
                     return;
                 }
 
-                for (process, _) in instance.closing_processes.drain(..) {
-                    let result = process.kill();
-
-                    if let Err(err) = result {
-                        self.send.send_error("Failed to kill instance");
-                        log::error!("Failed to kill instance: {err:?}");
-                    }
-                }
-
-                let now = Instant::now();
-                for mut process in instance.processes.drain(..) {
-                    let mut result = process.close();
-                    if result.is_err() {
-                        result = process.kill();
-                    } else {
-                        instance.closing_processes.push((process, now + Duration::from_secs(3)));
-                    }
-
-                    if let Err(err) = result {
-                        self.send.send_error("Failed to kill instance");
-                        log::error!("Failed to kill instance: {err:?}");
-                    }
-                }
-
-                instance.update_session();
-                self.send.send(instance.create_modify_message());
-                self.restore_mods_folder_if_stopped(instance);
+                self.kill_instance(instance);
             },
             MessageToBackend::StartInstanceByName { name, quick_play } => {
                 let mut id = None;
@@ -1541,6 +1524,12 @@ impl BackendState {
                 let runtimes = self.launcher.list_java_runtimes(&self.meta).await;
                 _ = channel.send(runtimes);
             },
+            MessageToBackend::GetReleaseNotes { channel } => {
+                let http_client = self.http_client_provider.redirecting();
+                tokio::task::spawn(async move {
+                    _ = channel.send(crate::update::fetch_release_notes(http_client).await);
+                });
+            },
             MessageToBackend::CreateServerInstance {
                 name,
                 version,
@@ -1969,10 +1958,31 @@ impl BackendState {
                     let executable = &bridge::launcher::current().executable;
 
                     let args = &["--run-instance", instance.name.as_str()];
-                    crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), executable, args);
+                    let created =
+                        crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), executable, args);
+
+                    // Remembered so it can be pointed at the new name if the instance is renamed
+                    if let Some(created) = created {
+                        let created: Arc<str> = created.to_string_lossy().into();
+                        instance.configuration.modify(|configuration| {
+                            if !configuration.created_shortcuts.contains(&created) {
+                                configuration.created_shortcuts.push(created);
+                            }
+                        });
+                    }
                 }
             },
             MessageToBackend::RelocateInstance { id, path } => {
+                // Moving a folder a game is running from pulls it out from under the game, and
+                // across drives it's copied while the game is still writing to it. The settings
+                // page doesn't offer it while the instance is running
+                if let Some(instance) = self.instance_state.read().instances.get(id)
+                    && !instance.is_stopped()
+                {
+                    self.send.send_warning(format!("Close '{}' before moving its folder", instance.name));
+                    return;
+                }
+
                 if let Err(err) = std::fs::remove_dir(&path)
                     && err.kind() != std::io::ErrorKind::NotFound
                 {

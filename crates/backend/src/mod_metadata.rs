@@ -1019,7 +1019,7 @@ impl ModMetadataManager {
                 summary,
                 default_disabled,
                 disabled_third_party_downloads: cached_info.disabled_third_party_downloads,
-                project_id: None,
+                project_id: Some(curseforge_file.project_id.to_string().into()),
             })
         });
 

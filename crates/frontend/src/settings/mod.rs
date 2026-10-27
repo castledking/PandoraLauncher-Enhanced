@@ -33,6 +33,7 @@ use crate::{
 };
 
 mod appearance;
+mod content_labels;
 mod general;
 mod java;
 mod network;
@@ -910,6 +911,7 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
         pages: vec![
             general::create_page(window, cx),
             appearance::create_page(data, window, cx),
+            content_labels::create_page(data, window, cx),
             java::create_page(),
             network::create_page(),
         ]

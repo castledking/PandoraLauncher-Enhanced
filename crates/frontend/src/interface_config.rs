@@ -9,7 +9,10 @@ use gpui::{App, BorrowAppContext, SharedString, Task};
 use rand::RngCore;
 use rustc_hash::FxHashSet;
 use schema::{
-    content_label::HexColor, curseforge::CurseforgeClassId, modrinth::ModrinthProjectType, quickplay::QuickplayPreset,
+    content_label::{GlobalContentLabel, HexColor},
+    curseforge::CurseforgeClassId,
+    modrinth::ModrinthProjectType,
+    quickplay::QuickplayPreset,
 };
 use serde::{Deserialize, Serialize};
 
@@ -108,12 +111,14 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_shaders_display: ContentListDisplay,
     /// The categories offered when labelling content, shared by every instance and server.
-    /// Which category an item is in is kept with the item itself, in its auxiliary file.
+    /// Local assignments live in auxiliary files; shared defaults live in global_content_labels.
     #[serde(
         default = "default_content_categories",
         deserialize_with = "deserialize_content_categories"
     )]
     pub content_categories: Vec<ContentCategory>,
+    #[serde(default, deserialize_with = "deserialize_global_content_labels")]
+    pub global_content_labels: Vec<GlobalContentLabel>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub show_snapshots_in_create_instance: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
@@ -497,6 +502,19 @@ fn deserialize_content_categories<'de, D: serde::Deserializer<'de>>(
     Ok(entries.iter().filter_map(|entry| ContentCategory::deserialize(entry).ok()).collect())
 }
 
+fn deserialize_global_content_labels<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<GlobalContentLabel>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| GlobalContentLabel::deserialize(entry).ok())
+        .filter(|rule| !rule.keys.is_empty() && rule.keys.iter().all(|key| !key.trim().is_empty()))
+        .collect())
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum PreferredAddContentSource {
@@ -550,6 +568,7 @@ impl Default for InterfaceConfig {
             instance_resourcepacks_display: Default::default(),
             instance_shaders_display: Default::default(),
             content_categories: default_content_categories(),
+            global_content_labels: Vec::new(),
             content_install_latest: true,
             content_filter_instance_version: true,
             modrinth_page_project_type: default_modrinth_project_type(),
@@ -788,6 +807,41 @@ mod tests {
             assert!(display.icons_visible());
         }
         assert_eq!(config.content_categories, default_content_categories());
+        assert!(config.global_content_labels.is_empty());
+    }
+
+    #[test]
+    fn global_content_labels_round_trip_without_changing_local_preferences() {
+        let config: InterfaceConfig = serde_json::from_str(
+            r##"{
+            "preferred_add_content_source":"modrinth",
+            "instance_mods_display":{"view_mode":"compact","show_icons":false},
+            "global_content_labels":[
+                {"keys":["mods:id:sodium"],"name":"Sodium","label":{"category":"optimization","color":"#123abc"}}
+            ]
+        }"##,
+        )
+        .unwrap();
+        assert_eq!(config.global_content_labels[0].label.category.as_deref(), Some("optimization"));
+        let restored: InterfaceConfig = serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(restored.global_content_labels, config.global_content_labels);
+        assert_eq!(restored.instance_mods_display, config.instance_mods_display);
+    }
+
+    #[test]
+    fn corrupt_global_rules_do_not_discard_other_rules_or_settings() {
+        let config: InterfaceConfig = serde_json::from_str(
+            r#"{
+            "preferred_add_content_source":"modrinth",
+            "settings_separate_window":false,
+            "global_content_labels":[42, {"keys":[],"name":"Invalid","label":{}},
+                {"keys":["plugins:id:allium"],"name":"Allium","label":{"category":"utility"}}]
+        }"#,
+        )
+        .unwrap();
+        assert!(!config.settings_separate_window);
+        assert_eq!(config.global_content_labels.len(), 1);
+        assert_eq!(&*config.global_content_labels[0].name, "Allium");
     }
 
     #[test]

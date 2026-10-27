@@ -4615,6 +4615,31 @@ ru = "Синхронизировать папку Litematic (schematic)"
 fr = "Synchroniser le dossier Litematic (schémas)"
 it = "Sincronizza la cartella Litematic (schematic)"
 
+[settings.content_labels]
+en = "Content Labels"
+[settings.content_labels.global]
+en = "Global categories and colors"
+[settings.content_labels.description]
+en = "Assign categories and highlight colors to mods, plugins, resource packs and shaders across all instances and servers, including future installs. Changes made inside an instance or server stay local and take priority."
+[settings.content_labels.search]
+en = "Search installed content or saved assignments…"
+[settings.content_labels.fallback_hint]
+en = "Project and mod IDs match across versions. Manual files without an ID match by name or exact filename."
+[settings.content_labels.empty]
+en = "No matching content. Installed content appears here as it loads."
+[settings.content_labels.edit]
+en = "Edit"
+[settings.content_labels.remove]
+en = "Remove global assignment"
+[settings.content_labels.local_hint]
+en = "Changes apply only to this instance or server"
+[settings.content_labels.use_global]
+en = "Use global defaults"
+[settings.content_labels.name]
+en = "Name"
+[settings.content_labels.filename]
+en = "Filename"
+
 [settings.title]
 en = "Settings"
 tr = "Ayarlar"

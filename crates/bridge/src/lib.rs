@@ -1,4 +1,5 @@
 pub mod account;
+pub mod content_label;
 pub mod game_output;
 pub mod handle;
 pub mod import;

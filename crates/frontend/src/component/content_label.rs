@@ -13,7 +13,7 @@ use gpui_component::{
     ActiveTheme, Icon, Side, h_flex,
     menu::{PopupMenu, PopupMenuItem},
 };
-use schema::content_label::{ContentLabel, ContentLabelEdit, HexColor};
+use schema::content_label::{ContentLabel, ContentLabelEdit, HexColor, edit_global_label};
 
 use crate::{
     icon::PandoraIcon,
@@ -150,6 +150,10 @@ pub fn category_chip(id: &str, color: Option<HexColor>, cx: &App) -> Div {
 /// The items a label menu or dialog changes.
 #[derive(Clone)]
 pub enum LabelTarget {
+    Global {
+        keys: Arc<[Arc<str>]>,
+        name: Arc<str>,
+    },
     Content {
         instance: InstanceID,
         content_ids: Arc<[InstanceContentID]>,
@@ -163,8 +167,12 @@ pub enum LabelTarget {
 }
 
 impl LabelTarget {
-    pub fn send(&self, edit: ContentLabelEdit, backend_handle: &BackendHandle) {
+    pub fn send(&self, edit: ContentLabelEdit, backend_handle: &BackendHandle, cx: &mut App) {
         match self {
+            LabelTarget::Global { keys, name } => {
+                edit_global_label(&mut InterfaceConfig::get_mut(cx).global_content_labels, keys, name.clone(), &edit);
+                cx.refresh_windows();
+            },
             LabelTarget::Content { instance, content_ids } => {
                 backend_handle.send(MessageToBackend::SetContentLabel {
                     id: *instance,
@@ -199,8 +207,8 @@ pub struct LabelMenu {
 }
 
 impl LabelMenu {
-    fn send(&self, edit: ContentLabelEdit) {
-        self.target.send(edit, &self.backend_handle);
+    fn send(&self, edit: ContentLabelEdit, cx: &mut App) {
+        self.target.send(edit, &self.backend_handle, cx);
     }
 
     /// `Some` when every targeted item has the same value.
@@ -215,6 +223,9 @@ impl LabelMenu {
     pub fn build(self: &Rc<Self>, mut menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
         if self.labels.len() > 1 {
             menu = menu.label(t::instance::content::label::selected_count(self.labels.len()));
+        }
+        if !matches!(self.target, LabelTarget::Global { .. }) {
+            menu = menu.label(t::settings::content_labels::local_hint());
         }
 
         let this = self.clone();
@@ -240,7 +251,18 @@ impl LabelMenu {
             menu = menu.separator().item(
                 PopupMenuItem::new(t::instance::content::label::clear())
                     .icon(PandoraIcon::Close)
-                    .on_click(move |_, _, _| this.send(ContentLabelEdit::Clear)),
+                    .on_click(move |_, _, cx| this.send(ContentLabelEdit::Clear, cx)),
+            );
+        }
+
+        if !matches!(self.target, LabelTarget::Global { .. })
+            && self.labels.iter().any(|label| label.category_override || label.color_override)
+        {
+            let this = self.clone();
+            menu = menu.item(
+                PopupMenuItem::new(t::settings::content_labels::use_global())
+                    .icon(PandoraIcon::RefreshCcw)
+                    .on_click(move |_, _, cx| this.send(ContentLabelEdit::UseGlobal, cx)),
             );
         }
 
@@ -255,7 +277,7 @@ impl LabelMenu {
         let mut menu = menu.check_side(Side::Right).item(
             PopupMenuItem::new(t::instance::content::label::no_category())
                 .checked(current == Some(None))
-                .on_click(move |_, _, _| this.send(ContentLabelEdit::SetCategory(None))),
+                .on_click(move |_, _, cx| this.send(ContentLabelEdit::SetCategory(None), cx)),
         );
 
         // A category that's no longer in the list (deleted, or the instance came from elsewhere)
@@ -281,7 +303,7 @@ impl LabelMenu {
                 PopupMenuItem::element(move |_, cx| h_flex().gap_2().child(swatch(color, cx)).child(name.clone()))
                     .when_some(category_icon(&id), |item, icon| item.icon(Icon::empty().path(icon)))
                     .checked(checked)
-                    .on_click(move |_, _, _| this.send(ContentLabelEdit::SetCategory(Some(id.clone())))),
+                    .on_click(move |_, _, cx| this.send(ContentLabelEdit::SetCategory(Some(id.clone())), cx)),
             );
         }
 
@@ -294,8 +316,8 @@ impl LabelMenu {
                         let this = this.clone();
                         // Opened once the menu has closed, or closing it takes focus back from the dialog
                         window.defer(cx, move |window, cx| {
-                            let on_created: Rc<dyn Fn(Arc<str>, &mut Window, &mut App)> = Rc::new(move |id, _, _| {
-                                this.send(ContentLabelEdit::SetCategory(Some(id)));
+                            let on_created: Rc<dyn Fn(Arc<str>, &mut Window, &mut App)> = Rc::new(move |id, _, cx| {
+                                this.send(ContentLabelEdit::SetCategory(Some(id)), cx);
                             });
                             crate::modals::content_label::open_new_category(Some(on_created), window, cx);
                         });
@@ -335,7 +357,7 @@ impl LabelMenu {
             .item(
                 PopupMenuItem::element(move |_, cx| h_flex().gap_2().child(swatch(fallback, cx)).child(none_label))
                     .checked(current == Some(None))
-                    .on_click(move |_, _, _| this.send(ContentLabelEdit::SetColor(None))),
+                    .on_click(move |_, _, cx| this.send(ContentLabelEdit::SetColor(None), cx)),
             )
             .separator();
 
@@ -344,7 +366,7 @@ impl LabelMenu {
             menu = menu.item(
                 PopupMenuItem::element(move |_, cx| h_flex().gap_2().child(swatch(Some(color), cx)).child(name))
                     .checked(current == Some(Some(color)))
-                    .on_click(move |_, _, _| this.send(ContentLabelEdit::SetColor(Some(color)))),
+                    .on_click(move |_, _, cx| this.send(ContentLabelEdit::SetColor(Some(color)), cx)),
             );
         }
 
@@ -373,7 +395,7 @@ impl LabelMenu {
                     window.defer(cx, move |window, cx| {
                         let preview_name = this.preview_name.clone();
                         let on_apply: Rc<dyn Fn(Option<HexColor>, &mut Window, &mut App)> =
-                            Rc::new(move |color, _, _| this.send(ContentLabelEdit::SetColor(color)));
+                            Rc::new(move |color, _, cx| this.send(ContentLabelEdit::SetColor(color), cx));
                         crate::modals::content_label::open_color_picker(
                             t::instance::content::label::highlight_color().into(),
                             initial,
@@ -404,6 +426,7 @@ mod tests {
         ContentLabel {
             category: category.map(Arc::from),
             color: color.map(HexColor::new),
+            ..Default::default()
         }
     }
 

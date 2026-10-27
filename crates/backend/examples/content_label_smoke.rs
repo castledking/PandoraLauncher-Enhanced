@@ -214,6 +214,7 @@ fn main() {
     let library = ContentLabel {
         category: Some("library".into()),
         color: None,
+        ..Default::default()
     };
     wait_for_listed_label("content list shows the category", library.clone());
     let aux = read_aux(&mods_dir.join(&aux_name)).expect("aux file in mods/");
@@ -258,6 +259,7 @@ fn main() {
     let library_red = ContentLabel {
         category: Some("library".into()),
         color: Some(HexColor::new(0xef4444)),
+        ..Default::default()
     };
     wait_for_listed_label("content list shows the colour while running", library_red.clone());
     let aux = read_aux(&backup_dir.join(&aux_name)).expect("aux file in original_mods/");
@@ -284,7 +286,24 @@ fn main() {
         content_ids: vec![summary.id],
         edit: ContentLabelEdit::Clear,
     });
-    wait_for_listed_label("content list shows no label", ContentLabel::default());
+    wait_for_listed_label(
+        "content list shows an explicit local removal",
+        ContentLabel {
+            category_override: true,
+            color_override: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        mods_dir.join(&aux_name).exists(),
+        "a local removal must survive future global assignments"
+    );
+    backend_handle.send(MessageToBackend::SetContentLabel {
+        id,
+        content_ids: vec![summary.id],
+        edit: ContentLabelEdit::UseGlobal,
+    });
+    wait_for_listed_label("content list uses global defaults again", ContentLabel::default());
     assert!(!mods_dir.join(&aux_name).exists(), "an empty aux file should be removed");
     println!("  ok: aux file removed");
 

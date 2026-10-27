@@ -1,8 +1,8 @@
 //! Labels the user puts on single pieces of content, such as a mod, a resource pack or a plugin, so
 //! that a long list can be read at a glance: a category, and a colour to tint its row with.
 //!
-//! Labels are kept per item in the content's auxiliary file (see [`crate::auxiliary`]), which
-//! follows the item through updates and is removed along with it.
+//! Local overrides are kept in the content's auxiliary file (see [`crate::auxiliary`]), which
+//! follows the item through updates. Global defaults are kept in the interface configuration.
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
@@ -78,11 +78,82 @@ pub struct ContentLabel {
         deserialize_with = "crate::try_deserialize"
     )]
     pub color: Option<HexColor>,
+    /// An explicit local removal must hide a global default, even though the value is `None`.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub category_override: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub color_override: bool,
 }
 
 impl ContentLabel {
     pub fn is_empty(&self) -> bool {
-        self.category.is_none() && self.color.is_none()
+        self.category.is_none() && self.color.is_none() && !self.category_override && !self.color_override
+    }
+
+    /// Resolve each field separately. Existing local labels also override defaults, without
+    /// requiring a migration of their auxiliary files.
+    pub fn resolve(&self, global: &Self) -> Self {
+        let category_override = self.category.is_some() || self.category_override;
+        let color_override = self.color.is_some() || self.color_override;
+        Self {
+            category: if category_override {
+                self.category.clone()
+            } else {
+                global.category.clone()
+            },
+            color: if color_override { self.color } else { global.color },
+            category_override,
+            color_override,
+        }
+    }
+}
+
+/// A version-independent default shared by all instances and servers. Keys include the content
+/// folder and identity type, so a plugin, mod and resource pack cannot collide by name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlobalContentLabel {
+    pub keys: Vec<Arc<str>>,
+    pub name: Arc<str>,
+    pub label: ContentLabel,
+}
+
+pub fn find_global_label<'a>(labels: &'a [GlobalContentLabel], keys: &[Arc<str>]) -> Option<&'a GlobalContentLabel> {
+    keys.iter().find_map(|key| labels.iter().find(|label| label.keys.contains(key)))
+}
+
+/// Changes only the global default, never any instance's auxiliary files. Retain identity aliases
+/// learned from installed builds, so a rule made for a manual mod also matches its project ID.
+pub fn edit_global_label(
+    labels: &mut Vec<GlobalContentLabel>,
+    keys: &[Arc<str>],
+    name: Arc<str>,
+    edit: &ContentLabelEdit,
+) {
+    if keys.is_empty() {
+        return;
+    }
+    let index = keys.iter().find_map(|key| labels.iter().position(|label| label.keys.contains(key)));
+    let mut rule = index.map(|index| labels.remove(index)).unwrap_or_else(|| GlobalContentLabel {
+        keys: Vec::new(),
+        name,
+        label: ContentLabel::default(),
+    });
+    for key in keys {
+        if !rule.keys.contains(key) {
+            rule.keys.push(key.clone());
+        }
+    }
+    edit.apply(&mut rule.label);
+    if !rule.label.is_empty() {
+        labels.insert(index.unwrap_or(labels.len()), rule);
     }
 }
 
@@ -95,6 +166,7 @@ pub enum ContentLabelEdit {
     SetCategory(Option<Arc<str>>),
     SetColor(Option<HexColor>),
     Clear,
+    UseGlobal,
 }
 
 impl ContentLabelEdit {
@@ -107,7 +179,24 @@ impl ContentLabelEdit {
                     category.as_deref().map(str::trim).filter(|category| !category.is_empty()).map(Arc::from);
             },
             ContentLabelEdit::SetColor(color) => label.color = *color,
-            ContentLabelEdit::Clear => *label = ContentLabel::default(),
+            ContentLabelEdit::Clear | ContentLabelEdit::UseGlobal => *label = ContentLabel::default(),
+        }
+        *label != before
+    }
+
+    /// Local edits distinguish removing a value from inheriting it. Positive values from older
+    /// auxiliary files already count as overrides; only explicit removals need extra storage.
+    pub fn apply_local(&self, label: &mut ContentLabel) -> bool {
+        let before = label.clone();
+        self.apply(label);
+        match self {
+            Self::SetCategory(_) => label.category_override = label.category.is_none(),
+            Self::SetColor(_) => label.color_override = label.color.is_none(),
+            Self::Clear => {
+                label.category_override = true;
+                label.color_override = true;
+            },
+            Self::UseGlobal => {},
         }
         *label != before
     }
@@ -146,7 +235,7 @@ pub fn edit_child_label(
     };
 
     let mut label = find_child_label(labels, keys).cloned().unwrap_or_default();
-    let edited = edit.apply(&mut label);
+    let edited = edit.apply_local(&mut label);
 
     let mut moved = false;
     for key in others {
@@ -196,6 +285,7 @@ mod tests {
         let label = ContentLabel {
             category: Some("library".into()),
             color: Some(HexColor::new(0xef4444)),
+            ..Default::default()
         };
         let json = serde_json::to_string(&label).unwrap();
         assert_eq!(json, r##"{"category":"library","color":"#ef4444"}"##);
@@ -216,6 +306,7 @@ mod tests {
         let mut label = ContentLabel {
             category: Some("combat".into()),
             color: Some(HexColor::new(0x22c55e)),
+            ..Default::default()
         };
 
         assert!(ContentLabelEdit::SetColor(Some(HexColor::new(0xef4444))).apply(&mut label));
@@ -238,6 +329,7 @@ mod tests {
         let mut label = ContentLabel {
             category: Some("utility".into()),
             color: None,
+            ..Default::default()
         };
         assert!(ContentLabelEdit::SetCategory(Some("   ".into())).apply(&mut label));
         assert_eq!(label.category, None);
@@ -288,10 +380,16 @@ mod tests {
         assert_eq!(label.category.as_deref(), Some("optimization"));
         assert_eq!(label.color, Some(HexColor::new(0xef4444)));
 
-        // Clearing it leaves nothing behind
+        // A local removal is retained, so a global default cannot put the label back.
         assert!(edit_child_label(&mut labels, &after, &ContentLabelEdit::Clear));
-        assert!(labels.is_empty());
+        let label = find_child_label(&labels, &after).unwrap();
+        assert_eq!(label.category, None);
+        assert!(label.category_override && label.color_override);
         assert!(!edit_child_label(&mut labels, &after, &ContentLabelEdit::Clear));
+
+        // Returning to global defaults removes the local record.
+        assert!(edit_child_label(&mut labels, &after, &ContentLabelEdit::UseGlobal));
+        assert!(labels.is_empty());
     }
 
     #[test]
@@ -299,5 +397,91 @@ mod tests {
         let mut labels = BTreeMap::new();
         assert!(!edit_child_label(&mut labels, &[], &ContentLabelEdit::SetColor(Some(HexColor::new(1)))));
         assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn global_defaults_resolve_per_field_and_keep_legacy_local_labels() {
+        let global = ContentLabel {
+            category: Some("library".into()),
+            color: Some(HexColor::new(0x112233)),
+            ..Default::default()
+        };
+        let inherited = ContentLabel::default().resolve(&global);
+        assert_eq!(inherited.category, global.category);
+        assert_eq!(inherited.color, global.color);
+        assert!(!inherited.category_override && !inherited.color_override);
+
+        // Legacy labels have no flags, but their assigned fields still take priority.
+        let local: ContentLabel = serde_json::from_str(r#"{"category":"combat"}"#).unwrap();
+        let resolved = local.resolve(&global);
+        assert_eq!(resolved.category.as_deref(), Some("combat"));
+        assert_eq!(resolved.color, global.color);
+        assert!(resolved.category_override && !resolved.color_override);
+
+        let local: ContentLabel = serde_json::from_str(r##"{"color":"#abcdef"}"##).unwrap();
+        let resolved = local.resolve(&global);
+        assert_eq!(resolved.category, global.category);
+        assert_eq!(resolved.color, Some(HexColor::new(0xabcdef)));
+    }
+
+    #[test]
+    fn local_removals_survive_restart_and_can_return_to_inheritance() {
+        let mut global = ContentLabel {
+            category: Some("utility".into()),
+            color: Some(HexColor::new(0x112233)),
+            ..Default::default()
+        };
+        let mut local = ContentLabel::default();
+        ContentLabelEdit::SetCategory(None).apply_local(&mut local);
+        let local: ContentLabel = serde_json::from_str(&serde_json::to_string(&local).unwrap()).unwrap();
+        assert_eq!(local.resolve(&global).category, None);
+        assert_eq!(local.resolve(&global).color, global.color);
+
+        let mut local = local;
+        ContentLabelEdit::Clear.apply_local(&mut local);
+        let mut local: ContentLabel = serde_json::from_str(&serde_json::to_string(&local).unwrap()).unwrap();
+        global.category = Some("combat".into());
+        global.color = Some(HexColor::new(0xffffff));
+        let resolved = local.resolve(&global);
+        assert_eq!(resolved.category, None);
+        assert_eq!(resolved.color, None);
+        assert!(!local.is_empty());
+
+        ContentLabelEdit::UseGlobal.apply_local(&mut local);
+        assert!(local.is_empty());
+        assert_eq!(local.resolve(&global).category, global.category);
+        assert_eq!(local.resolve(&global).color, global.color);
+    }
+
+    #[test]
+    fn global_assignment_updates_aliases_without_editing_local_labels() {
+        let keys: Vec<Arc<str>> = vec!["mods:modrinth:sodium-project".into(), "mods:id:sodium".into()];
+        let manual_keys = vec!["mods:id:sodium".into()];
+        let mut rules = Vec::new();
+        edit_global_label(
+            &mut rules,
+            &manual_keys,
+            "Sodium".into(),
+            &ContentLabelEdit::SetCategory(Some("optimization".into())),
+        );
+        edit_global_label(
+            &mut rules,
+            &keys,
+            "Sodium".into(),
+            &ContentLabelEdit::SetColor(Some(HexColor::new(0xff0000))),
+        );
+        assert_eq!(rules.len(), 1);
+        let mut rules: Vec<GlobalContentLabel> = serde_json::from_str(&serde_json::to_string(&rules).unwrap()).unwrap();
+        assert_eq!(find_global_label(&rules, &keys[..1]), find_global_label(&rules, &manual_keys));
+        let global = &find_global_label(&rules, &keys).unwrap().label;
+        let mut local = ContentLabel::default();
+        ContentLabelEdit::SetCategory(Some("combat".into())).apply_local(&mut local);
+        assert_eq!(local.resolve(global).category.as_deref(), Some("combat"));
+        assert_eq!(ContentLabel::default().resolve(global).category.as_deref(), Some("optimization"));
+        assert!(find_global_label(&rules, &["plugins:id:sodium".into()]).is_none());
+        assert!(find_global_label(&rules, &["mods:id:other-mod".into()]).is_none());
+        edit_global_label(&mut rules, &keys, "Sodium".into(), &ContentLabelEdit::Clear);
+        assert!(rules.is_empty());
+        assert_eq!(local.category.as_deref(), Some("combat"));
     }
 }

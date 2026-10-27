@@ -246,7 +246,7 @@ impl InstanceContentSubpage {
         );
 
         let (needs_update_check, update_count) = if let Some(new_content) = content.read(cx) {
-            content_list_delegate.set_content(&combined_content_of(&content, mods_content.as_ref(), cx));
+            content_list_delegate.set_content(&combined_content_of(&content, mods_content.as_ref(), cx), cx);
             calculate_update_count(instance_loader, instance_version, new_content)
         } else {
             (false, 0)
@@ -278,7 +278,7 @@ impl InstanceContentSubpage {
 
             let combined = combined_content_of(&content, page.mods_content.as_ref(), cx);
             page.content_list.update(cx, |list, cx| {
-                list.delegate_mut().set_content(&combined);
+                list.delegate_mut().set_content(&combined, cx);
                 cx.notify();
             });
 
@@ -292,7 +292,7 @@ impl InstanceContentSubpage {
             cx.observe(&mods_entity, move |page, _, cx| {
                 let combined = combined_content_of(&content_entity, Some(&mods_entity_for_observe), cx);
                 page.content_list.update(cx, |list, cx| {
-                    list.delegate_mut().set_content(&combined);
+                    list.delegate_mut().set_content(&combined, cx);
                     cx.notify();
                 });
 
@@ -322,7 +322,7 @@ impl InstanceContentSubpage {
                 let content_list = this.content_list.clone();
                 cx.update_entity(&content_list, |list, cx| {
                     list.delegate_mut().set_sort_options(sort_key, enabled_first);
-                    list.delegate_mut().set_content(&content);
+                    list.delegate_mut().set_content(&content, cx);
                     cx.notify();
                 });
                 cx.notify();
@@ -397,6 +397,13 @@ fn calculate_update_count(loader: Loader, version: Ustr, content: &Arc<[Instance
 
 impl Render for InstanceContentSubpage {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        if self.content_list.read(cx).delegate().global_labels_changed(cx) {
+            let content = combined_content_of(&self.content, self.mods_content.as_ref(), cx);
+            self.content_list.update(cx, |list, cx| {
+                list.delegate_mut().set_content(&content, cx);
+                cx.notify();
+            });
+        }
         let (source, sort_enabled_first) = {
             let config = InterfaceConfig::get(cx);
             (config.preferred_add_content_source, self.content_type.sort_enabled_first(config))
@@ -525,7 +532,7 @@ impl Render for InstanceContentSubpage {
                             let content_list = this.content_list.clone();
                             cx.update_entity(&content_list, |list, cx| {
                                 list.delegate_mut().set_sort_options(sort_key, enabled_first);
-                                list.delegate_mut().set_content(&content);
+                                list.delegate_mut().set_content(&content, cx);
                                 cx.notify();
                             });
                             cx.notify();

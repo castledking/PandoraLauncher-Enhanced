@@ -127,6 +127,7 @@ mod tests {
             ContentLabel {
                 category: None,
                 color: Some(HexColor::new(0xf59e0b)),
+                ..Default::default()
             },
         );
         assert!(!aux.is_empty());
@@ -149,5 +150,16 @@ mod tests {
         let aux: AuxiliaryContentMeta = serde_json::from_str(json).unwrap();
         assert!(aux.label.is_empty());
         assert!(aux.disabled_children.disabled_ids.contains("sodium"));
+    }
+
+    #[test]
+    fn explicit_local_removal_keeps_an_auxiliary_file() {
+        let mut aux = AuxiliaryContentMeta::default();
+        crate::content_label::ContentLabelEdit::Clear.apply_local(&mut aux.label);
+        assert!(!aux.is_empty());
+        let mut aux: AuxiliaryContentMeta = serde_json::from_str(&serde_json::to_string(&aux).unwrap()).unwrap();
+        assert!(aux.label.category_override && aux.label.color_override);
+        crate::content_label::ContentLabelEdit::UseGlobal.apply_local(&mut aux.label);
+        assert!(aux.is_empty());
     }
 }

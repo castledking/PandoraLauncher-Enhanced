@@ -8,6 +8,7 @@ use std::{
 };
 
 use bridge::{
+    content_label::{global_content_keys, modpack_file_source},
     handle::BackendHandle,
     instance::{
         ContentFolder, ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID,
@@ -31,7 +32,7 @@ use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use schema::{
     content::ContentSource,
-    content_label::{ContentLabel, child_label_keys, find_child_label},
+    content_label::{ContentLabel, GlobalContentLabel, child_label_keys, find_child_label, find_global_label},
     loader::Loader,
     text_component::FlatTextComponent,
 };
@@ -110,6 +111,7 @@ pub struct ContentListDelegate {
     enabled_first: bool,
     loading: bool,
     content: Vec<InstanceContentSummary>,
+    global_labels: Vec<GlobalContentLabel>,
     searched: Option<Vec<SummaryOrChild>>,
     children: Vec<Vec<ContentEntryChild>>,
     /// Whether any row is a modpack whose files can be expanded below it.
@@ -146,6 +148,7 @@ impl ContentListDelegate {
             enabled_first,
             loading: true,
             content: Vec::new(),
+            global_labels: Vec::new(),
             searched: None,
             children: Vec::new(),
             has_expandable_rows: false,
@@ -909,8 +912,8 @@ impl ContentListDelegate {
             .with_size(button_size);
 
             if compact {
-                item_content =
-                    item_content.child(h_flex().flex_none().gap_1().pr_3().children(category_chip).child(delete_button));
+                item_content = item_content
+                    .child(h_flex().flex_none().gap_1().pr_3().children(category_chip).child(delete_button));
             } else {
                 item_content = item_content
                     .child(h_flex().absolute().right_4().gap_2().children(category_chip).child(delete_button));
@@ -940,8 +943,20 @@ impl ContentListDelegate {
             .child(item_content)
     }
 
-    pub fn set_content(&mut self, new_content: &[InstanceContentSummary]) {
+    pub fn global_labels_changed(&self, cx: &App) -> bool {
+        self.global_labels != InterfaceConfig::get(cx).global_content_labels
+    }
+
+    pub fn set_content(&mut self, new_content: &[InstanceContentSummary], cx: &App) {
         let last_mods_len = self.content.len();
+        self.global_labels = InterfaceConfig::get(cx).global_content_labels.clone();
+        let resolve = |label: ContentLabel, keys: &[Arc<str>]| {
+            label.resolve(
+                &find_global_label(&self.global_labels, keys)
+                    .map(|rule| rule.label.clone())
+                    .unwrap_or_default(),
+            )
+        };
 
         struct Item {
             modification: InstanceContentSummary,
@@ -974,6 +989,15 @@ impl ContentListDelegate {
                             child_label_keys(None, None, &format!("curseforge/{}", unknown_file.file_id)).into();
                         let label =
                             find_child_label(&modification.child_labels, &label_keys).cloned().unwrap_or_default();
+                        let keys = global_content_keys(
+                            self.content_folder,
+                            &ContentSource::CurseforgeProject {
+                                project_id: unknown_file.project_id,
+                            },
+                            None,
+                            &filename,
+                        );
+                        let label = resolve(label, &keys);
 
                         inner_children.push(ContentEntryChild {
                             summary: UNKNOWN_CONTENT_SUMMARY.clone(),
@@ -1037,6 +1061,13 @@ impl ContentListDelegate {
 
                     let label_keys: Arc<[Arc<str>]> = child_label_keys(id, name, file.path.as_str()).into();
                     let label = find_child_label(&modification.child_labels, &label_keys).cloned().unwrap_or_default();
+                    let keys = global_content_keys(
+                        self.content_folder,
+                        &modpack_file_source(&modification.content_summary, file),
+                        summary.as_deref(),
+                        file.path.as_str(),
+                    );
+                    let label = resolve(label, &keys);
 
                     let is_missing = summary.is_none();
                     let summary = summary.unwrap_or(UNKNOWN_CONTENT_SUMMARY.clone());
@@ -1084,8 +1115,16 @@ impl ContentListDelegate {
                 continue;
             }
 
+            let mut modification = modification.clone();
+            let keys = global_content_keys(
+                self.content_folder,
+                &modification.content_source,
+                Some(&modification.content_summary),
+                &modification.filename,
+            );
+            modification.label = resolve(modification.label, &keys);
             items.push(Item {
-                modification: modification.clone(),
+                modification,
                 children: inner_children,
             });
         }

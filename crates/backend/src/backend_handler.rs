@@ -780,7 +780,7 @@ impl BackendState {
                         aux_path.clone()
                     };
 
-                    match crate::fs::edit_aux_file(&target, |aux| edit.apply(&mut aux.label)) {
+                    match crate::fs::edit_aux_file(&target, |aux| edit.apply_local(&mut aux.label)) {
                         Ok(true) if frozen => {
                             frozen_edited.insert(aux_path);
                         },

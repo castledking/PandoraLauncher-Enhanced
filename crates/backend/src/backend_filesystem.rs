@@ -211,14 +211,21 @@ impl BackendState {
                 self.send.send_error("Launcher directory has been removed! This is very bad!");
                 true
             },
-            WatchTarget::InstancesDir => {
-                self.send.send_error("Instances dir has been been removed! Uh oh!");
+            WatchTarget::InstancesDir | WatchTarget::ServersDir => {
+                let is_server = target == WatchTarget::ServersDir;
+                let kind = if is_server { "Servers" } else { "Instances" };
+                self.send.send_error(format!("{kind} dir has been removed! Uh oh!"));
 
                 let mut instance_state = self.instance_state.write();
 
-                for instance in instance_state.instances.drain() {
-                    self.send.send(MessageToFrontend::InstanceRemoved { id: instance.id });
-                }
+                instance_state.instances.retain_mut(|instance| {
+                    if instance.configuration.get().server.is_some() == is_server {
+                        self.send.send(MessageToFrontend::InstanceRemoved { id: instance.id });
+                        false
+                    } else {
+                        true
+                    }
+                });
 
                 true
             },
@@ -335,7 +342,7 @@ impl BackendState {
                     }
                 }
             },
-            WatchTarget::InstancesDir => {
+            WatchTarget::InstancesDir | WatchTarget::ServersDir => {
                 if path.is_dir() {
                     let Some(file_name) = path.file_name() else {
                         return;

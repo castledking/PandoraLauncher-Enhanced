@@ -38,6 +38,14 @@ impl ReorderableState {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CardDragInfo {
+    pub id: bridge::instance::InstanceID,
+    pub name: SharedString,
+    pub is_server: bool,
+    pub current_group: Option<SharedString>,
+}
+
 pub struct SimpleDragPreview {
     pub name: SharedString,
 }

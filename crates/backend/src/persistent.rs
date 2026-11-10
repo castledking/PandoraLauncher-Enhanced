@@ -73,6 +73,10 @@ impl<T: Serialize + for<'de> Deserialize<'de>> Persistent<T> {
         &self.data
     }
 
+    pub fn get_ref(&self) -> &T {
+        &self.data
+    }
+
     #[inline(always)]
     pub fn sanity_check_path_eq(&self, path: &Path) {
         debug_assert_eq!(path, &*self.path);

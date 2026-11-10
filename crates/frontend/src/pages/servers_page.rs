@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bridge::{
     handle::BackendHandle,
     instance::{InstanceID, InstanceStatus},
@@ -9,17 +11,22 @@ use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
-    menu::{DropdownMenu, PopupMenuItem},
+    menu::{DropdownMenu, PopupMenu, PopupMenuItem},
     select::{Select, SelectEvent, SelectState},
+    separator::Separator,
     table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
     v_flex,
 };
+use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 use schema::server::{ServerConfiguration, ServerPlatform};
 use strum::IntoEnumIterator;
 
 use crate::{
     component::{
+        clipped_element::AnimatedClippedElement,
         named_dropdown::{NamedDropdown, NamedDropdownItem},
+        reorderable::{CardDragInfo, Reorderable, ReorderableDragInfo, ReorderableState, SimpleDragPreview},
         responsive_grid::ResponsiveGrid,
     },
     entity::{
@@ -46,6 +53,15 @@ fn servers_of(entries: &InstanceEntries, cx: &App) -> Vec<InstanceEntry> {
 
 /// Running servers first, since those are the ones being worked on.
 fn sort_servers(servers: &mut [InstanceEntry]) {
+    servers.sort_by(|a, b| {
+        let running = |entry: &InstanceEntry| entry.status != InstanceStatus::NotRunning;
+        running(b)
+            .cmp(&running(a))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+}
+
+fn sort_servers_slice(servers: &mut [&InstanceEntry]) {
     servers.sort_by(|a, b| {
         let running = |entry: &InstanceEntry| entry.status != InstanceStatus::NotRunning;
         running(b)
@@ -140,34 +156,27 @@ impl Page for ServersPage {
 
 impl Render for ServersPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let servers = servers_of(&self.data.instances.read(cx), cx);
-
-        if servers.is_empty() {
+        if self.server_table.read(cx).delegate().items.is_empty() {
             return render_empty_state(cx).into_any_element();
         }
 
         match InterfaceConfig::get(cx).servers_view_mode {
             ViewMode::Cards => {
-                let running = servers.iter().filter(|server| server.status == InstanceStatus::Running).count();
+                let (total, running) = self.server_table.read(cx).delegate().summary();
                 let header = h_flex()
                     .gap_2()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(t::server::list::summary(servers.len(), running));
+                    .child(t::server::list::summary(total, running));
 
-                let cards = servers
-                    .iter()
-                    .map(|server| render_server_card(server, &self.data.backend_handle, cx))
-                    .collect::<Vec<_>>();
-
-                let size = Size::new(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                let cards = self.server_table.update(cx, |table, cx| table.delegate().render_cards(cx));
 
                 v_flex()
                     .size_full()
                     .p_4()
                     .gap_3()
                     .child(header)
-                    .child(ResponsiveGrid::new(size).size_full().gap_4().children(cards))
+                    .child(cards)
                     .into_any_element()
             },
             // The table brings its own scrolling and its own header, so the card summary
@@ -185,20 +194,37 @@ impl Render for ServersPage {
 
 /// The row's overflow menu, shared by the card and the table row so both offer the same
 /// actions on the same terms.
-fn server_menu(server: &InstanceEntry, backend_handle: &BackendHandle, index: usize) -> impl IntoElement {
+fn server_menu(server: &InstanceEntry, data: &DataEntities, index: usize) -> impl IntoElement {
     let id = server.id;
     let name = server.name.clone();
     let folder = server.dot_minecraft_folder.clone();
-    let backend_handle = backend_handle.clone();
+    let backend_handle = data.backend_handle.clone();
+    let instances = data.instances.clone();
 
     Button::new(("server-menu", index))
         .ghost()
         .small()
-        .icon(PandoraIcon::EllipsisVertical)
+        .icon(PandoraIcon::Menu)
         .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
             menu.item(PopupMenuItem::new(t::server::action::open_folder()).on_click({
                 let folder = folder.clone();
                 move |_, window, cx| crate::open_folder(&folder, window, cx)
+            }))
+            .item(PopupMenuItem::new("Move to Group").on_click({
+                let instance_id = id;
+                let instance_name = name.clone();
+                let instances = instances.clone();
+                let backend_handle = backend_handle.clone();
+                move |_, window, cx| {
+                    crate::modals::move_instance_to_group::open_move_instance_to_group_modal(
+                        instance_id,
+                        instance_name.clone(),
+                        instances.clone(),
+                        backend_handle.clone(),
+                        window,
+                        cx,
+                    );
+                }
             }))
             // A server is an instance underneath, so it renames and takes an icon
             // exactly the way one does. The instance card offers the same two, in
@@ -430,9 +456,9 @@ pub fn start_server(id: InstanceID, backend_handle: &BackendHandle, window: &mut
     crate::modals::generic::show_notification(window, cx, t::server::action::start_error().into(), modal_action);
 }
 
-fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx: &mut App) -> Div {
+fn render_server_card(server: &InstanceEntry, data: &DataEntities, cx: &mut App) -> Stateful<Div> {
     let Some(config) = &server.configuration.server else {
-        return div();
+        return div().id(("server-card-empty", server.id.index));
     };
     let theme = cx.theme().clone();
     let id = server.id;
@@ -451,6 +477,8 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
     } else {
         div()
             .size_16()
+            .min_w_16()
+            .min_h_16()
             .rounded(theme.radius)
             .bg(theme.primary.opacity(0.12))
             .flex()
@@ -462,7 +490,7 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
 
     let subtitle = server_details(config, &server.configuration.minecraft_version);
 
-    let menu = server_menu(server, backend_handle, index);
+    let menu = server_menu(server, data, index);
 
     let warning = (!config.eula_accepted).then(|| {
         h_flex()
@@ -482,12 +510,25 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
             .child(div().truncate().child(t::server::list::linked_to(&linked)))
     });
 
+    let drag_info = CardDragInfo {
+        id: server.id,
+        name: server.name.clone(),
+        is_server: true,
+        current_group: server.configuration.group.clone().map(SharedString::from),
+    };
+    let target_id = server.id;
+    let target_name = server.name.clone();
+    let target_group = server.configuration.group.clone().map(SharedString::from);
+    let backend_handle = data.backend_handle.clone();
+
     v_flex()
+        .id(("server-card", index))
         .relative()
         .flex_1()
-        .min_w_72()
-        .p_3()
-        .gap_3()
+        .p_2()
+        .gap_2()
+        .w_full()
+        .min_w_64()
         .border_1()
         .border_color(if server.status == InstanceStatus::Running {
             theme.success.opacity(0.5)
@@ -495,15 +536,59 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
             theme.border
         })
         .rounded(theme.radius_lg)
+        .cursor_grab()
+        .on_drag(drag_info, move |info: &CardDragInfo, _, _, cx| {
+            cx.new(|_| SimpleDragPreview {
+                name: info.name.clone(),
+            })
+        })
+        .drag_over(move |style, drag: &CardDragInfo, _, cx| {
+            if drag.is_server && drag.id != target_id {
+                style.border_color(cx.theme().primary).bg(cx.theme().primary.opacity(0.06))
+            } else {
+                style
+            }
+        })
+        .on_drop({
+            let backend_handle = backend_handle.clone();
+            let target_group = target_group.clone();
+            let target_name = target_name.clone();
+            move |drag: &CardDragInfo, window, cx| {
+                if !drag.is_server || drag.id == target_id {
+                    return;
+                }
+                if drag.current_group != target_group {
+                    backend_handle.send(MessageToBackend::MoveInstanceToGroup {
+                        instance_id: drag.id,
+                        group: target_group.as_ref().map(|g| g.to_string().into()).unwrap_or_else(|| "".into()),
+                    });
+                }
+                let config = InterfaceConfig::get_mut(cx);
+                config.server_card_order.retain(|n| n != &drag.name);
+                if let Some(pos) = config.server_card_order.iter().position(|n| n == &target_name) {
+                    config.server_card_order.insert(pos, drag.name.clone());
+                } else {
+                    config.server_card_order.push(target_name.clone());
+                    config.server_card_order.push(drag.name.clone());
+                }
+                window.refresh();
+            }
+        })
         .child(div().absolute().right_2().top_2().child(menu))
         .child(
-            h_flex().gap_3().pr_8().child(icon).child(
-                v_flex()
-                    .min_w_0()
-                    .gap_0p5()
-                    .child(div().truncate().font_semibold().child(server.name.clone()))
-                    .child(div().truncate().text_xs().text_color(theme.muted_foreground).child(subtitle)),
-            ),
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(icon)
+                .child(
+                    v_flex()
+                        .truncate()
+                        .w_full()
+                        .gap_0p5()
+                        .child(div().truncate().font_semibold().child(server.name.clone()))
+                        .child(div().truncate().text_xs().text_color(theme.muted_foreground).child(subtitle))
+                        .pr_6(),
+                ),
         )
         .child(
             h_flex()
@@ -516,7 +601,7 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
         .child(
             h_flex()
                 .gap_2()
-                .child(power_button(id, server.status, backend_handle).flex_1().small())
+                .child(power_button(id, server.status, &data.backend_handle).flex_1().small())
                 .child(
                     Button::new(("server-open", index))
                         .flex_1()
@@ -539,12 +624,50 @@ fn render_server_card(server: &InstanceEntry, backend_handle: &BackendHandle, cx
         )
 }
 
+#[derive(Clone)]
+struct ServerGroupMenu {
+    members: Vec<(InstanceID, SharedString)>,
+    backend_handle: BackendHandle,
+}
+
+impl ServerGroupMenu {
+    fn build(&self, menu: PopupMenu, group_name: SharedString) -> PopupMenu {
+        menu.item(PopupMenuItem::new(t::instance::group::ungroup()).on_click({
+            let menu = self.clone();
+            let group_name = group_name.clone();
+            move |_, _, cx| {
+                for (instance_id, _) in &menu.members {
+                    menu.backend_handle.send(MessageToBackend::MoveInstanceToGroup {
+                        instance_id: *instance_id,
+                        group: "".into(),
+                    });
+                }
+                crate::modals::delete_group::forget_group(&group_name, cx);
+            }
+        }))
+        .separator()
+        .item(crate::component::instance_list::delete_menu_item(t::instance::group::delete()).on_click({
+            let menu = self.clone();
+            move |_, window, cx| {
+                crate::modals::delete_group::open_delete_group(
+                    group_name.clone(),
+                    menu.members.clone(),
+                    menu.backend_handle.clone(),
+                    window,
+                    cx,
+                );
+            }
+        }))
+    }
+}
+
 /// The list view's backing data, kept in step with the instance entries the same way the
 /// instance list is, so a server starting, renaming or going away shows up without the
 /// page having to rebuild the table.
 pub struct ServerList {
     columns: Vec<Column>,
-    items: Vec<InstanceEntry>,
+    pub items: Vec<InstanceEntry>,
+    reorderable_state: Entity<ReorderableState>,
     data: DataEntities,
     _instance_added_subscription: Subscription,
     _instance_removed_subscription: Subscription,
@@ -575,13 +698,19 @@ impl ServerList {
                 });
             let _instance_modified_subscription =
                 cx.subscribe::<_, InstanceModifiedEvent>(&instances, |table, _, event, cx| {
-                    if event.instance.configuration.server.is_some()
-                        && let Some(entry) =
-                            table.delegate_mut().items.iter_mut().find(|entry| entry.id == event.instance.id)
-                    {
-                        *entry = event.instance.clone();
-                        cx.notify();
+                    let is_server = event.instance.configuration.server.is_some();
+                    let items = &mut table.delegate_mut().items;
+                    if is_server {
+                        if let Some(entry) = items.iter_mut().find(|entry| entry.id == event.instance.id) {
+                            *entry = event.instance.clone();
+                        } else {
+                            items.insert(0, event.instance.clone());
+                            sort_servers(items);
+                        }
+                    } else {
+                        items.retain(|entry| entry.id != event.instance.id);
                     }
+                    cx.notify();
                 });
 
             let server_list = Self {
@@ -609,6 +738,7 @@ impl ServerList {
                     Column::new("remove", "").width(44.).fixed_left().movable(false).resizable(false),
                 ],
                 items,
+                reorderable_state: ReorderableState::new(window, cx),
                 data: data.clone(),
                 _instance_added_subscription,
                 _instance_removed_subscription,
@@ -616,6 +746,264 @@ impl ServerList {
             };
             TableState::new(server_list, window, cx)
         })
+    }
+
+    pub fn summary(&self) -> (usize, usize) {
+        let running = self.items.iter().filter(|s| s.status == InstanceStatus::Running).count();
+        (self.items.len(), running)
+    }
+
+    pub fn render_cards(&self, cx: &mut App) -> AnyElement {
+        let mut members = IndexMap::<Option<Arc<str>>, Vec<&InstanceEntry>>::default();
+        for item in &self.items {
+            members.entry(item.configuration.group.clone()).or_default().push(item);
+        }
+        let card_ordering = &InterfaceConfig::get(cx).server_card_order;
+        for group in members.values_mut() {
+            if card_ordering.is_empty() {
+                sort_servers_slice(group);
+            } else {
+                group.sort_by(|a, b| {
+                let pos_a = card_ordering.iter().position(|name| name == &a.name);
+                let pos_b = card_ordering.iter().position(|name| name == &b.name);
+                match (pos_a, pos_b) {
+                    (Some(pa), Some(pb)) => pa.cmp(&pb),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => {
+                        let running = |entry: &InstanceEntry| entry.status != InstanceStatus::NotRunning;
+                        running(b)
+                            .cmp(&running(a))
+                            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    }
+                }
+            });
+            }
+        }
+
+        let mut menus = FxHashMap::default();
+        let mut by_group = IndexMap::<Option<Arc<str>>, Vec<AnyElement>>::default();
+        for (group, items) in members {
+            if let Some(group) = &group {
+                let members = items.iter().map(|item| (item.id, item.name.clone())).collect();
+                menus.insert(
+                    group.clone(),
+                    ServerGroupMenu {
+                        members,
+                        backend_handle: self.data.backend_handle.clone(),
+                    },
+                );
+            }
+            let cards = items.into_iter().map(|item| self.render_card(item, cx).into_any_element()).collect();
+            by_group.insert(group, cards);
+        }
+
+        let size = Size::new(AvailableSpace::Definite(px(256.0)), AvailableSpace::MinContent);
+        // Groups get headers whenever there is one at all, so a lone group can still be collapsed
+        if by_group.len() == 1 && by_group.contains_key(&None) {
+            ResponsiveGrid::new(size)
+                .size_full()
+                .gap_4()
+                .children(by_group.into_iter().next().unwrap().1)
+                .into_any_element()
+        } else {
+            let size_without_no_group = if by_group.contains_key(&None) {
+                by_group.len() - 1
+            } else {
+                by_group.len()
+            };
+
+            let ordering = &InterfaceConfig::get(cx).server_group_order;
+            let fallback_ordering = &InterfaceConfig::get(cx).instance_group_order;
+
+            by_group.sort_by_cached_key(|group_name, _| {
+                if let Some(group_name) = group_name {
+                    ordering
+                        .iter()
+                        .position(|ordering_name| ordering_name == group_name)
+                        .or_else(|| {
+                            fallback_ordering
+                                .iter()
+                                .position(|ordering_name| ordering_name == group_name)
+                        })
+                        .map(|v| v + 1)
+                        .unwrap_or(0)
+                } else {
+                    std::usize::MAX
+                }
+            });
+
+            if size_without_no_group == 1 {
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .children(by_group.into_iter().map(|(group_name, children)| {
+                        let menu = group_name.as_ref().and_then(|group| menus.remove(group));
+                        let group_name = group_name.clone().map(SharedString::from).unwrap_or("No Group".into());
+                        Self::render_card_group(group_name, children, menu, self.data.backend_handle.clone(), cx, None)
+                    }))
+                    .into_any_element()
+            } else {
+                if !cx.has_active_drag() {
+                    self.reorderable_state.update(cx, |state, cx| {
+                        let Some((from, to)) = state.take_reorder() else {
+                            return;
+                        };
+
+                        // Move element
+                        let Some((key, value)) = by_group.shift_remove_index(from) else {
+                            return;
+                        };
+                        by_group.shift_insert(to, key, value);
+
+                        // Update ordering
+                        let order = &mut InterfaceConfig::get_mut(cx).server_group_order;
+                        order.clear();
+                        for (key, _) in &by_group {
+                            if let Some(key) = key {
+                                order.push(key.clone());
+                            }
+                        }
+                    });
+                }
+
+                let no_group_children = by_group.swap_remove(&None);
+
+                let backend_handle = self.data.backend_handle.clone();
+                let reorderable =
+                    Reorderable::new(&self.reorderable_state, by_group.len(), cx, move |render_index, info, _, cx| {
+                        let Some((group_name, children)) = by_group.get_index_mut(render_index) else {
+                            return div().into_any_element();
+                        };
+                        let Some(group) = group_name.clone() else {
+                            return div().into_any_element();
+                        };
+                        let menu = menus.get(&group).cloned();
+                        Self::render_card_group(group.into(), std::mem::take(children), menu, backend_handle.clone(), cx, Some(info))
+                    })
+                    .w_full()
+                    .v_flex()
+                    .gap_2()
+                    .into_any_element();
+
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(reorderable)
+                    .when_some(no_group_children, |this, no_group_children| {
+                        this.child(Self::render_card_group("No Group".into(), no_group_children, None, self.data.backend_handle.clone(), cx, None))
+                    })
+                    .into_any_element()
+            }
+        }
+    }
+
+    fn render_card_group(
+        group_name: SharedString,
+        children: Vec<AnyElement>,
+        menu: Option<ServerGroupMenu>,
+        backend_handle: BackendHandle,
+        cx: &mut App,
+        drag_info: Option<ReorderableDragInfo>,
+    ) -> AnyElement {
+        let size = Size::new(AvailableSpace::Definite(px(256.0)), AvailableSpace::MinContent);
+
+        let open = !InterfaceConfig::get(cx).server_groups_closed.contains(&group_name);
+        let group_target = (group_name != "No Group").then(|| group_name.to_string().into());
+        let backend = backend_handle.clone();
+
+        v_flex()
+            .child(
+                h_flex()
+                    .pb_1()
+                    .gap_2()
+                    .drag_over(move |style, drag: &CardDragInfo, _, cx| {
+                        if drag.is_server {
+                            style.bg(cx.theme().primary.opacity(0.12)).rounded(cx.theme().radius)
+                        } else {
+                            style
+                        }
+                    })
+                    .on_drop({
+                        let backend = backend.clone();
+                        let group_target = group_target.clone();
+                        let target_group_str = group_target.as_ref().map(|g: &Arc<str>| SharedString::from(g.clone()));
+                        move |drag: &CardDragInfo, window, _cx| {
+                            if !drag.is_server {
+                                return;
+                            }
+                            if drag.current_group != target_group_str {
+                                backend.send(MessageToBackend::MoveInstanceToGroup {
+                                    instance_id: drag.id,
+                                    group: group_target.clone().unwrap_or_else(|| "".into()),
+                                });
+                                window.refresh();
+                            }
+                        }
+                    })
+                    .when_some(drag_info, |this, drag_info| {
+                        this.child(drag_info.create_grip(cx, {
+                            let group_name = group_name.clone();
+                            move |_: &ReorderableDragInfo, _, _, cx| {
+                                cx.new(|_| SimpleDragPreview {
+                                    name: group_name.clone(),
+                                })
+                            }
+                        }))
+                    })
+                    .child(group_name.clone())
+                    .child(
+                        h_flex()
+                            .when_some(menu, |this, menu| {
+                                this.child(
+                                    Button::new((group_name.clone(), 0x34C51F2A))
+                                        .ghost()
+                                        .small()
+                                        .icon(PandoraIcon::Menu)
+                                        .dropdown_menu_with_anchor(Anchor::TopLeft, {
+                                            let group_name = group_name.clone();
+                                            move |this, _, _| menu.build(this, group_name.clone())
+                                        }),
+                                )
+                            })
+                            .child(
+                                Button::new((group_name.clone(), 0x34C51F2B))
+                                    .ghost()
+                                    .small()
+                                    .icon(if open {
+                                        PandoraIcon::ChevronDown
+                                    } else {
+                                        PandoraIcon::ChevronLeft
+                                    })
+                                    .on_click({
+                                        let group_name = group_name.clone();
+                                        move |_, _, cx| {
+                                            if open {
+                                                InterfaceConfig::get_mut(cx)
+                                                    .server_groups_closed
+                                                    .insert(group_name.clone());
+                                            } else {
+                                                InterfaceConfig::get_mut(cx).server_groups_closed.remove(&group_name);
+                                            }
+                                        }
+                                    }),
+                            ),
+                    ),
+            )
+            .child(Separator::horizontal().pb_2())
+            .child(AnimatedClippedElement::new((group_name, 0x34C51F2C).into(), open, move |amount| {
+                ResponsiveGrid::new(size)
+                    .size_full()
+                    .gap_4()
+                    .children(children)
+                    .opacity(amount)
+                    .into_any_element()
+            }))
+            .into_any_element()
+    }
+
+    fn render_card(&self, item: &InstanceEntry, cx: &mut App) -> Stateful<Div> {
+        render_server_card(item, &self.data, cx)
     }
 }
 

@@ -214,6 +214,7 @@ pub fn start(
 
     // Create initial directories
     let _ = std::fs::create_dir_all(&directories.instances_dir);
+    let _ = std::fs::create_dir_all(&directories.servers_dir);
     state_file_watching.watch_filesystem(directories.root_launcher_dir.clone(), WatchTarget::RootDir);
 
     // Load accounts
@@ -259,6 +260,7 @@ pub fn start(
 pub enum WatchTarget {
     RootDir,
     InstancesDir,
+    ServersDir,
     InvalidInstanceDir,
     InstanceDir {
         id: InstanceID,
@@ -291,9 +293,12 @@ impl BackendStateInstances {
     /// Whether an instance other than `except` goes by `name`, either as its name or as its
     /// folder's. The two differ while a rename waits for the instance to stop, and until then
     /// the old folder is just as much in use.
-    pub fn is_name_taken(&self, name: &str, except: Option<InstanceID>) -> bool {
+    pub fn is_name_taken(&self, name: &str, except: Option<InstanceID>, is_server: bool) -> bool {
         self.instances.iter().any(|instance| {
-            Some(instance.id) != except && (instance.name == name || instance.folder_name() == Some(name))
+            let instance_is_server = instance.configuration.get_ref().server.is_some();
+            instance_is_server == is_server
+                && Some(instance.id) != except
+                && (instance.name == name || instance.folder_name() == Some(name))
         })
     }
 }
@@ -376,56 +381,103 @@ impl BackendState {
         Arc::new(self).handle(recv, watcher_rx).await;
     }
 
+    pub fn migrate_servers_if_needed(&self) {
+        let instances_dir = &self.directories.instances_dir;
+        let servers_dir = &self.directories.servers_dir;
+        let _ = std::fs::create_dir_all(servers_dir);
+
+        let Ok(entries) = std::fs::read_dir(instances_dir) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(file_name) = path.file_name() else {
+                continue;
+            };
+            if file_name.as_encoded_bytes().first() == Some(&b'.') {
+                continue;
+            }
+
+            let info_path = path.join("info_v1.json");
+            if let Ok(content) = std::fs::read_to_string(&info_path)
+                && let Ok(config) = serde_json::from_str::<InstanceConfiguration>(&content)
+                && config.server.is_some()
+            {
+                let dest = servers_dir.join(file_name);
+                if !dest.exists() {
+                    log::info!("Migrating server from {:?} to {:?}", path, dest);
+                    if let Err(err) = std::fs::rename(&path, &dest) {
+                        log::error!("Failed to migrate server {:?}: {err}", file_name);
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn load_all_instances(&self) {
         log::info!("Loading all instances");
+        self.migrate_servers_if_needed();
 
         let mut paths_with_time = Vec::new();
 
         self.file_watching
             .write()
             .watch_filesystem(self.directories.instances_dir.clone(), WatchTarget::InstancesDir);
-        for entry in std::fs::read_dir(&self.directories.instances_dir).unwrap() {
-            let Ok(entry) = entry else {
-                log::warn!("Error reading directory in instances folder: {:?}", entry.unwrap_err());
+        self.file_watching
+            .write()
+            .watch_filesystem(self.directories.servers_dir.clone(), WatchTarget::ServersDir);
+
+        for dir in [&self.directories.instances_dir, &self.directories.servers_dir] {
+            let Ok(entries) = std::fs::read_dir(dir) else {
                 continue;
             };
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    log::warn!("Error reading directory in instances folder: {:?}", entry.unwrap_err());
+                    continue;
+                };
 
-            let path = entry.path();
+                let path = entry.path();
 
-            let Some(file_name) = path.file_name() else {
-                continue;
-            };
-            if file_name.as_encoded_bytes()[0] == b'.' {
-                continue;
-            }
-
-            let mut time = SystemTime::UNIX_EPOCH;
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
+                let Some(file_name) = path.file_name() else {
+                    continue;
+                };
+                if file_name.as_encoded_bytes()[0] == b'.' {
                     continue;
                 }
-                if let Ok(created) = metadata.created() {
-                    time = time.max(created);
-                }
-                if let Ok(modified) = metadata.modified() {
-                    time = time.max(modified);
-                }
-            }
 
-            // options.txt exists in every minecraft version, so we use its
-            // modified time to determine the latest instance as well
-            let mut options_txt = path.join(".minecraft");
-            options_txt.push("options.txt");
-            if let Ok(metadata) = options_txt.metadata() {
-                if let Ok(created) = metadata.created() {
-                    time = time.max(created);
+                let mut time = SystemTime::UNIX_EPOCH;
+                if let Ok(metadata) = entry.metadata() {
+                    if metadata.is_file() {
+                        continue;
+                    }
+                    if let Ok(created) = metadata.created() {
+                        time = time.max(created);
+                    }
+                    if let Ok(modified) = metadata.modified() {
+                        time = time.max(modified);
+                    }
                 }
-                if let Ok(modified) = metadata.modified() {
-                    time = time.max(modified);
-                }
-            }
 
-            paths_with_time.push((path, time));
+                // options.txt exists in every minecraft version, so we use its
+                // modified time to determine the latest instance as well
+                let mut options_txt = path.join(".minecraft");
+                options_txt.push("options.txt");
+                if let Ok(metadata) = options_txt.metadata() {
+                    if let Ok(created) = metadata.created() {
+                        time = time.max(created);
+                    }
+                    if let Ok(modified) = metadata.modified() {
+                        time = time.max(modified);
+                    }
+                }
+
+                paths_with_time.push((path, time));
+            }
         }
 
         paths_with_time.sort_by_key(|(_, time)| *time);
@@ -511,7 +563,7 @@ impl BackendState {
             self.restore_mods_folder_if_stopped(instance);
 
             if show_success && instance.should_send_notifications() {
-                let kind = if instance.configuration.get().server.is_some() {
+                let kind = if instance.configuration.get_ref().server.is_some() {
                     "Server"
                 } else {
                     "Instance"
@@ -1564,10 +1616,32 @@ impl BackendState {
         icon: Option<EmbeddedOrRaw>,
         configure: impl FnOnce(&mut InstanceConfiguration),
     ) -> Option<PathBuf> {
-        log::info!("Creating instance {name}");
+        self.create_instance_configured_inner(
+            &self.directories.instances_dir,
+            name,
+            version,
+            loader,
+            icon,
+            false,
+            configure,
+        )
+    }
+
+    pub fn create_instance_configured_inner(
+        &self,
+        parent_dir: &Path,
+        name: &str,
+        version: &str,
+        loader: Loader,
+        icon: Option<EmbeddedOrRaw>,
+        is_server: bool,
+        configure: impl FnOnce(&mut InstanceConfiguration),
+    ) -> Option<PathBuf> {
+        let kind = if is_server { "server" } else { "instance" };
+        log::info!("Creating {kind} {name}");
         if !crate::fs::is_single_component_path_str(&name) {
             self.send
-                .send_warning(format!("Unable to create instance, name must not be a path: {}", name));
+                .send_warning(format!("Unable to create {kind}, name must not be a path: {}", name));
             return None;
         }
         if !sanitize_filename::is_sanitized_with_options(
@@ -1577,19 +1651,24 @@ impl BackendState {
                 ..Default::default()
             },
         ) {
-            self.send.send_warning(format!("Unable to create instance, name is invalid: {}", name));
+            self.send.send_warning(format!("Unable to create {kind}, name is invalid: {}", name));
             return None;
         }
-        if self.instance_state.read().is_name_taken(name, None) {
-            self.send.send_warning("Unable to create instance, name is already used".to_string());
+        if self.instance_state.read().is_name_taken(name, None, is_server) {
+            self.send.send_warning(format!("Unable to create {kind}, name is already used"));
             return None;
         }
 
+        let watch_target = if is_server {
+            WatchTarget::ServersDir
+        } else {
+            WatchTarget::InstancesDir
+        };
         self.file_watching
             .write()
-            .watch_filesystem(self.directories.instances_dir.clone(), WatchTarget::InstancesDir);
+            .watch_filesystem(parent_dir.to_path_buf().into(), watch_target);
 
-        let instance_dir = self.directories.instances_dir.join(name);
+        let instance_dir = parent_dir.join(name);
 
         _ = std::fs::create_dir_all(&instance_dir);
 
@@ -1637,8 +1716,10 @@ impl BackendState {
             return;
         }
         let mut instance_state = self.instance_state.write();
-        if instance_state.is_name_taken(name, Some(id)) {
-            self.send.send_warning("Unable to rename instance, name is already used".to_string());
+        let is_server = instance_state.instances.get(id).map_or(false, |inst| inst.configuration.get_ref().server.is_some());
+        if instance_state.is_name_taken(name, Some(id), is_server) {
+            let kind = if is_server { "server" } else { "instance" };
+            self.send.send_warning(format!("Unable to rename {kind}, name is already used"));
             return;
         }
         let Some(instance) = instance_state.instances.get_mut(id) else {
@@ -1684,7 +1765,13 @@ impl BackendState {
             instance.mark_all_dirty(self, false);
         }
 
-        let new_instance_dir = self.directories.instances_dir.join(name);
+        let is_server = instance.configuration.get_ref().server.is_some();
+        let parent_dir = if is_server {
+            &self.directories.servers_dir
+        } else {
+            &self.directories.instances_dir
+        };
+        let new_instance_dir = parent_dir.join(name);
         let Err(err) = std::fs::rename(&instance.root_path, new_instance_dir) else {
             return;
         };

@@ -113,19 +113,16 @@ impl Element for ResponsiveGrid {
                         let horizontal_count =
                             (bounds_width_plus_padding / min_element_width_plus_padding).floor().max(1.0) as usize;
 
-                        let (element_width, horizontal_count) = if horizontal_count >= children_count {
-                            (min_element_width, children_count)
+                        let (width, horizontal_count) = if horizontal_count >= children_count {
+                            (
+                                min_element_width * children_count + gap_width * children_count.saturating_sub(1),
+                                children_count,
+                            )
                         } else {
-                            let padding_width = gap_width * (horizontal_count - 1);
-                            let width = (base_width - padding_width) / horizontal_count as f32;
-
-                            (width, horizontal_count)
+                            (base_width, horizontal_count)
                         };
 
-                        (
-                            element_width * children_count + gap_width * children_count.saturating_sub(1),
-                            horizontal_count,
-                        )
+                        (width, horizontal_count)
                     };
 
                     let horizontal_count = if horizontal_count == 0 { 1 } else { horizontal_count };

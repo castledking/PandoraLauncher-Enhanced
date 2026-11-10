@@ -130,6 +130,14 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_groups_closed: FxHashSet<SharedString>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub server_group_order: Vec<Arc<str>>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub server_groups_closed: FxHashSet<SharedString>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_card_order: Vec<SharedString>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub server_card_order: Vec<SharedString>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_subpage: InstanceSubpageType,
 
     // Content
@@ -586,6 +594,10 @@ impl Default for InterfaceConfig {
             servers_view_mode: Default::default(),
             instance_group_order: Vec::new(),
             instance_groups_closed: Default::default(),
+            server_group_order: Vec::new(),
+            server_groups_closed: Default::default(),
+            instance_card_order: Vec::new(),
+            server_card_order: Vec::new(),
             instance_subpage: Default::default(),
             collapse_capes_in_skins_page: false,
             skin_list_sort_desc: false,

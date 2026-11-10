@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bridge::{instance::InstanceStatus, message::MessageToBackend};
+use bridge::{handle::BackendHandle, instance::InstanceStatus, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, Sizable, StyledExt,
@@ -17,7 +17,7 @@ use rustc_hash::FxHashMap;
 use crate::{
     component::{
         clipped_element::AnimatedClippedElement,
-        reorderable::{Reorderable, ReorderableDragInfo, ReorderableState, SimpleDragPreview},
+        reorderable::{CardDragInfo, Reorderable, ReorderableDragInfo, ReorderableState, SimpleDragPreview},
         responsive_grid::ResponsiveGrid,
     },
     entity::{
@@ -111,13 +111,22 @@ impl InstanceList {
         for item in &self.items {
             members.entry(item.configuration.group.clone()).or_default().push(item);
         }
+        let card_ordering = &InterfaceConfig::get(cx).instance_card_order;
         for group in members.values_mut() {
-            // Stable, so everything but the presets stays most recently played first
-            group.sort_by_key(|item| preset_position(item));
+            group.sort_by(|a, b| {
+                let pos_a = card_ordering.iter().position(|name| name == &a.name);
+                let pos_b = card_ordering.iter().position(|name| name == &b.name);
+                match (pos_a, pos_b) {
+                    (Some(pa), Some(pb)) => pa.cmp(&pb),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => preset_position(a).cmp(&preset_position(b)),
+                }
+            });
         }
 
         let mut menus = FxHashMap::default();
-        let mut by_group = IndexMap::<Option<Arc<str>>, Vec<Div>>::default();
+        let mut by_group = IndexMap::<Option<Arc<str>>, Vec<AnyElement>>::default();
         for (group, items) in members {
             if let Some(group) = &group {
                 let members = items.iter().map(|item| (item.id, item.name.clone())).collect();
@@ -129,11 +138,11 @@ impl InstanceList {
                     },
                 );
             }
-            let cards = items.into_iter().map(|item| self.render_card(item, cx)).collect();
+            let cards = items.into_iter().map(|item| self.render_card(item, cx).into_any_element()).collect();
             by_group.insert(group, cards);
         }
 
-        let size = Size::new(gpui::AvailableSpace::MinContent, gpui::AvailableSpace::MinContent);
+        let size = Size::new(AvailableSpace::Definite(px(256.0)), AvailableSpace::MinContent);
         // Groups get headers whenever there is one at all, so a lone group can still be collapsed
         if by_group.len() == 1 && by_group.contains_key(&None) {
             ResponsiveGrid::new(size)
@@ -169,7 +178,7 @@ impl InstanceList {
                     .children(by_group.into_iter().map(|(group_name, children)| {
                         let menu = group_name.as_ref().and_then(|group| menus.remove(group));
                         let group_name = group_name.clone().map(SharedString::from).unwrap_or("No Group".into());
-                        Self::render_card_group(group_name, children, menu, cx, None)
+                        Self::render_card_group(group_name, children, menu, self.data.backend_handle.clone(), cx, None)
                     }))
                     .into_any_element()
             } else {
@@ -198,6 +207,7 @@ impl InstanceList {
 
                 let no_group_children = by_group.swap_remove(&None);
 
+                let backend_handle = self.data.backend_handle.clone();
                 let reorderable =
                     Reorderable::new(&self.reorderable_state, by_group.len(), cx, move |render_index, info, _, cx| {
                         let Some((group_name, children)) = by_group.get_index_mut(render_index) else {
@@ -207,7 +217,7 @@ impl InstanceList {
                             return div().into_any_element();
                         };
                         let menu = menus.get(&group).cloned();
-                        Self::render_card_group(group.into(), std::mem::take(children), menu, cx, Some(info))
+                        Self::render_card_group(group.into(), std::mem::take(children), menu, backend_handle.clone(), cx, Some(info))
                     })
                     .w_full()
                     .v_flex()
@@ -219,7 +229,7 @@ impl InstanceList {
                     .gap_2()
                     .child(reorderable)
                     .when_some(no_group_children, |this, no_group_children| {
-                        this.child(Self::render_card_group("No Group".into(), no_group_children, None, cx, None))
+                        this.child(Self::render_card_group("No Group".into(), no_group_children, None, self.data.backend_handle.clone(), cx, None))
                     })
                     .into_any_element()
             }
@@ -228,20 +238,47 @@ impl InstanceList {
 
     fn render_card_group(
         group_name: SharedString,
-        children: Vec<Div>,
+        children: Vec<AnyElement>,
         menu: Option<GroupMenu>,
+        backend_handle: BackendHandle,
         cx: &mut App,
         drag_info: Option<ReorderableDragInfo>,
     ) -> AnyElement {
-        let size = Size::new(gpui::AvailableSpace::MinContent, gpui::AvailableSpace::MinContent);
+        let size = Size::new(AvailableSpace::Definite(px(256.0)), AvailableSpace::MinContent);
 
         let open = !InterfaceConfig::get(cx).instance_groups_closed.contains(&group_name);
+        let group_target = (group_name != "No Group").then(|| group_name.to_string().into());
+        let backend = backend_handle.clone();
 
         v_flex()
             .child(
                 h_flex()
                     .pb_1()
                     .gap_2()
+                    .drag_over(move |style, drag: &CardDragInfo, _, cx| {
+                        if !drag.is_server {
+                            style.bg(cx.theme().primary.opacity(0.12)).rounded(cx.theme().radius)
+                        } else {
+                            style
+                        }
+                    })
+                    .on_drop({
+                        let backend = backend.clone();
+                        let group_target = group_target.clone();
+                        let target_group_str = group_target.as_ref().map(|g: &Arc<str>| SharedString::from(g.clone()));
+                        move |drag: &CardDragInfo, window, _cx| {
+                            if drag.is_server {
+                                return;
+                            }
+                            if drag.current_group != target_group_str {
+                                backend.send(MessageToBackend::MoveInstanceToGroup {
+                                    instance_id: drag.id,
+                                    group: group_target.clone().unwrap_or_else(|| "".into()),
+                                });
+                                window.refresh();
+                            }
+                        }
+                    })
                     .when_some(drag_info, |this, drag_info| {
                         this.child(drag_info.create_grip(cx, {
                             let group_name = group_name.clone();
@@ -303,7 +340,7 @@ impl InstanceList {
             .into_any_element()
     }
 
-    fn render_card(&self, item: &InstanceEntry, cx: &mut App) -> Div {
+    fn render_card(&self, item: &InstanceEntry, cx: &mut App) -> Stateful<Div> {
         let index = item.id.index;
         let loader_and_version = format!(
             "{} {}",
@@ -402,8 +439,20 @@ impl InstanceList {
                 }
             });
 
+        let drag_info = CardDragInfo {
+            id: item.id,
+            name: item.name.clone(),
+            is_server: false,
+            current_group: item.configuration.group.clone().map(SharedString::from),
+        };
+        let target_id = item.id;
+        let target_name = item.name.clone();
+        let target_group = item.configuration.group.clone().map(SharedString::from);
+        let backend_handle = self.data.backend_handle.clone();
+
         let theme = cx.theme();
         v_flex()
+            .id(("instance-card", index))
             .flex_1()
             .p_2()
             .gap_2()
@@ -412,6 +461,44 @@ impl InstanceList {
             .border_1()
             .border_color(theme.border)
             .rounded(theme.radius_lg)
+            .cursor_grab()
+            .on_drag(drag_info, move |info: &CardDragInfo, _, _, cx| {
+                cx.new(|_| SimpleDragPreview {
+                    name: info.name.clone(),
+                })
+            })
+            .drag_over(move |style, drag: &CardDragInfo, _, cx| {
+                if !drag.is_server && drag.id != target_id {
+                    style.border_color(cx.theme().primary).bg(cx.theme().primary.opacity(0.06))
+                } else {
+                    style
+                }
+            })
+            .on_drop({
+                let backend_handle = backend_handle.clone();
+                let target_group = target_group.clone();
+                let target_name = target_name.clone();
+                move |drag: &CardDragInfo, window, cx| {
+                    if drag.is_server || drag.id == target_id {
+                        return;
+                    }
+                    if drag.current_group != target_group {
+                        backend_handle.send(MessageToBackend::MoveInstanceToGroup {
+                            instance_id: drag.id,
+                            group: target_group.as_ref().map(|g| g.to_string().into()).unwrap_or_else(|| "".into()),
+                        });
+                    }
+                    let config = InterfaceConfig::get_mut(cx);
+                    config.instance_card_order.retain(|n| n != &drag.name);
+                    if let Some(pos) = config.instance_card_order.iter().position(|n| n == &target_name) {
+                        config.instance_card_order.insert(pos, drag.name.clone());
+                    } else {
+                        config.instance_card_order.push(target_name.clone());
+                        config.instance_card_order.push(drag.name.clone());
+                    }
+                    window.refresh();
+                }
+            })
             .child(div().absolute().right_2().top_2().child(menu))
             .child(
                 h_flex()

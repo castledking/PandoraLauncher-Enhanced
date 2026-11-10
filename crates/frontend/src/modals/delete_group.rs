@@ -55,4 +55,6 @@ pub fn forget_group(group_name: &SharedString, cx: &mut App) {
     let config = InterfaceConfig::get_mut(cx);
     config.instance_group_order.retain(|name| **name != **group_name);
     config.instance_groups_closed.remove(group_name);
+    config.server_group_order.retain(|name| **name != **group_name);
+    config.server_groups_closed.remove(group_name);
 }

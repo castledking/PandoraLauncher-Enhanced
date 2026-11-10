@@ -1992,7 +1992,7 @@ impl BackendState {
 
                 let mut is_normal_instance_folder = false;
 
-                if let Ok(path) = path.strip_prefix(&self.directories.instances_dir)
+                if let Ok(path) = path.strip_prefix(&self.directories.instances_dir).or_else(|_| path.strip_prefix(&self.directories.servers_dir))
                     && crate::fs::is_single_component_path(path)
                 {
                     is_normal_instance_folder = true;

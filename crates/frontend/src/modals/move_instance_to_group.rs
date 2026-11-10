@@ -41,11 +41,17 @@ impl MoveInstanceToGroupModalState {
             .collect::<FxHashSet<_>>();
 
         let mut existing_groups = existing_groups.into_iter().map(SharedString::from).collect::<Vec<_>>();
-        let ordering = &InterfaceConfig::get(cx).instance_group_order;
+        let instance_ordering = &InterfaceConfig::get(cx).instance_group_order;
+        let server_ordering = &InterfaceConfig::get(cx).server_group_order;
         existing_groups.sort_by_cached_key(|group_name| {
-            ordering
+            server_ordering
                 .iter()
                 .position(|ordering_name| &**ordering_name == group_name.as_str())
+                .or_else(|| {
+                    instance_ordering
+                        .iter()
+                        .position(|ordering_name| &**ordering_name == group_name.as_str())
+                })
                 .map(|v| v + 1)
                 .unwrap_or(0)
         });

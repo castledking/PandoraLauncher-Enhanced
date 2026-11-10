@@ -700,10 +700,18 @@ impl BackendState {
                 .map(|instance| instance.name.as_str().into());
         }
 
-        let Some(instance_dir) = self.create_instance_configured(&name, &version, loader, None, |configuration| {
-            configuration.group = group;
-            configuration.server = Some(server);
-        }) else {
+        let Some(instance_dir) = self.create_instance_configured_inner(
+            &self.directories.servers_dir,
+            &name,
+            &version,
+            loader,
+            None,
+            true,
+            |configuration| {
+                configuration.group = group;
+                configuration.server = Some(server);
+            },
+        ) else {
             // create_instance_configured already reported why
             modal_action.set_finished();
             return;

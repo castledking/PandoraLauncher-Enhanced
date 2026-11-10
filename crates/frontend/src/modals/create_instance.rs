@@ -64,8 +64,15 @@ impl CreateInstanceModalState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let instance_names: Arc<[SharedString]> =
-            instances.read(cx).entries.iter().map(|(_, v)| v.read(cx).name.clone()).collect();
+        let instance_names: Arc<[SharedString]> = instances
+            .read(cx)
+            .entries
+            .values()
+            .filter_map(|entry| {
+                let entry = entry.read(cx);
+                entry.configuration.server.is_none().then(|| entry.name.clone())
+            })
+            .collect();
 
         let existing_groups = {
             let mut seen = rustc_hash::FxHashSet::default();

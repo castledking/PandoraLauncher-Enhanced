@@ -4,6 +4,7 @@ use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBack
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt, WindowExt,
+    menu::{DropdownMenu, PopupMenuItem},
     alert::Alert,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
@@ -22,6 +23,7 @@ use schema::{
 
 use crate::{
     component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
+    interface_config::InterfaceConfig,
     entity::{
         instance::InstanceEntries,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
@@ -69,6 +71,7 @@ struct CreateServerModalState {
     name_input_state: Entity<InputState>,
     source_dropdown: Entity<SelectState<NamedDropdown<ClientSource>>>,
     group_input_state: Entity<InputState>,
+    existing_groups: Vec<SharedString>,
     platform: ServerPlatform,
     custom_jar_enabled: bool,
     custom_jar: Option<Arc<Path>>,
@@ -90,8 +93,15 @@ impl CreateServerModalState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let instance_names: Arc<[SharedString]> =
-            instances.read(cx).entries.values().map(|entry| entry.read(cx).name.clone()).collect();
+        let instance_names: Arc<[SharedString]> = instances
+            .read(cx)
+            .entries
+            .values()
+            .filter_map(|entry| {
+                let entry = entry.read(cx);
+                entry.configuration.server.is_some().then(|| entry.name.clone())
+            })
+            .collect();
 
         // Only client instances that actually have mods are worth generating a server from
         let mut sources = vec![NamedDropdownItem {
@@ -144,6 +154,28 @@ impl CreateServerModalState {
         let group_input_state =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::server::create::group_placeholder()));
 
+        let existing_groups = instances
+            .read(cx)
+            .entries
+            .values()
+            .filter_map(|entry| entry.read(cx).configuration.group.clone())
+            .collect::<rustc_hash::FxHashSet<_>>();
+        let mut existing_groups = existing_groups.into_iter().map(SharedString::from).collect::<Vec<_>>();
+        let server_ordering = &InterfaceConfig::get(cx).server_group_order;
+        let instance_ordering = &InterfaceConfig::get(cx).instance_group_order;
+        existing_groups.sort_by_cached_key(|group_name| {
+            server_ordering
+                .iter()
+                .position(|ordering_name| &**ordering_name == group_name.as_str())
+                .or_else(|| {
+                    instance_ordering
+                        .iter()
+                        .position(|ordering_name| &**ordering_name == group_name.as_str())
+                })
+                .map(|v| v + 1)
+                .unwrap_or(0)
+        });
+
         let versions =
             FrontendMetadata::request(&metadata, bridge::meta::MetadataRequest::MinecraftVersionManifest, cx);
 
@@ -182,6 +214,7 @@ impl CreateServerModalState {
             name_input_state,
             source_dropdown,
             group_input_state,
+            existing_groups,
             platform: ServerPlatform::Paper,
             custom_jar_enabled: false,
             custom_jar: None,
@@ -505,7 +538,32 @@ impl CreateServerModalState {
             .child(crate::labelled(t::server::platform::title(), self.render_platform_picker(generating, cx)))
             .child(crate::labelled(t::server::jar::title(), self.render_custom_jar(cx)))
             .child(crate::labelled(t::instance::mc_version(), version_select))
-            .child(crate::labelled(t::server::create::group(), Input::new(&self.group_input_state)))
+            .child(crate::labelled(
+                t::server::create::group(),
+                h_flex().gap_2().child(Input::new(&self.group_input_state).flex_1()).when(
+                    !self.existing_groups.is_empty(),
+                    |this| {
+                        this.child(Button::new("pick_group").icon(PandoraIcon::ChevronDown).small().dropdown_menu({
+                            let groups = self.existing_groups.clone();
+                            let group_input_state = self.group_input_state.clone();
+                            move |mut menu, _, _cx| {
+                                for group in groups.iter() {
+                                    menu = menu.item(PopupMenuItem::new(group.clone()).on_click({
+                                        let group = group.clone();
+                                        let group_input_state = group_input_state.clone();
+                                        move |_, window, cx| {
+                                            group_input_state.update(cx, |state, cx| {
+                                                state.set_value(group.clone(), window, cx);
+                                            });
+                                        }
+                                    }));
+                                }
+                                menu
+                            }
+                        }))
+                    },
+                ),
+            ))
             .child(eula);
 
         let can_create = self.eula_accepted

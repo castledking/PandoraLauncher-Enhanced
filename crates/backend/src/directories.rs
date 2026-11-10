@@ -5,6 +5,7 @@ use std::{
 
 pub struct LauncherDirectories {
     pub instances_dir: Arc<Path>,
+    pub servers_dir: Arc<Path>,
 
     pub synced_dir: Arc<Path>,
     pub skin_library_dir: Arc<Path>,
@@ -36,6 +37,7 @@ pub struct LauncherDirectories {
 impl LauncherDirectories {
     pub fn new(launcher_dir: PathBuf) -> Self {
         let instances_dir = launcher_dir.join("instances");
+        let servers_dir = launcher_dir.join("servers");
 
         let synced_dir = launcher_dir.join("synced");
         let skin_library_dir = launcher_dir.join("skins");
@@ -66,6 +68,7 @@ impl LauncherDirectories {
 
         Self {
             instances_dir: instances_dir.into(),
+            servers_dir: servers_dir.into(),
 
             synced_dir: synced_dir.into(),
             skin_library_dir: skin_library_dir.into(),

@@ -233,21 +233,27 @@ pub async fn duplicate_instance(
         modal_action.set_finished_with_error(format!("Unable to duplicate instance, name is invalid: {name}").into());
         return;
     }
-    if backend.instance_state.read().is_name_taken(name, None) {
-        modal_action.set_finished_with_error("Unable to duplicate instance, name is already used".to_string().into());
-        return;
-    }
-
-    let (source, source_version) = {
+    let (source, source_version, is_server) = {
         let mut state = backend.instance_state.write();
         let Some(instance) = state.instances.get_mut(id) else {
             modal_action.set_finished_with_error("Unable to duplicate instance, unknown id".to_string().into());
             return;
         };
-        (instance.root_path.clone(), instance.configuration.get().minecraft_version)
+        (instance.root_path.clone(), instance.configuration.get().minecraft_version, instance.configuration.get().server.is_some())
     };
 
-    let dest = backend.directories.instances_dir.join(name);
+    if backend.instance_state.read().is_name_taken(name, None, is_server) {
+        let kind = if is_server { "server" } else { "instance" };
+        modal_action.set_finished_with_error(format!("Unable to duplicate {kind}, name is already used").into());
+        return;
+    }
+
+    let parent_dir = if is_server {
+        &backend.directories.servers_dir
+    } else {
+        &backend.directories.instances_dir
+    };
+    let dest = parent_dir.join(name);
 
     if let Err(err) = fs::create_dir(&dest) {
         modal_action.set_finished_with_error(format!("Unable to create instance directory: {err}").into());

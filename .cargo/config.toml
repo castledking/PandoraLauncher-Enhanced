@@ -37,3 +37,13 @@ replace-with = "vendored-sources"
 
 [source.vendored-sources]
 directory = "vendor"
+
+# Statically link the MSVC C runtime on Windows.
+#
+# Without this, the binary imports VCRUNTIME140.dll and refuses to start on
+# machines that do not have the Visual C++ 2015-2022 Redistributable
+# installed ("The code execution cannot proceed because VCRUNTIME140.dll was
+# not found."). The UCRT (api-ms-win-crt-*.dll) ships with Windows 10+, so
+# the VC runtime is the only piece that has to be linked in.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

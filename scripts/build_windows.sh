@@ -12,6 +12,14 @@ export PANDORA_RELEASE_VERSION=$version
 cargo build --release --frozen --target x86_64-pc-windows-msvc
 strip target/x86_64-pc-windows-msvc/release/pandora_launcher.exe
 
+# The MSVC C runtime must be linked statically (see .cargo/config.toml), otherwise
+# the binary imports VCRUNTIME140.dll and fails to start on machines without the
+# Visual C++ Redistributable installed.
+if grep -aq 'VCRUNTIME140[^ ]*\.dll' target/x86_64-pc-windows-msvc/release/pandora_launcher.exe; then
+    echo "error: binary imports VCRUNTIME140.dll; the MSVC runtime was linked dynamically" >&2
+    exit 1
+fi
+
 mkdir -p dist
 
 mv target/x86_64-pc-windows-msvc/release/pandora_launcher dist/PandoraLauncher-Windows-x86_64.exe

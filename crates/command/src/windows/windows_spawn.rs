@@ -24,7 +24,7 @@ use windows::{
 };
 
 use crate::{
-    PandoraChild, PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode, process::PandoraProcess,
+    PandoraArg, PandoraChild, PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode, process::PandoraProcess,
     spawner::SpawnContext, windows::windows_helpers,
 };
 
@@ -44,7 +44,13 @@ pub(crate) fn spawn_with_attributes(
     let env_map = command.take_final_env();
     let application_path = command.resolve_executable_path()?;
     let application_name = application_path.as_os_str().encode_wide().chain([0]).collect::<Vec<_>>();
-    let mut command_line = windows_helpers::join_windows_shell_arg(command.args.as_slice())
+    // The command line has to lead with the executable, because the child parses its first token
+    // as argv[0] and drops it. Without it the child silently loses its first real argument:
+    // `java -jar server.jar nogui` arrives as `java server.jar nogui`, and the jar name is read as
+    // a main class. The unix spawner pushes arg0 for the same reason.
+    let mut argv = std::mem::take(&mut command.args);
+    argv.insert(0, PandoraArg::from(application_path.clone()));
+    let mut command_line = windows_helpers::join_windows_shell_arg(&argv)
         .encode_wide()
         .chain([0])
         .collect::<Vec<_>>();

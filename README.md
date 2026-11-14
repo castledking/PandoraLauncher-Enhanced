@@ -39,7 +39,7 @@ Pandora Launcher is a native Minecraft launcher focused on performance, a clean 
 
 ### Discord server
 
-Join the [Pandora Launcher Discord](https://discord.com/invite/pCKdCX6nYr).
+Join the [Discord](https://discord.gg/D6CeVTtJpF).
 
 ### Where can I suggest a feature or report a bug?
 

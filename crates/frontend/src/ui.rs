@@ -881,7 +881,7 @@ impl Render for LauncherUI {
                     open_bug_report_url(window, cx);
                 }
             });
-        let discord_invite = option_env!("DISCORD_INVITE").unwrap_or("https://discord.com/invite/pCKdCX6nYr");
+        let discord_invite = option_env!("DISCORD_INVITE").unwrap_or("https://discord.gg/D6CeVTtJpF");
         let discord_button = div()
             .id("discord-button")
             .p_2()

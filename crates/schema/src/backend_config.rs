@@ -2,6 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use enumset::{EnumSet, EnumSetType};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::instance::{
     InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
@@ -59,6 +60,66 @@ pub struct BackendConfig {
         skip_serializing_if = "is_default_java_runtime_configuration"
     )]
     pub java_runtime: Option<InstanceJavaRuntimeConfiguration>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub server_defaults: ServerDefaults,
+}
+
+/// What every server the launcher creates starts out with, so the same people don't have to be
+/// opped and whitelisted again on each new server.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ServerDefaults {
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub players: Vec<ServerDefaultPlayer>,
+    /// Whether new servers start with the whitelist on, so only whitelisted players can join.
+    /// Written into every new server either way, since newer Minecraft versions (26.x) default it to on.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub enable_whitelist: bool,
+}
+
+impl ServerDefaults {
+    /// The player with this name, which a server treats case-insensitively.
+    pub fn player(&self, name: &str) -> Option<&ServerDefaultPlayer> {
+        self.players.iter().find(|player| player.name.eq_ignore_ascii_case(name))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ServerDefaultPlayer {
+    pub name: Arc<str>,
+    /// What a server matches the player on. Missing for a typed name until it has been looked up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<Uuid>,
+    #[serde(default = "default_true")]
+    pub operator: bool,
+    #[serde(default = "default_true")]
+    pub whitelisted: bool,
+}
+
+impl ServerDefaultPlayer {
+    pub fn new(name: Arc<str>, uuid: Option<Uuid>) -> Self {
+        Self {
+            name,
+            uuid,
+            operator: true,
+            whitelisted: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]

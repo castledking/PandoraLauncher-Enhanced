@@ -1,14 +1,188 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use bridge::instance::InstanceID;
 use bridge::message::PlayerLookupResult;
-use schema::server_list::{
-    BannedIp, BannedPlayer, CachedUser, Operator, ServerListAddOutcome, ServerListEntry, ServerListFile,
-    WhitelistedPlayer,
+use schema::{
+    backend_config::{ServerDefaultPlayer, ServerDefaults},
+    server::{ServerProperty, write_server_properties},
+    server_list::{
+        BannedIp, BannedPlayer, CachedUser, Operator, ServerListAddOutcome, ServerListEntry, ServerListFile,
+        WhitelistedPlayer,
+    },
 };
 use uuid::Uuid;
 
 use crate::BackendState;
+
+impl BackendState {
+    /// Saves the players every new server starts with. Names typed in without a UUID are looked
+    /// up afterwards, in the background, so that creating a server never has to wait on Mojang.
+    pub fn set_server_defaults(self: &Arc<Self>, mut defaults: ServerDefaults) {
+        {
+            let mut config = self.config.lock();
+            // A UUID already found for a name is kept when the name comes back without one
+            let current = config.get().server_defaults.clone();
+            for player in &mut defaults.players {
+                if player.uuid.is_none() {
+                    player.uuid = current.player(&player.name).and_then(|known| known.uuid);
+                }
+            }
+            config.modify(|config| config.server_defaults = defaults.clone());
+        }
+
+        if defaults.players.iter().all(|player| player.uuid.is_some()) {
+            return;
+        }
+
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            let resolved = this.resolve_default_players(&defaults.players).await;
+            this.remember_default_player_uuids(&resolved);
+        });
+    }
+
+    /// Writes the default players into a server that has just been created, into its operator
+    /// list and whitelist, and sets whether its whitelist is on. The server has never run, so the
+    /// files are written directly rather than through its console.
+    pub(super) async fn apply_server_defaults(self: &Arc<Self>, server_dir: &Path) {
+        let defaults = self.config.lock().get().server_defaults.clone();
+
+        // Written whichever way it's set. Newer Minecraft versions (26.x) turn the whitelist on unless
+        // server.properties says otherwise, so leaving it out wouldn't mean off
+        let path = server_dir.join("server.properties");
+        let original = std::fs::read_to_string(&path).unwrap_or_default();
+        let contents = with_whitelist(&original, defaults.enable_whitelist);
+        if let Err(err) = crate::fs::write_safe(&path, contents.as_bytes()) {
+            log::error!("Unable to write server.properties: {err}");
+        }
+
+        if defaults.players.is_empty() {
+            return;
+        }
+
+        let players = self.resolve_default_players(&defaults.players).await;
+        self.remember_default_player_uuids(&players);
+
+        let operators: Vec<ServerListEntry> = players
+            .iter()
+            .filter(|player| player.operator)
+            .map(|player| {
+                ServerListEntry::Operator(Operator {
+                    name: player.name.clone(),
+                    uuid: player.uuid,
+                    // The level a server grants by default when it promotes someone
+                    level: 4,
+                    bypasses_player_limit: false,
+                    extra: Default::default(),
+                })
+            })
+            .collect();
+        let whitelist: Vec<ServerListEntry> = players
+            .iter()
+            .filter(|player| player.whitelisted)
+            .map(|player| {
+                ServerListEntry::Whitelisted(WhitelistedPlayer {
+                    name: player.name.clone(),
+                    uuid: player.uuid,
+                    extra: Default::default(),
+                })
+            })
+            .collect();
+
+        for (file, entries) in [
+            (ServerListFile::Operators, operators),
+            (ServerListFile::Whitelist, whitelist),
+        ] {
+            if !entries.is_empty() {
+                write_server_list_file(&server_dir.join(file.file_name()), file, &entries);
+            }
+        }
+    }
+
+    /// Fills in the UUID of every default player that doesn't have one yet, since that is what a
+    /// server matches operators and whitelisted players on.
+    ///
+    /// A name Mojang has no account for can only ever join an offline-mode server, so it gets the
+    /// UUID such a server would give it. A name the API wouldn't answer for is left without one,
+    /// to be tried again next time.
+    async fn resolve_default_players(&self, players: &[ServerDefaultPlayer]) -> Vec<ServerDefaultPlayer> {
+        let missing: Vec<Arc<str>> = players
+            .iter()
+            .filter(|player| player.uuid.is_none())
+            .map(|player| player.name.clone())
+            .collect();
+        let mut resolved = players.to_vec();
+        if missing.is_empty() {
+            return resolved;
+        }
+
+        let lookups = self.resolve_player_names(&missing).await;
+        for (name, lookup) in missing.iter().zip(lookups) {
+            let uuid = match lookup {
+                PlayerLookupResult::Found(uuid) => Some(uuid),
+                PlayerLookupResult::NoSuchPlayer => Some(offline_player_uuid(name)),
+                PlayerLookupResult::Unavailable => None,
+            };
+            for player in resolved.iter_mut().filter(|player| player.uuid.is_none() && player.name == *name) {
+                player.uuid = uuid;
+            }
+        }
+        resolved
+    }
+
+    /// Saves UUIDs that were looked up, onto whichever of the stored players still lack one.
+    fn remember_default_player_uuids(&self, resolved: &[ServerDefaultPlayer]) {
+        let mut config = self.config.lock();
+        let needs_saving = config.get().server_defaults.players.iter().any(|player| {
+            player.uuid.is_none()
+                && resolved
+                    .iter()
+                    .any(|found| found.uuid.is_some() && found.name.eq_ignore_ascii_case(&player.name))
+        });
+        if !needs_saving {
+            return;
+        }
+        config.modify(|config| {
+            for player in &mut config.server_defaults.players {
+                if player.uuid.is_none()
+                    && let Some(found) = resolved
+                        .iter()
+                        .find(|found| found.uuid.is_some() && found.name.eq_ignore_ascii_case(&player.name))
+                {
+                    player.uuid = found.uuid;
+                }
+            }
+        });
+    }
+}
+
+/// `server.properties` with the whitelist turned on or off. Enforcing it goes with it, so that
+/// turning it on also removes anyone already online who isn't on the list. Every other property is
+/// left for the server to fill in the first time it starts.
+fn with_whitelist(original: &str, enabled: bool) -> String {
+    let value: Arc<str> = if enabled { "true" } else { "false" }.into();
+    write_server_properties(
+        original,
+        &[
+            ServerProperty {
+                key: "white-list".into(),
+                value: value.clone(),
+            },
+            ServerProperty {
+                key: "enforce-whitelist".into(),
+                value,
+            },
+        ],
+    )
+}
+
+/// The UUID an offline-mode server gives a player, which is Java's `UUID.nameUUIDFromBytes` of
+/// `OfflinePlayer:<name>`.
+fn offline_player_uuid(name: &str) -> Uuid {
+    use md5::{Digest, Md5};
+    let digest: [u8; 16] = Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
+    uuid::Builder::from_md5_bytes(digest).into_uuid()
+}
 
 impl BackendState {
     /// Reads one of a server's own list files.
@@ -448,5 +622,33 @@ mod console_commands {
     #[test]
     fn the_user_cache_has_no_command() {
         assert!(console_command(ServerListFile::UserCache, "steve", None, Direction::Add).is_none());
+    }
+}
+
+#[cfg(test)]
+mod offline_uuids {
+    #[test]
+    fn matches_what_an_offline_server_gives_a_player() {
+        assert_eq!(super::offline_player_uuid("Notch").to_string(), "b50ad385-829d-3141-a216-7e7d7539ba7f");
+    }
+}
+
+#[cfg(test)]
+mod whitelist_property {
+    use super::with_whitelist;
+
+    #[test]
+    fn off_is_written_out_rather_than_left_to_the_server() {
+        assert_eq!(with_whitelist("", false), "white-list=false\nenforce-whitelist=false\n");
+        assert_eq!(with_whitelist("", true), "white-list=true\nenforce-whitelist=true\n");
+    }
+
+    #[test]
+    fn an_existing_value_is_replaced_in_place() {
+        let original = "#Minecraft server properties\nmotd=hi\nwhite-list=true\n";
+        assert_eq!(
+            with_whitelist(original, false),
+            "#Minecraft server properties\nmotd=hi\nwhite-list=false\nenforce-whitelist=false\n"
+        );
     }
 }

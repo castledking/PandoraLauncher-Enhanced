@@ -714,6 +714,7 @@ dependencies = [
  "libc",
  "log",
  "lzma-rs",
+ "md-5",
  "memchr",
  "minisign-verify",
  "mslnk",

@@ -14,7 +14,7 @@ use gpui_component::{
     v_flex,
 };
 use schema::{
-    backend_config::{BackendConfig, ProxyConfig},
+    backend_config::{BackendConfig, ProxyConfig, ServerDefaults},
     instance::{
         InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
         InstanceMemoryConfiguration,
@@ -37,6 +37,7 @@ mod content_labels;
 mod general;
 mod java;
 mod network;
+mod servers;
 
 pub struct SettingsRoot {
     settings: Settings,
@@ -147,6 +148,33 @@ impl SettingsRoot {
         });
 
         self.update_backend_configuration(cx);
+    }
+
+    /// Changes the players and settings new servers start with, and saves them.
+    pub fn update_server_defaults(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut ServerDefaults)) {
+        let Some(current) = self.backend_config().map(|config| config.server_defaults.clone()) else {
+            return;
+        };
+        let mut defaults = current.clone();
+        edit(&mut defaults);
+        if defaults == current {
+            return;
+        }
+
+        self.on_receive_backend_config = if self.temp_backend_config.is_some() {
+            OnReceiveBackendConfig::RequestAgainThenClearTemp
+        } else {
+            OnReceiveBackendConfig::ClearTemp
+        };
+        let pending = self
+            .temp_backend_config
+            .get_or_insert_with(|| self.actual_backend_config.clone().unwrap_or_default());
+        pending.server_defaults = defaults.clone();
+
+        self.backend_handle.send(MessageToBackend::SetServerDefaults { defaults });
+
+        self.update_backend_configuration(cx);
+        cx.notify();
     }
 
     pub fn select_file(
@@ -510,8 +538,18 @@ impl SettingsRoot {
                             (func)(backend_config, window, cx)
                         },
                         SettingItemWidget::Any(func) => (func)(window, cx),
-                        SettingItemWidget::FullWidth(func) => {
-                            let widget = (func)(window, cx);
+                        SettingItemWidget::FullWidth(_) | SettingItemWidget::BackendFullWidth(_) => {
+                            let widget = match &item.widget {
+                                SettingItemWidget::BackendFullWidth(func) => {
+                                    let Some(backend_config) = root.backend_config().cloned() else {
+                                        has_backend_missing = true;
+                                        continue;
+                                    };
+                                    (func)(&backend_config, window, cx)
+                                },
+                                SettingItemWidget::FullWidth(func) => (func)(window, cx),
+                                _ => unreachable!(),
+                            };
                             item_elements.push(
                                 v_flex()
                                     .w_full()
@@ -600,6 +638,8 @@ enum SettingItemWidget {
     /// Laid out under the title and description, across the whole width, for widgets too large
     /// to sit beside them.
     FullWidth(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
+    /// [`SettingItemWidget::FullWidth`], for a widget that shows part of the backend config.
+    BackendFullWidth(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
 }
 
 struct SettingItem {
@@ -913,6 +953,7 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
             appearance::create_page(data, window, cx),
             content_labels::create_page(data, window, cx),
             java::create_page(),
+            servers::create_page(data),
             network::create_page(),
         ]
         .into_boxed_slice(),

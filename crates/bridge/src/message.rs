@@ -6,7 +6,7 @@ use std::{
 };
 
 use schema::{
-    backend_config::{BackendConfig, ProxyConfig},
+    backend_config::{BackendConfig, ProxyConfig, ServerDefaults},
     content_label::ContentLabelEdit,
     instance::{
         InstanceConfiguration, InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration,
@@ -300,6 +300,10 @@ pub enum MessageToBackend {
         jvm_flags: Option<InstanceJvmFlagsConfiguration>,
         jvm_binary: Option<InstanceJvmBinaryConfiguration>,
         java_runtime: Option<InstanceJavaRuntimeConfiguration>,
+    },
+    /// Replaces the players and settings every new server starts with.
+    SetServerDefaults {
+        defaults: ServerDefaults,
     },
     /// The Java runtimes Mojang publishes for this platform, for the runtime override
     /// picker. Answers with every runtime rather than an error, since having none is not

@@ -4640,6 +4640,39 @@ en = "Name"
 [settings.content_labels.filename]
 en = "Filename"
 
+[settings.servers]
+en = "Servers"
+[settings.servers.new_servers]
+en = "New Servers"
+[settings.servers.new_servers.players]
+en = "Default players"
+[settings.servers.new_servers.players_desc]
+en = "Opped and whitelisted on every server you create from now on. Servers that already exist are left as they are."
+[settings.servers.new_servers.name_placeholder]
+en = "Player name, or several separated by commas"
+[settings.servers.new_servers.add]
+en = "Add"
+[settings.servers.new_servers.add_account]
+en = "Add from accounts"
+[settings.servers.new_servers.all_accounts]
+en = "All accounts"
+[settings.servers.new_servers.no_accounts]
+en = "No accounts in the account switcher"
+[settings.servers.new_servers.account]
+en = "Account"
+[settings.servers.new_servers.operator]
+en = "Operator"
+[settings.servers.new_servers.whitelisted]
+en = "Whitelisted"
+[settings.servers.new_servers.remove]
+en = "Remove"
+[settings.servers.new_servers.empty]
+en = "No default players yet. Type a name, or add one of your accounts."
+[settings.servers.new_servers.enable_whitelist]
+en = "Whitelist on by default"
+[settings.servers.new_servers.enable_whitelist_desc]
+en = "Whether new servers start with the whitelist on, so only whitelisted players can join. Applied to every new server either way, since newer Minecraft versions (26.x) otherwise turn it on by themselves. Existing servers can be changed in their Properties tab."
+
 [settings.title]
 en = "Settings"
 tr = "Ayarlar"

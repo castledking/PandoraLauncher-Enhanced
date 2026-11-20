@@ -8,6 +8,7 @@ auth.workspace = true
 tokio.workspace = true
 serde.workspace = true
 sha1.workspace = true
+md-5.workspace = true
 sha2.workspace = true
 ustr.workspace = true
 schema.workspace = true

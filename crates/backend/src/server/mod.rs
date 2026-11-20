@@ -755,6 +755,9 @@ impl BackendState {
             self.send.send_error(err);
         }
 
+        // The players from Settings > Servers are opped and whitelisted before it first starts
+        self.apply_server_defaults(&instance_dir.join(".minecraft")).await;
+
         let Some(generate_from) = generate_from else {
             modal_action.set_finished();
             return;

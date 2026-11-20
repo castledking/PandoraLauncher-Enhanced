@@ -20,6 +20,7 @@ use bridge::{
     quit::QuitCoordinator,
 };
 use schema::{
+    backend_config::{ServerDefaultPlayer, ServerDefaults},
     server::{ServerPlatform, ServerProperty},
     server_list::ServerListFile,
 };
@@ -174,9 +175,29 @@ fn main() {
         });
         let error = modal.get_error_message().expect("a non-jar should be refused");
         assert!(error.contains("isn't a .jar"), "unexpected error: {error}");
-        assert!(!launcher_dir.join("instances").join("smoke-custom-rejected").exists());
+        assert!(!launcher_dir.join("servers").join("smoke-custom-rejected").exists());
         println!("  ok: refused with \"{error}\" and nothing was created");
     }
+
+    // A typed name Mojang knows, and an account from the switcher that is opped but not
+    // whitelisted, with the whitelist set to off
+    const NOTCH_UUID: &str = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+    let account_uuid = uuid::Uuid::from_u128(0x5a0c_e5e1_0000_4000_8000_0000_0000_0001);
+    step("set the players and whitelist setting new servers start with");
+    backend_handle.send(MessageToBackend::SetServerDefaults {
+        defaults: ServerDefaults {
+            players: vec![
+                ServerDefaultPlayer::new("Notch".into(), None),
+                ServerDefaultPlayer {
+                    name: "SmokeAccount".into(),
+                    uuid: Some(account_uuid),
+                    operator: true,
+                    whitelisted: false,
+                },
+            ],
+            enable_whitelist: false,
+        },
+    });
 
     step(&format!("create {} {} server '{}'", platform.pretty_name(), version, name));
     let modal = ModalAction::default();
@@ -197,16 +218,28 @@ fn main() {
     });
     let id = seen.lock().unwrap().server_id.unwrap();
 
-    let server_dir: PathBuf = launcher_dir.join("instances").join(&name).join(".minecraft");
+    let server_dir: PathBuf = launcher_dir.join("servers").join(&name).join(".minecraft");
     assert!(server_dir.join("eula.txt").is_file(), "eula.txt should exist once the EULA is accepted");
     println!("  ok: eula.txt written");
+
+    let read = |file: &str| std::fs::read_to_string(server_dir.join(file)).unwrap_or_default();
+    let ops = read("ops.json");
+    let whitelist = read("whitelist.json");
+    assert!(ops.contains(NOTCH_UUID) && ops.contains(&account_uuid.to_string()), "ops.json: {ops}");
+    assert!(whitelist.contains(NOTCH_UUID), "whitelist.json: {whitelist}");
+    assert!(!whitelist.contains("SmokeAccount"), "SmokeAccount isn't to be whitelisted: {whitelist}");
+    assert!(
+        read("server.properties").contains("white-list=false"),
+        "the whitelist should be written as off"
+    );
+    println!("  ok: default players opped and whitelisted, Notch looked up, whitelist written as off");
 
     if custom_mode {
         assert!(
             server_dir.join("my-own-server.jar").is_file(),
             "the custom jar should be copied into the server"
         );
-        let info = std::fs::read_to_string(launcher_dir.join("instances").join(&name).join("info_v1.json")).unwrap();
+        let info = std::fs::read_to_string(launcher_dir.join("servers").join(&name).join("info_v1.json")).unwrap();
         assert!(info.contains("\"file\":\"my-own-server.jar\""), "custom jar not recorded: {info}");
         println!("  ok: custom jar copied into the server and recorded");
     }
@@ -289,6 +322,12 @@ fn main() {
     };
     wait_for("'Done (' in console", Duration::from_secs(600), console_contains("Done ("));
 
+    // The server rewrites server.properties as it starts, and newer versions default the
+    // whitelist to on, so this shows the value written at creation is the one it kept
+    let properties = std::fs::read_to_string(server_dir.join("server.properties")).unwrap();
+    assert!(properties.contains("white-list=false"), "the server turned the whitelist back on");
+    println!("  ok: whitelist still off once the server has started");
+
     step("send a command");
     backend_handle.send(MessageToBackend::SendServerCommand {
         id,
@@ -331,7 +370,7 @@ fn main() {
         entries.iter().any(|entry| entry.name().eq_ignore_ascii_case(name))
     };
     for (file, name) in [
-        (ServerListFile::Whitelist, "Notch"),
+        (ServerListFile::Whitelist, "jeb_"),
         (ServerListFile::BannedIps, "10.0.0.1"),
     ] {
         let what = file.file_name();
@@ -348,6 +387,13 @@ fn main() {
         });
         let outcome = helper.block_on(recv).unwrap();
         assert!(outcome.via_console, "a running server should be asked over its console");
+        // The server looks the player up with Mojang itself, and when Mojang answers it with an
+        // error page there is nothing to whitelist. That's Mojang, not the launcher.
+        let log = std::fs::read_to_string(server_dir.join("logs").join("latest.log")).unwrap_or_default();
+        if !listed(file, name) && log.contains(&format!("Couldn't find profile with name: {name}")) {
+            println!("  skipped: the server couldn't look {name} up with Mojang");
+            continue;
+        }
         assert!(listed(file, name), "{what} should have {name} by the time the add is answered");
         println!("  ok: {name} added, and in {what} when answered ({:.1}s)", start.elapsed().as_secs_f32());
 
@@ -394,31 +440,61 @@ fn main() {
         println!("  ok: the custom jar ran and no Paper jar was downloaded");
     }
 
-    step("stop");
-    backend_handle.send(MessageToBackend::StopServer { id });
-    wait_for("console closed after stop", Duration::from_secs(120), {
-        let console_closed = console_closed.clone();
-        Box::new(move || *console_closed.lock().unwrap())
+    step("restart with the console attached");
+    // The same subscription has to carry on into the next session. It used to be left on the
+    // old session's "Stopping" lines until the page was opened again.
+    let before_restart = lines.lock().unwrap().len();
+    let after_restart = |needle: &'static str| {
+        let lines = lines.clone();
+        Box::new(move || lines.lock().unwrap()[before_restart..].iter().any(|line| line.contains(needle)))
+            as Box<dyn FnMut() -> bool>
+    };
+    let modal = ModalAction::default();
+    backend_handle.send(MessageToBackend::RestartServer {
+        id,
+        modal_action: modal.clone(),
     });
-    wait_for("status back to NotRunning", Duration::from_secs(30), {
+    wait_for("old session stopping", Duration::from_secs(120), after_restart("Stopping"));
+    wait_modal("restart", &modal, Duration::from_secs(300));
+    wait_for(
+        "next session's 'Done (' on the same console",
+        Duration::from_secs(600),
+        after_restart("Done ("),
+    );
+    assert!(!*console_closed.lock().unwrap(), "the console should stay attached through a restart");
+    wait_for("status Running after restart", Duration::from_secs(30), {
+        let seen = seen.clone();
+        Box::new(move || seen.lock().unwrap().status == Some(InstanceStatus::Running))
+    });
+
+    step("stop");
+    let before_stop = lines.lock().unwrap().len();
+    backend_handle.send(MessageToBackend::StopServer { id });
+    wait_for("status back to NotRunning", Duration::from_secs(120), {
         let seen = seen.clone();
         Box::new(move || seen.lock().unwrap().status == Some(InstanceStatus::NotRunning))
     });
     assert!(
-        lines
-            .lock()
-            .unwrap()
+        lines.lock().unwrap()[before_stop..]
             .iter()
             .any(|line| line.contains("Stopping the server") || line.contains("Stopping server")),
         "the server should have shut down cleanly via the stop command"
     );
     println!("  ok: clean shutdown logged");
 
+    // Saved by the server on the way out, which drops any entry it couldn't make sense of
+    let ops = std::fs::read_to_string(server_dir.join("ops.json")).unwrap();
+    assert!(
+        ops.contains(NOTCH_UUID) && ops.contains(&account_uuid.to_string()),
+        "ops.json after stop: {ops}"
+    );
+    println!("  ok: the server kept the default operators");
+
     if custom_mode {
         step("switch back to the platform's own jar, keeping the pick");
         backend_handle.send(MessageToBackend::SetServerCustomJarEnabled { id, enabled: false });
         wait_for("custom jar switched off", Duration::from_secs(10), {
-            let info = launcher_dir.join("instances").join(&name).join("info_v1.json");
+            let info = launcher_dir.join("servers").join(&name).join("info_v1.json");
             Box::new(move || {
                 std::fs::read_to_string(&info)
                     .map(|text| text.contains("\"enabled\":false") && text.contains("my-own-server.jar"))
@@ -530,7 +606,7 @@ fn run_sync_scenario(
         panic!("create failed: {error}");
     }
 
-    let server_root = launcher_dir.join("instances").join(server_name);
+    let server_root = launcher_dir.join("servers").join(server_name);
     let server_mods = server_root.join(".minecraft").join("mods");
     assert!(server_mods.join("shared-mod.jar").is_file(), "the shared mod should be copied");
     assert!(!server_mods.join("client-mod.jar").exists(), "the client-only mod should be left out");

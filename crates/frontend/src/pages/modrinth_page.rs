@@ -32,8 +32,8 @@ use schema::{
     content::{ContentInstallReason, ContentSource},
     loader::Loader,
     modrinth::{
-        ModrinthEnvironment, ModrinthHit, ModrinthProjectType, ModrinthSearchIndex, ModrinthSearchRequest,
-        ModrinthSearchResult, ModrinthSideRequirement,
+        ModrinthEnvironment, ModrinthHit, ModrinthLoader, ModrinthProjectType, ModrinthSearchIndex,
+        ModrinthSearchRequest, ModrinthSearchResult, ModrinthSideRequirement,
     },
 };
 use strum::IntoEnumIterator;
@@ -115,6 +115,11 @@ pub struct ModrinthSearchPage {
     /// following the instance's mods (such as Sinytra Connector being found once they load).
     filter_loaders_picked: bool,
     filter_categories: BTreeSet<&'static str>,
+    /// Which build of a datapack project to look for and install: the datapack itself, or the mod
+    /// some datapack projects also publish.
+    datapack_loader: ModrinthLoader,
+    /// The shader loaders results are narrowed to, if any.
+    shader_loaders: EnumSet<ModrinthLoader>,
     sort_option: ModrinthSearchIndex,
     show_categories: Arc<AtomicBool>,
     show_sort_options: Arc<AtomicBool>,
@@ -480,6 +485,8 @@ impl ModrinthSearchPage {
             filter_loaders,
             filter_loaders_picked: false,
             filter_categories: Default::default(),
+            datapack_loader: ModrinthLoader::Datapack,
+            shader_loaders: EnumSet::empty(),
             sort_option: ModrinthSearchIndex::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
             show_sort_options: Arc::new(AtomicBool::new(false)),
@@ -538,6 +545,34 @@ impl ModrinthSearchPage {
         }
         self.filter_loaders = loaders;
         self.reload(cx);
+    }
+
+    fn set_datapack_loader(&mut self, loader: ModrinthLoader, cx: &mut Context<Self>) {
+        if self.datapack_loader != loader {
+            self.datapack_loader = loader;
+            self.reload(cx);
+        }
+    }
+
+    fn set_shader_loaders(&mut self, loaders: EnumSet<ModrinthLoader>, cx: &mut Context<Self>) {
+        if self.shader_loaders != loaders {
+            self.shader_loaders = loaders;
+            self.reload(cx);
+        }
+    }
+
+    /// The type a result installs as, and the loader whose build to install. Modrinth reports a
+    /// datapack project as a mod, so one found among datapacks has to be installed as a datapack
+    /// rather than as whatever mod build it also has.
+    fn install_kind(
+        &self,
+        hit_type: ModrinthProjectType,
+        cx: &App,
+    ) -> (ModrinthProjectType, Option<ModrinthLoader>) {
+        match InterfaceConfig::get(cx).modrinth_page_project_type {
+            ModrinthProjectType::Datapack => (ModrinthProjectType::Datapack, Some(self.datapack_loader)),
+            _ => (hit_type, None),
+        }
     }
 
     fn set_filter_version(&mut self, version: Option<Ustr>, cx: &mut Context<Self>) {
@@ -674,6 +709,25 @@ impl ModrinthSearchPage {
                     facets.push_str(id);
                     facets.push('"');
                 }
+            }
+            facets.push(']');
+        }
+
+        // Datapacks and shaders have loaders of their own, which Modrinth files as categories
+        let pack_loaders: Vec<ModrinthLoader> = match filter_project_type {
+            ModrinthProjectType::Datapack => vec![self.datapack_loader],
+            ModrinthProjectType::Shader => self.shader_loaders.iter().collect(),
+            _ => Vec::new(),
+        };
+        if !pack_loaders.is_empty() {
+            facets.push_str(",[");
+            for (index, loader) in pack_loaders.iter().enumerate() {
+                if index > 0 {
+                    facets.push(',');
+                }
+                facets.push_str("\"categories:");
+                facets.push_str(loader.id());
+                facets.push('"');
             }
             facets.push(']');
         }
@@ -886,7 +940,7 @@ impl ModrinthSearchPage {
                     let name = name.clone();
                     let project_id = hit.project_id.clone();
                     let install_for = self.install_for.clone();
-                    let project_type = hit.project_type;
+                    let (project_type, preferred_loader) = self.install_kind(hit.project_type, cx);
                     let open_project_page = open_project_page.clone();
                     let installed_content_ids = installed_content_ids.clone();
                     let is_open = self.open_dropdown_id.as_ref().map(|s| s.as_str()) == Some(&*dropdown_id);
@@ -912,6 +966,7 @@ impl ModrinthSearchPage {
                                         project_type,
                                         install_for.clone(),
                                         filter_version,
+                                        preferred_loader,
                                         &data,
                                         window,
                                         cx,
@@ -990,7 +1045,7 @@ impl ModrinthSearchPage {
                             let name = name.clone();
                             let project_id = hit.project_id.clone();
                             let install_for = self.install_for.clone();
-                            let project_type = hit.project_type;
+                            let (project_type, preferred_loader) = self.install_kind(hit.project_type, cx);
                             let filter_version = self.filter_version;
 
                             move |_, window, cx| {
@@ -1003,6 +1058,7 @@ impl ModrinthSearchPage {
                                         project_type,
                                         install_for,
                                         filter_version,
+                                        preferred_loader,
                                         &data,
                                         window,
                                         cx,
@@ -1131,6 +1187,9 @@ impl PrimaryAction {
     }
 
     /// `game_version_hint` is the Minecraft version the user was browsing, if any.
+    ///
+    /// `preferred_loader` is the build to install, picked on the page, such as a datapack project's
+    /// datapack rather than its mod.
     pub fn perform(
         &self,
         name: SharedString,
@@ -1138,6 +1197,7 @@ impl PrimaryAction {
         project_type: ModrinthProjectType,
         install_for: Option<InstanceID>,
         game_version_hint: Option<Ustr>,
+        preferred_loader: Option<ModrinthLoader>,
         data: &DataEntities,
         window: &mut Window,
         cx: &mut App,
@@ -1150,6 +1210,7 @@ impl PrimaryAction {
                     project_type,
                     install_for,
                     game_version_hint,
+                    preferred_loader,
                     data,
                     window,
                     cx,
@@ -1182,6 +1243,7 @@ impl PrimaryAction {
                         project_type,
                         Some(install_for),
                         Some(hint),
+                        preferred_loader,
                         data,
                         window,
                         cx,
@@ -1206,6 +1268,7 @@ impl PrimaryAction {
                                         project_id: project_id.clone(),
                                         version_id: None,
                                         install_dependencies: true,
+                                        only_loaders: preferred_loader.map(|loader| Arc::from([loader])),
                                     },
                                     content_source: ContentSource::ModrinthProject {
                                         project_id: project_id.clone(),
@@ -1234,6 +1297,7 @@ impl PrimaryAction {
                             project_id: project_id.clone(),
                             version_id: None,
                             install_dependencies: true,
+                            only_loaders: preferred_loader.map(|loader| Arc::from([loader])),
                         },
                         content_source: ContentSource::ModrinthProject {
                             project_id: project_id.clone(),
@@ -1375,7 +1439,7 @@ impl Render for ModrinthSearchPage {
                     .label(t::instance::content::shaders()),
             )
             .child(
-                selection_button("datapacks", filter_project_type == ModrinthProjectType::Datapack).label("Datapacks"),
+                selection_button("datapacks", filter_project_type == ModrinthProjectType::Datapack).label(t::instance::content::datapacks()),
             )
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(ModrinthProjectType::Mod, window, cx),
@@ -1441,6 +1505,51 @@ impl Render for ModrinthSearchPage {
                         page.set_filter_loaders(loaders, window, cx);
                     })),
             ),
+            // A datapack project may also publish mods; which build is picked here is the one
+            // that gets installed, so a datapack stays a datapack
+            ModrinthProjectType::Datapack => {
+                const OPTIONS: [ModrinthLoader; 4] = [
+                    ModrinthLoader::Datapack,
+                    ModrinthLoader::Fabric,
+                    ModrinthLoader::Forge,
+                    ModrinthLoader::NeoForge,
+                ];
+                Some(OPTIONS.iter().fold(
+                    ButtonGroup::new("loader_group")
+                        .layout(Axis::Vertical)
+                        .outline()
+                        .on_click(cx.listener(|page, clicked: &Vec<usize>, _, cx| {
+                            if let Some(loader) = clicked.first().and_then(|index| OPTIONS.get(*index)) {
+                                page.set_datapack_loader(*loader, cx);
+                            }
+                        })),
+                    |group, loader| {
+                        group.child(
+                            selection_button(loader.id(), self.datapack_loader == *loader).label(loader.pretty_name()),
+                        )
+                    },
+                ))
+            },
+            ModrinthProjectType::Shader => {
+                const OPTIONS: [ModrinthLoader; 3] =
+                    [ModrinthLoader::Iris, ModrinthLoader::Optifine, ModrinthLoader::Canvas];
+                Some(OPTIONS.iter().fold(
+                    ButtonGroup::new("loader_group")
+                        .layout(Axis::Vertical)
+                        .outline()
+                        .multiple(true)
+                        .on_click(cx.listener(|page, clicked: &Vec<usize>, _, cx| {
+                            let loaders = clicked.iter().filter_map(|index| OPTIONS.get(*index).copied()).collect();
+                            page.set_shader_loaders(loaders, cx);
+                        })),
+                    |group, loader| {
+                        group.child(
+                            selection_button(loader.id(), self.shader_loaders.contains(*loader))
+                                .label(loader.pretty_name()),
+                        )
+                    },
+                ))
+            },
             _ => None,
         };
 

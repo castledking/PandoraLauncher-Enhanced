@@ -9,6 +9,7 @@ pub mod delete_group;
 pub mod delete_instance;
 pub mod duplicate_instance;
 pub mod export_instance;
+pub mod drop_install;
 pub mod generic;
 pub mod install_compat;
 pub mod manual_curseforge_downloads;

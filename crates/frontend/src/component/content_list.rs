@@ -193,6 +193,56 @@ impl ContentListDelegate {
         Some((summary.content_source.clone(), title))
     }
 
+    /// For a client instance's datapacks: the files a right-click acts on, which are the whole
+    /// selection when the row is part of it, and the instance's worlds to add them to.
+    fn datapacks_for_world_menu(
+        &self,
+        element_id: u64,
+        cx: &App,
+    ) -> Option<(Vec<Arc<std::path::Path>>, Arc<[bridge::instance::InstanceWorldSummary]>)> {
+        if self.content_folder != ContentFolder::Datapacks {
+            return None;
+        }
+        let entry = self.data.instances.read(cx).entries.get(&self.id)?.read(cx);
+        if entry.configuration.server.is_some() {
+            return None;
+        }
+        let worlds = entry.worlds.read(cx).clone().unwrap_or_default();
+        let paths = if self.is_selected(element_id) {
+            self.content
+                .iter()
+                .filter(|summary| self.is_selected(summary.filename_hash))
+                .map(|summary| summary.path.clone())
+                .collect()
+        } else {
+            self.content
+                .iter()
+                .find(|summary| summary.filename_hash == element_id)
+                .map(|summary| vec![summary.path.clone()])?
+        };
+        Some((paths, worlds))
+    }
+
+    /// The files "Set project" links, which is the whole selection when the row is part of it, and
+    /// the name to title the dialog with.
+    fn set_project_targets(&self, element_id: u64) -> Option<(Arc<[[u8; 20]]>, SharedString)> {
+        let clicked = self.content.iter().find(|summary| summary.filename_hash == element_id)?;
+        let hashes: Arc<[[u8; 20]]> = if self.is_selected(element_id) {
+            self.content
+                .iter()
+                .filter(|summary| self.is_selected(summary.filename_hash))
+                .map(|summary| summary.content_summary.hash)
+                .collect()
+        } else {
+            Arc::from([clicked.content_summary.hash])
+        };
+        let name = match &clicked.content_summary.name {
+            Some(name) => SharedString::new(name.clone()),
+            None => SharedString::from(display_filename(&clicked.filename).to_string()),
+        };
+        Some((hashes, name))
+    }
+
     fn open_project_page(&self, element_id: u64, window: &mut Window, cx: &mut App) {
         if let Some((source, title)) = self.project_page_for(element_id) {
             defer_open_project_page(source, title, self.id, self.data.clone(), window, cx);
@@ -625,6 +675,66 @@ impl ContentListDelegate {
                             )
                             .separator();
                     }
+                    // Linking a file added by hand to its project, for its icon and updates
+                    if let Some((hashes, name)) = delegate.set_project_targets(element_id) {
+                        let backend_handle = delegate.backend_handle.clone();
+                        let instance = delegate.id;
+                        let content_folder = delegate.content_folder;
+                        menu = menu
+                            .item(
+                                PopupMenuItem::new(t::instance::content::set_project())
+                                    .icon(PandoraIcon::Link)
+                                    .on_click(move |_, window, cx| {
+                                        crate::modals::drop_install::open_set_project(
+                                            instance,
+                                            content_folder,
+                                            hashes.clone(),
+                                            name.clone(),
+                                            backend_handle.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .separator();
+                    }
+                    if let Some((datapacks, worlds)) = delegate.datapacks_for_world_menu(element_id, cx) {
+                        let backend_handle = delegate.backend_handle.clone();
+                        let instance = delegate.id;
+                        menu = menu
+                            .submenu_with_icon(
+                                Some(PandoraIcon::Globe.into()),
+                                t::instance::content::datapacks::add_to_world(),
+                                window,
+                                cx,
+                                move |mut menu, _, _| {
+                                    if worlds.is_empty() {
+                                        return menu.item(
+                                            PopupMenuItem::new(t::instance::content::datapacks::no_worlds())
+                                                .disabled(true),
+                                        );
+                                    }
+                                    for world in worlds.iter() {
+                                        let datapacks = datapacks.clone();
+                                        let world_path = world.level_path.clone();
+                                        let backend_handle = backend_handle.clone();
+                                        menu = menu.item(PopupMenuItem::new(SharedString::new(world.title.clone())).on_click(
+                                            move |_, _, _| {
+                                                for datapack in &datapacks {
+                                                    backend_handle.send(MessageToBackend::AddDatapackToWorld {
+                                                        id: instance,
+                                                        datapack: datapack.clone(),
+                                                        world: world_path.clone(),
+                                                    });
+                                                }
+                                            },
+                                        ));
+                                    }
+                                    menu
+                                },
+                            )
+                            .separator();
+                    }
                     match list.read(cx).delegate().label_menu_for(element_id) {
                         Some(label_menu) => Rc::new(label_menu).build(menu, window, cx),
                         None => menu,
@@ -996,6 +1106,58 @@ impl ContentListDelegate {
 
     pub fn global_labels_changed(&self, cx: &App) -> bool {
         self.global_labels != InterfaceConfig::get(cx).global_content_labels
+    }
+
+    /// Highlights any top-level rows matching `filenames` and returns the visual row index of the
+    /// first match in the current list so the caller can scroll it into view.
+    pub fn reveal_filenames(&mut self, filenames: &[Arc<str>]) -> Option<usize> {
+        let matches = |summary: &InstanceContentSummary| {
+            let stripped = summary.filename.strip_suffix(".disabled").unwrap_or(&summary.filename);
+            filenames.iter().any(|target| {
+                let target_stripped = target.strip_suffix(".disabled").unwrap_or(target);
+                &*summary.filename == &**target || stripped == target_stripped
+            })
+        };
+
+        let mut first_row = None;
+        let mut matched_hashes = Vec::new();
+        if let Some(searched) = &self.searched {
+            for (row, entry) in searched.iter().enumerate() {
+                let SummaryOrChild::Summary(summary) = entry else {
+                    continue;
+                };
+                if matches(summary) {
+                    if first_row.is_none() {
+                        first_row = Some(row);
+                    }
+                    matched_hashes.push(summary.filename_hash);
+                }
+            }
+        } else {
+            let expanded = self.expanded.load(Ordering::Relaxed);
+            let child_offset = if expanded > 0 { self.children[expanded - 1].len() } else { 0 };
+            for (index, summary) in self.content.iter().enumerate() {
+                if matches(summary) {
+                    if first_row.is_none() {
+                        let row = if expanded > 0 && index >= expanded {
+                            index + child_offset
+                        } else {
+                            index
+                        };
+                        first_row = Some(row);
+                    }
+                    matched_hashes.push(summary.filename_hash);
+                }
+            }
+        }
+
+        let first_row = first_row?;
+        self.confirming_delete.lock().clear();
+        self.selected_range.clear();
+        self.selected.clear();
+        self.last_clicked_non_range = matched_hashes.first().copied();
+        self.selected.extend(matched_hashes);
+        Some(first_row)
     }
 
     pub fn set_content(&mut self, new_content: &[InstanceContentSummary], cx: &App) {

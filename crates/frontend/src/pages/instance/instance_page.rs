@@ -191,8 +191,6 @@ impl Render for InstancePage {
         }
 
         let entry = self.instance.read(cx);
-        let show_shader_tab =
-            entry.configuration.show_shader_tab || matches!(self.subpage, InstanceSubpage::Shaders(_));
         let show_live_game_output = entry.live_game_output.is_some();
 
         if let InstanceSubpage::LiveGameOutput(current_output) = &self.subpage
@@ -202,27 +200,23 @@ impl Render for InstancePage {
             self.subpage = InstanceSubpage::LiveGameOutput(desired_output.clone());
         }
 
-        let selected_index = match &self.subpage {
-            InstanceSubpage::Quickplay(_) => 0,
-            InstanceSubpage::Logs(_) => 1,
-            InstanceSubpage::Mods(_) => 2,
-            InstanceSubpage::ResourcePacks(_) => 3,
-            InstanceSubpage::Shaders(_) => 4,
-            InstanceSubpage::Settings(_) => {
-                if show_shader_tab {
-                    5
-                } else {
-                    4
-                }
-            },
-            InstanceSubpage::LiveGameOutput(_) => {
-                if show_shader_tab {
-                    6
-                } else {
-                    5
-                }
-            },
-        };
+        // Every kind of content an instance can have gets its tab from the start, rather than
+        // appearing once something of that kind is installed. Modpacks live among the mods, and
+        // plugins are for servers.
+        let mut tabs = vec![
+            InstanceSubpageType::Quickplay,
+            InstanceSubpageType::Logs,
+            InstanceSubpageType::Mods,
+            InstanceSubpageType::ResourcePacks,
+            InstanceSubpageType::Shaders,
+            InstanceSubpageType::Datapacks,
+            InstanceSubpageType::Settings,
+        ];
+        if show_live_game_output {
+            tabs.push(InstanceSubpageType::LiveGameOutput);
+        }
+        let current = self.subpage.page_type();
+        let selected_index = tabs.iter().position(|tab| *tab == current).unwrap_or(0);
 
         v_flex()
             .size_full()
@@ -231,43 +225,11 @@ impl Render for InstancePage {
                     .prefix(div().w_4())
                     .selected_index(selected_index)
                     .underline()
-                    .child(Tab::new().label(t::instance::quickplay()))
-                    .child(Tab::new().label(t::instance::logs::title()))
-                    .child(Tab::new().label(t::instance::content::mods()))
-                    .child(Tab::new().label(t::instance::content::resourcepacks()))
-                    .when(show_shader_tab, |this| this.child(Tab::new().label(t::instance::content::shaders())))
-                    .child(Tab::new().label(t::settings::title()))
-                    .when(show_live_game_output, |this| {
-                        this.child(Tab::new().label(t::instance::live_game_output()))
-                    })
-                    .on_click(cx.listener(move |_, index, _, cx| {
-                        let page_type = match *index {
-                            0 => InstanceSubpageType::Quickplay,
-                            1 => InstanceSubpageType::Logs,
-                            2 => InstanceSubpageType::Mods,
-                            3 => InstanceSubpageType::ResourcePacks,
-                            4 => {
-                                if show_shader_tab {
-                                    InstanceSubpageType::Shaders
-                                } else {
-                                    InstanceSubpageType::Settings
-                                }
-                            },
-                            5 => {
-                                if show_shader_tab {
-                                    InstanceSubpageType::Settings
-                                } else if show_live_game_output {
-                                    InstanceSubpageType::LiveGameOutput
-                                } else {
-                                    return;
-                                }
-                            },
-                            6 => InstanceSubpageType::LiveGameOutput,
-                            _ => {
-                                return;
-                            },
-                        };
-                        InterfaceConfig::get_mut(cx).instance_subpage = page_type;
+                    .children(tabs.iter().map(|tab| Tab::new().label(tab.label())))
+                    .on_click(cx.listener(move |_, index: &usize, _, cx| {
+                        if let Some(page_type) = tabs.get(*index).copied() {
+                            InterfaceConfig::get_mut(cx).instance_subpage = page_type;
+                        }
                     })),
             )
             .child(self.subpage.clone().into_any_element())
@@ -283,8 +245,24 @@ pub enum InstanceSubpageType {
     Mods,
     ResourcePacks,
     Shaders,
+    Datapacks,
     Settings,
     LiveGameOutput,
+}
+
+impl InstanceSubpageType {
+    fn label(self) -> &'static str {
+        match self {
+            InstanceSubpageType::Quickplay => t::instance::quickplay(),
+            InstanceSubpageType::Logs => t::instance::logs::title(),
+            InstanceSubpageType::Mods => t::instance::content::mods(),
+            InstanceSubpageType::ResourcePacks => t::instance::content::resourcepacks(),
+            InstanceSubpageType::Shaders => t::instance::content::shaders(),
+            InstanceSubpageType::Datapacks => t::instance::content::datapacks(),
+            InstanceSubpageType::Settings => t::settings::title(),
+            InstanceSubpageType::LiveGameOutput => t::instance::live_game_output(),
+        }
+    }
 }
 
 impl InstanceSubpageType {
@@ -314,6 +292,9 @@ impl InstanceSubpageType {
             InstanceSubpageType::Shaders => InstanceSubpage::Shaders(cx.new(|cx| {
                 InstanceContentSubpage::new(instance, ContentType::Shaders, data, backend_handle, window, cx)
             })),
+            InstanceSubpageType::Datapacks => InstanceSubpage::Datapacks(cx.new(|cx| {
+                InstanceContentSubpage::new(instance, ContentType::Datapacks, data, backend_handle, window, cx)
+            })),
             InstanceSubpageType::Settings => InstanceSubpage::Settings(
                 cx.new(|cx| InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)),
             ),
@@ -335,6 +316,7 @@ pub enum InstanceSubpage {
     Mods(Entity<InstanceContentSubpage>),
     ResourcePacks(Entity<InstanceContentSubpage>),
     Shaders(Entity<InstanceContentSubpage>),
+    Datapacks(Entity<InstanceContentSubpage>),
     Settings(Entity<InstanceSettingsSubpage>),
     LiveGameOutput(Entity<GameOutputRoot>),
 }
@@ -347,6 +329,7 @@ impl InstanceSubpage {
             InstanceSubpage::Mods(_) => InstanceSubpageType::Mods,
             InstanceSubpage::ResourcePacks(_) => InstanceSubpageType::ResourcePacks,
             InstanceSubpage::Shaders(_) => InstanceSubpageType::Shaders,
+            InstanceSubpage::Datapacks(_) => InstanceSubpageType::Datapacks,
             InstanceSubpage::Settings(_) => InstanceSubpageType::Settings,
             InstanceSubpage::LiveGameOutput(_) => InstanceSubpageType::LiveGameOutput,
         }
@@ -359,6 +342,7 @@ impl InstanceSubpage {
             Self::Mods(entity) => entity.into_any_element(),
             Self::ResourcePacks(entity) => entity.into_any_element(),
             Self::Shaders(entity) => entity.into_any_element(),
+            Self::Datapacks(entity) => entity.into_any_element(),
             Self::Settings(entity) => entity.into_any_element(),
             Self::LiveGameOutput(entity) => entity.into_any_element(),
         }

@@ -413,16 +413,27 @@ impl BackendState {
                         _ => {},
                     }
                     for folder in ContentFolder::iter() {
-                        if name == folder.folder_name() {
+                        // A server's datapacks are a level down, inside its world, so the world
+                        // folder appearing is what has to be noticed
+                        let top_level = instance.content_state[folder]
+                            .path
+                            .strip_prefix(&*instance.dot_minecraft_path)
+                            .ok()
+                            .and_then(|relative| relative.components().next())
+                            .and_then(|component| component.as_os_str().to_str());
+                        if top_level == Some(name) {
                             after_debounce_effects
                                 .content_changes
                                 .entry((id, folder))
                                 .or_insert_with(FolderChanges::no_changes)
                                 .dirty_all();
-                            if instance.content_state[folder].load_state.is_not_unloaded() {
+                            // The folder itself, which for a server's datapacks isn't the world
+                            // folder this event is about: watching that would report every save
+                            let folder_path = instance.content_state[folder].path.clone();
+                            if instance.content_state[folder].load_state.is_not_unloaded() && folder_path.is_dir() {
                                 self.file_watching
                                     .write()
-                                    .watch_filesystem(path.clone(), WatchTarget::InstanceContentDir { id, folder });
+                                    .watch_filesystem(folder_path, WatchTarget::InstanceContentDir { id, folder });
                             }
                             return;
                         }

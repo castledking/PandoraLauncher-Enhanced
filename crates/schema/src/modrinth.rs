@@ -254,7 +254,9 @@ impl ModrinthLoader {
             ModrinthLoader::Minecraft => Some("resourcepacks"),
             ModrinthLoader::Iris | ModrinthLoader::Optifine => Some("shaderpacks"),
             ModrinthLoader::Canvas => Some("resourcepacks"),
-            ModrinthLoader::Datapack => Some("saves/World/datapacks"),
+            // Where a client instance keeps datapacks, as the Modrinth App does; a server's are
+            // moved into its world when installed
+            ModrinthLoader::Datapack => Some("datapacks"),
             ModrinthLoader::Paper
             | ModrinthLoader::Spigot
             | ModrinthLoader::Bukkit

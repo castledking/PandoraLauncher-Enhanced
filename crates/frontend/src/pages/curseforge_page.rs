@@ -1169,7 +1169,7 @@ impl Render for CurseforgeSearchPage {
                 selection_button("shaders", filter_project_type == CurseforgeClassId::Shader)
                     .label(t::instance::content::shaders()),
             )
-            .child(selection_button("datapacks", filter_project_type == CurseforgeClassId::Datapack).label("Datapacks"))
+            .child(selection_button("datapacks", filter_project_type == CurseforgeClassId::Datapack).label(t::instance::content::datapacks()))
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(CurseforgeClassId::Mod, window, cx),
                 1 => page.set_project_type(CurseforgeClassId::BukkitPlugin, window, cx),

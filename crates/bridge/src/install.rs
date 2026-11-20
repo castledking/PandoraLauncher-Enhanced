@@ -54,6 +54,10 @@ pub enum ContentDownload {
         project_id: Arc<str>,
         version_id: Option<Arc<str>>,
         install_dependencies: bool,
+        /// Only builds for these loaders, when a version is being picked. Set when the user chose a
+        /// loader, so that, say, a datapack stays a datapack instead of the mod build the instance's
+        /// own loader would have picked.
+        only_loaders: Option<Arc<[schema::modrinth::ModrinthLoader]>>,
     },
     Curseforge {
         project_id: u32,

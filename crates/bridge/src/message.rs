@@ -202,6 +202,42 @@ pub enum MessageToBackend {
     RequestLoadWorlds {
         id: InstanceID,
     },
+    /// Reads a file dropped onto the launcher: what it is, and the project it's a build of.
+    InspectDroppedFile {
+        path: Arc<Path>,
+        channel: tokio::sync::oneshot::Sender<Result<crate::dropped::DroppedFileInfo, Arc<str>>>,
+    },
+    /// Looks up a project from what someone typed: a Modrinth or CurseForge page URL, a Modrinth
+    /// slug or ID, or a CurseForge project ID.
+    ResolveProject {
+        input: Arc<str>,
+        channel: tokio::sync::oneshot::Sender<Result<crate::dropped::ResolvedProject, Arc<str>>>,
+    },
+    /// Searches Modrinth and CurseForge for projects matching a name, link, or project ID.
+    SearchProjects {
+        query: Arc<str>,
+        channel: tokio::sync::oneshot::Sender<Result<Arc<[crate::dropped::ResolvedProject]>, Arc<str>>>,
+    },
+    /// Installs dropped files, making the instance or server first if they're going into a new one.
+    InstallDroppedFiles {
+        files: Arc<[crate::dropped::DroppedFile]>,
+        target: crate::dropped::DropTarget,
+        modal_action: ModalAction,
+    },
+    /// Records content added by hand as coming from a project, so it gets that project's icon and
+    /// update checks.
+    SetContentProject {
+        id: InstanceID,
+        content_folder: ContentFolder,
+        hashes: Arc<[[u8; 20]]>,
+        source: schema::content::ContentSource,
+    },
+    /// Copies a datapack from a client instance's datapacks folder into one of its worlds.
+    AddDatapackToWorld {
+        id: InstanceID,
+        datapack: Arc<Path>,
+        world: Arc<Path>,
+    },
     RequestLoadServers {
         id: InstanceID,
     },
@@ -610,6 +646,12 @@ pub enum MessageToFrontend {
     },
     OpenUrl {
         url: Arc<str>,
+    },
+    /// Show newly dropped content in its destination tab, scrolled into view and highlighted.
+    RevealInstalledContent {
+        id: InstanceID,
+        content_folder: ContentFolder,
+        filenames: Arc<[Arc<str>]>,
     },
 }
 

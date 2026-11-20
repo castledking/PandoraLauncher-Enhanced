@@ -103,6 +103,10 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_shaders_sort_enabled_first: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_datapacks_sort_key: InstanceContentSortKey,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_datapacks_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_mods_display: ContentListDisplay,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_plugins_display: ContentListDisplay,
@@ -110,6 +114,8 @@ pub struct InterfaceConfig {
     pub instance_resourcepacks_display: ContentListDisplay,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub instance_shaders_display: ContentListDisplay,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_datapacks_display: ContentListDisplay,
     /// The categories offered when labelling content, shared by every instance and server.
     /// Local assignments live in auxiliary files; shared defaults live in global_content_labels.
     #[serde(
@@ -262,6 +268,7 @@ impl InterfaceConfig {
             ContentFolder::ResourcePacks => self.instance_resourcepacks_display,
             ContentFolder::Shaders => self.instance_shaders_display,
             ContentFolder::Plugins => self.instance_plugins_display,
+            ContentFolder::Datapacks => self.instance_datapacks_display,
         }
     }
 
@@ -271,6 +278,7 @@ impl InterfaceConfig {
             ContentFolder::ResourcePacks => &mut self.instance_resourcepacks_display,
             ContentFolder::Shaders => &mut self.instance_shaders_display,
             ContentFolder::Plugins => &mut self.instance_plugins_display,
+            ContentFolder::Datapacks => &mut self.instance_datapacks_display,
         }
     }
 
@@ -571,10 +579,13 @@ impl Default for InterfaceConfig {
             instance_resourcepacks_sort_enabled_first: Default::default(),
             instance_shaders_sort_key: Default::default(),
             instance_shaders_sort_enabled_first: Default::default(),
+            instance_datapacks_sort_key: Default::default(),
+            instance_datapacks_sort_enabled_first: Default::default(),
             instance_mods_display: Default::default(),
             instance_plugins_display: Default::default(),
             instance_resourcepacks_display: Default::default(),
             instance_shaders_display: Default::default(),
+            instance_datapacks_display: Default::default(),
             content_categories: default_content_categories(),
             global_content_labels: Vec::new(),
             content_install_latest: true,

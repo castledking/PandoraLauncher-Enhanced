@@ -81,6 +81,10 @@ struct InstallDialog {
     loader_options: Vec<(SharedString, EnumSet<ModrinthLoader>)>,
     single_loader_set: Option<EnumSet<ModrinthLoader>>,
     install_dependencies: bool,
+    /// The loader picked on the page this was opened from, selected first if it's on offer.
+    preferred_loader: Option<ModrinthLoader>,
+    /// Whether the project has datapack builds, which can go into any instance whatever its loader.
+    datapack_builds: bool,
 
     mod_version_select_state: Option<Entity<SelectState<SearchableVec<ModVersionItem>>>>,
 }
@@ -93,6 +97,7 @@ pub fn open(
     project_type: ModrinthProjectType,
     install_for: Option<InstanceID>,
     game_version_hint: Option<Ustr>,
+    preferred_loader: Option<ModrinthLoader>,
     data: &DataEntities,
     window: &mut Window,
     cx: &mut App,
@@ -122,6 +127,7 @@ pub fn open(
                     project_type,
                     install_for,
                     game_version_hint,
+                    preferred_loader,
                     &data,
                     window,
                     cx,
@@ -186,6 +192,14 @@ pub fn open(
                 open_error_dialog(title.clone(), t::instance::content::load::versions::not_found().into(), window, cx);
                 return;
             }
+            // A datapack loads in any instance, whatever its loader
+            let datapack_builds =
+                version_matrix.values().any(|loaders| loaders.loaders.contains(ModrinthLoader::Datapack));
+            let pack_loaders = if datapack_builds {
+                EnumSet::only(ModrinthLoader::Datapack)
+            } else {
+                EnumSet::empty()
+            };
             if let Some(install_for) = install_for {
                 let Some(instance) = data.instances.read(cx).entries.get(&install_for) else {
                     open_error_dialog(title.clone(), t::instance::unable_to_find().into(), window, cx);
@@ -199,7 +213,7 @@ pub fn open(
 
                 // What the instance can load: its own loader's builds, and those of any loader it
                 // runs through a bridge mod
-                let usable_loaders = usable_modrinth_loaders(&compat);
+                let usable_loaders = usable_modrinth_loaders(&compat) | pack_loaders;
                 let checks_loader = project_type.has_loader_and_version() && instance_loader != Loader::Vanilla;
                 let usable_versions = version_matrix
                     .iter()
@@ -253,6 +267,8 @@ pub fn open(
                     install_dependencies: true,
                     mod_version_select_state: None,
                     last_selected_loader: None,
+                    preferred_loader,
+                    datapack_builds,
                 };
                 install_dialog.show(window, cx);
             } else {
@@ -270,7 +286,7 @@ pub fn open(
                             let mut valid_loader = true;
                             if project_type.has_loader_and_version() {
                                 valid_loader = compat.loader == Loader::Vanilla
-                                    || !loaders.loaders.is_disjoint(usable_modrinth_loaders(&compat));
+                                    || !loaders.loaders.is_disjoint(usable_modrinth_loaders(&compat) | pack_loaders);
                             }
                             if valid_loader {
                                 return Some(instance.clone());
@@ -316,6 +332,8 @@ pub fn open(
                     install_dependencies: true,
                     mod_version_select_state: None,
                     last_selected_loader: None,
+                    preferred_loader,
+                    datapack_builds,
                 };
                 install_dialog.show(window, cx);
             }
@@ -334,6 +352,7 @@ pub fn open(
                             project_type,
                             install_for,
                             game_version_hint,
+                            preferred_loader,
                             &data,
                             window,
                             cx,
@@ -525,7 +544,16 @@ impl InstallDialog {
                     // what the jar is going into: on a Paper server it's a plugin, on a modded
                     // client the same project's jar is a mod.
                     let onto_plugin_server = this.target_loader == Some(Loader::Paper);
-                    let path = match this.project_type {
+                    // Picking the datapack build means a datapack, whatever the project calls itself;
+                    // picking a mod build of a datapack project means a mod
+                    let datapack_chosen = selected_loader_string.as_str() == ModrinthLoader::Datapack.pretty_name()
+                        || this.single_loader_set == Some(EnumSet::only(ModrinthLoader::Datapack));
+                    let project_type = match this.project_type {
+                        _ if datapack_chosen => ModrinthProjectType::Datapack,
+                        ModrinthProjectType::Datapack => ModrinthProjectType::Mod,
+                        project_type => project_type,
+                    };
+                    let path = match project_type {
                         ModrinthProjectType::Mod | ModrinthProjectType::Plugin if onto_plugin_server => {
                             RelativePath::new("plugins").join(&*install_file.filename)
                         },
@@ -536,9 +564,7 @@ impl InstallDialog {
                             RelativePath::new("resourcepacks").join(&*install_file.filename)
                         },
                         ModrinthProjectType::Shader => RelativePath::new("shaderpacks").join(&*install_file.filename),
-                        ModrinthProjectType::Datapack => {
-                            RelativePath::new("saves").join("World").join("datapacks").join(&*install_file.filename)
-                        },
+                        ModrinthProjectType::Datapack => RelativePath::new("datapacks").join(&*install_file.filename),
                         ModrinthProjectType::Other => {
                             window.push_notification(
                                 (NotificationType::Error, t::instance::content::install::unable_install_other()),
@@ -583,6 +609,7 @@ impl InstallDialog {
                                     project_id: dep.project_id.clone().unwrap(),
                                     version_id: dep.version_id.clone(),
                                     install_dependencies: true,
+                                    only_loaders: None,
                                 },
                                 content_source: ContentSource::ModrinthProject {
                                     project_id: dep.project_id.clone().unwrap(),
@@ -773,19 +800,32 @@ impl InstallDialog {
                 }
                 let mut usable: Vec<_> =
                     options.iter().filter(|(_, matches)| !matches.is_disjoint(available)).cloned().collect();
+                // The same project's datapack build loads in any instance, so it's offered next
+                // to the mod build
+                if available.contains(ModrinthLoader::Datapack) {
+                    usable.push((
+                        SharedString::new_static(ModrinthLoader::Datapack.pretty_name()),
+                        EnumSet::only(ModrinthLoader::Datapack),
+                    ));
+                }
                 if usable.is_empty() {
                     usable.push(options.swap_remove(0));
                 }
                 self.loader_options = usable;
 
+                let preferred = self.preferred_loader.and_then(|preferred| {
+                    self.loader_options.iter().position(|(_, matches)| matches.contains(preferred))
+                });
                 let labels = self.loader_options.iter().map(|(label, _)| label.clone()).collect::<Vec<_>>();
                 cx.new(|cx| {
                     let mut select_state = SelectState::new(labels, None, window, cx);
-                    select_state.set_selected_index(Some(IndexPath::default()), window, cx);
+                    select_state.set_selected_index(Some(IndexPath::default().row(preferred.unwrap_or(0))), window, cx);
                     select_state
                 })
             } else if let Some(loaders) = self.version_matrix.get(selected_minecraft_version.as_str()) {
-                if loaders.same_loaders_for_all_versions {
+                // A project with both a datapack and mod builds lists them separately, since which
+                // one is wanted decides what gets installed
+                if loaders.same_loaders_for_all_versions && !(self.datapack_builds && loaders.loaders.len() > 1) {
                     let single_loader = if loaders.loaders.len() == 1 {
                         SharedString::new_static(loaders.loaders.iter().next().unwrap().pretty_name())
                     } else {
@@ -817,9 +857,13 @@ impl InstallDialog {
                         .map(SharedString::new_static)
                         .collect();
 
+                    let preferred = self
+                        .preferred_loader
+                        .filter(|preferred| loaders.loaders.contains(*preferred))
+                        .map(|preferred| SharedString::new_static(preferred.pretty_name()));
                     cx.new(|cx| {
                         let mut select_state = SelectState::new(keys, None, window, cx);
-                        if let Some(previous) = &self.last_selected_loader {
+                        if let Some(previous) = self.last_selected_loader.as_ref().or(preferred.as_ref()) {
                             select_state.set_selected_value(previous, window, cx);
                         }
                         if select_state.selected_index(cx).is_none() {

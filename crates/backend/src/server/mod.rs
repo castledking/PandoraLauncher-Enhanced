@@ -699,7 +699,7 @@ impl BackendState {
         generate_from: Option<InstanceID>,
         custom_jar: Option<PathBuf>,
         modal_action: ModalAction,
-    ) {
+    ) -> Option<PathBuf> {
         let loader = platform.loader();
 
         let mut server = schema::server::ServerConfiguration::new(platform);
@@ -710,7 +710,7 @@ impl BackendState {
                 Ok(file) => server.custom_jar = Some(ServerCustomJar { enabled: true, file }),
                 Err(err) => {
                     modal_action.set_finished_with_error(err.into());
-                    return;
+                    return None;
                 },
             }
         }
@@ -737,7 +737,7 @@ impl BackendState {
         ) else {
             // create_instance_configured already reported why
             modal_action.set_finished();
-            return;
+            return None;
         };
 
         // The server directory doubles as the working directory, so make sure it exists before
@@ -760,13 +760,14 @@ impl BackendState {
 
         let Some(generate_from) = generate_from else {
             modal_action.set_finished();
-            return;
+            return Some(instance_dir);
         };
 
         // The new folder is loaded by the filesystem watcher, the same as a client instance, and
         // the watcher is serviced by this same handler loop, so the mod copy has to wait for it
         // from a separate task rather than here
         let this = self.clone();
+        let created = instance_dir.clone();
         tokio::task::spawn(async move {
             match this.wait_for_new_instance(&instance_dir).await {
                 Some(id) => match this.plan_server_sync(id, generate_from) {
@@ -781,6 +782,7 @@ impl BackendState {
                 None => modal_action.set_finished_with_error("Unable to load the new server".into()),
             }
         });
+        Some(created)
     }
 }
 

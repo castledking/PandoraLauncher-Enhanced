@@ -412,6 +412,7 @@ impl InstallDialog {
                         },
                         CurseforgeClassId::Shader => RelativePath::new("shaderpacks").join(&*selected_file.file_name),
                         CurseforgeClassId::BukkitPlugin => RelativePath::new("plugins").join(&*selected_file.file_name),
+                        CurseforgeClassId::Datapack => RelativePath::new("datapacks").join(&*selected_file.file_name),
                         _ => {
                             window.push_notification(
                                 (NotificationType::Error, t::instance::content::install::unable_install_other()),

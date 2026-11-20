@@ -1334,6 +1334,8 @@ sv = "Ångra"
 ru = "Отмена"
 fr = "Annuler"
 it = "Annulla"
+[common.save]
+en = "Save"
 [common.rename]
 en = "Rename"
 tr = "Yeniden adlandır"
@@ -3044,6 +3046,18 @@ sv = "Resurspacket"
 ru = "Наборы ресурсов"
 fr = "Packs de ressources"
 it = "Pacchetti di risorse"
+[instance.content.datapacks]
+en = "Datapacks"
+[instance.content.datapacks.add_to_world]
+en = "Add to world"
+[instance.content.datapacks.no_worlds]
+en = "No worlds yet. Datapacks added here can be dropped onto the Data Packs screen when creating one."
+[instance.content.datapacks.hint]
+en = "Minecraft only loads datapacks from inside a world. Use Add to world on a datapack, or drop it onto the Data Packs screen when creating a new world."
+[instance.content.datapacks.added]
+en = "Added ${name: &str} to ${world: &str}"
+[instance.content.datapacks.server_hint]
+en = "Datapacks in the server's world load the next time it starts."
 [instance.content.shaders]
 en = "Shaders"
 tr = "Shader'lar"
@@ -3255,6 +3269,40 @@ en = "Interacts with your system outside the game"
 en = "Based on another work"
 [instance.content.disclosures.archived]
 en = "Archived"
+[instance.content.drop.anywhere]
+en = "Install into an existing or fresh instance or server"
+[instance.content.drop.into]
+en = "Install into '${name: &str}'"
+[instance.content.drop.title]
+en = "Install file"
+[instance.content.drop.server_entry]
+en = "${name: &str} (server)"
+[instance.content.drop.new_instance]
+en = "New instance…"
+[instance.content.drop.new_server]
+en = "New server…"
+[instance.content.drop.install_into]
+en = "Install into"
+[instance.content.drop.which_project]
+en = "Neither Modrinth nor CurseForge has this exact file. If you know which project it's from, add it to get its icon and updates (optional)."
+[instance.content.drop.files]
+en = "${count: usize} files"
+[instance.content.drop.reading]
+en = "Reading ${name: &str}…"
+[instance.content.drop.unknown_project]
+en = "Not on Modrinth or CurseForge"
+[instance.content.drop.project_placeholder]
+en = "Search by name, link, or project ID…"
+[instance.content.drop.searching]
+en = "Searching…"
+[instance.content.drop.no_results]
+en = "No matching projects found"
+[instance.content.set_project]
+en = "Set project…"
+[instance.content.set_project.title]
+en = "Set project for ${name: &str}"
+[instance.content.set_project.description]
+en = "Link this file to the Modrinth or CurseForge project it came from, so it gets the project's icon, update checks and version picker."
 [instance.content.no_description]
 en = "No Description"
 tr = "Açıklama Yok"
@@ -3795,6 +3843,8 @@ sv = "Välj resurspaket att installera"
 ru = "Выберите ресурспаки для установки"
 fr = "Sélectionnez les packs de ressources à installer"
 it = "Seleziona i pacchetti di risorse da installare"
+[instance.content.install.select_datapacks]
+en = "Select datapacks to install"
 [instance.content.install.select_shaders]
 en = "Select shaders to install"
 tr = "Yüklenecek shader'ları seç"
@@ -3854,6 +3904,8 @@ de = "Aktualisiere alle Ressourcenpakete (${count: usize})"
 hu = "Minden forráscsomag frissítése (${count: usize})"
 ru = "Обновить все ресурспаки (${count: usize})"
 it = "Aggiorna tutti i pacchetti di risorse (${count: usize})"
+[instance.content.update_all_datapacks]
+en = "Update all datapacks (${count: usize})"
 [instance.content.update_all_shaders]
 en = "Update all shaders (${count: usize})"
 tr = "Tüm shader'ları güncelle (${count: usize})"
@@ -5694,6 +5746,10 @@ it = "s"
 
 [server.title]
 en = "Servers"
+[server.plugins_datapacks]
+en = "Plugins / Datapacks"
+[server.mods_datapacks]
+en = "Mods / Datapacks"
 [server.plugins]
 en = "Plugins"
 [server.select_plugins]

@@ -31,10 +31,54 @@ enum ServerTab {
     Settings,
 }
 
+/// A server's content tab: its plugins or mods, and the datapacks in its world, which it all
+/// loads the same way and so live under one tab.
+struct ServerContent {
+    primary: Option<(ContentType, Entity<InstanceContentSubpage>)>,
+    datapacks: Entity<InstanceContentSubpage>,
+    showing_datapacks: bool,
+}
+
+impl Render for ServerContent {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some((primary_type, primary)) = &self.primary else {
+            return self.datapacks.clone().into_any_element();
+        };
+        let primary_label = match primary_type {
+            ContentType::Plugins => t::server::plugins(),
+            _ => t::instance::content::mods(),
+        };
+        let shown = if self.showing_datapacks {
+            self.datapacks.clone().into_any_element()
+        } else {
+            primary.clone().into_any_element()
+        };
+
+        v_flex()
+            .size_full()
+            .child(
+                h_flex().px_4().pt_2().child(
+                    TabBar::new("server-content-kind")
+                        .segmented()
+                        .small()
+                        .selected_index(usize::from(self.showing_datapacks))
+                        .child(Tab::new().label(primary_label))
+                        .child(Tab::new().label(t::instance::content::datapacks()))
+                        .on_click(cx.listener(|this, index: &usize, _, cx| {
+                            this.showing_datapacks = *index == 1;
+                            cx.notify();
+                        })),
+                ),
+            )
+            .child(div().flex_1().min_h_0().child(shown))
+            .into_any_element()
+    }
+}
+
 #[derive(Clone)]
 enum ServerSubpage {
     Console(Entity<ServerConsoleSubpage>),
-    Content(Entity<InstanceContentSubpage>),
+    Content(Entity<ServerContent>),
     Properties(Entity<ServerPropertiesNav>),
     Settings(Entity<ServerSettingsSubpage>),
 }
@@ -121,12 +165,21 @@ impl ServerPage {
                     .as_ref()
                     .map(|server| server.platform)
                     .unwrap_or_default();
-                match Self::content_type(platform) {
-                    Some(content_type) => ServerSubpage::Content(cx.new(|cx| {
+                let primary = Self::content_type(platform).map(|content_type| {
+                    let backend_handle = backend_handle.clone();
+                    let subpage = cx.new(|cx| {
                         InstanceContentSubpage::new(instance, content_type, data, backend_handle, window, cx)
-                    })),
-                    None => Self::create_subpage(ServerTab::Console, instance, data, window, cx),
-                }
+                    });
+                    (content_type, subpage)
+                });
+                let datapacks = cx.new(|cx| {
+                    InstanceContentSubpage::new(instance, ContentType::Datapacks, data, backend_handle, window, cx)
+                });
+                ServerSubpage::Content(cx.new(|_| ServerContent {
+                    primary,
+                    datapacks,
+                    showing_datapacks: false,
+                }))
             },
             ServerTab::Properties => {
                 ServerSubpage::Properties(cx.new(|cx| ServerPropertiesNav::new(instance, backend_handle, window, cx)))
@@ -267,17 +320,27 @@ impl Page for ServerPage {
 }
 
 impl Render for ServerPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(reveal) = crate::component::file_drop::pending_reveal_for_instance(self.instance.read(cx).id, cx) {
+            if self.subpage.tab() != ServerTab::Content {
+                self.subpage = Self::create_subpage(ServerTab::Content, &self.instance, &self.data, window, cx);
+            }
+            if let ServerSubpage::Content(content) = &self.subpage {
+                let want_datapacks = reveal.folder == bridge::instance::ContentFolder::Datapacks;
+                content.update(cx, |content, cx| {
+                    if content.showing_datapacks != want_datapacks {
+                        content.showing_datapacks = want_datapacks;
+                        cx.notify();
+                    }
+                });
+            }
+        }
+
         let platform = self.platform(cx);
         let content_type = Self::content_type(platform);
 
-        // Tabs are laid out dynamically because Vanilla has no content tab
-        let mut tabs = vec![ServerTab::Console];
-        if content_type.is_some() {
-            tabs.push(ServerTab::Content);
-        }
-        tabs.push(ServerTab::Properties);
-        tabs.push(ServerTab::Settings);
+        // Every server has datapacks, so every server has a content tab; Vanilla's holds only those
+        let tabs = vec![ServerTab::Console, ServerTab::Content, ServerTab::Properties, ServerTab::Settings];
 
         let current = self.subpage.tab();
         let selected_index = tabs.iter().position(|tab| *tab == current).unwrap_or(0);
@@ -290,8 +353,9 @@ impl Render for ServerPage {
                 let (label, icon) = match tab {
                     ServerTab::Console => (t::server::tab::console(), PandoraIcon::SquareTerminal),
                     ServerTab::Content => match content_type {
-                        Some(ContentType::Plugins) => (t::server::plugins(), PandoraIcon::Puzzle),
-                        _ => (t::instance::content::mods(), PandoraIcon::PackageOpen),
+                        Some(ContentType::Plugins) => (t::server::plugins_datapacks(), PandoraIcon::Puzzle),
+                        Some(_) => (t::server::mods_datapacks(), PandoraIcon::PackageOpen),
+                        None => (t::instance::content::datapacks(), PandoraIcon::PackageOpen),
                     },
                     ServerTab::Properties => (t::server::tab::properties(), PandoraIcon::SlidersVertical),
                     ServerTab::Settings => (t::settings::title(), PandoraIcon::Settings),

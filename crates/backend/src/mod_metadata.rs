@@ -1204,6 +1204,15 @@ impl ModMetadataManager {
             png_icon = load_icon(icon);
         }
 
+        // Resource packs and datapacks share pack.mcmeta; what tells them apart is whether the
+        // pack carries assets for the client or data for the world
+        let mut has_assets = false;
+        let mut has_data = false;
+        for entry in archive.entries() {
+            has_assets |= entry.name.starts_with("assets/");
+            has_data |= entry.name.starts_with("data/");
+        }
+
         Some(Arc::new(ContentSummary {
             id: None,
             hash,
@@ -1213,14 +1222,16 @@ impl ModMetadataManager {
             version_str: "".into(),
             rich_description: Some(Arc::new(pack_mcmeta.pack.description)),
             png_icon,
-            extra: ContentType::ResourcePack,
+            extra: pack_type(has_assets, has_data),
         }))
     }
 
-    // Used for resourcepack folders
+    // Used for resourcepack and datapack folders
     pub fn create_resource_pack(
         pack_mcmeta_bytes: &[u8],
         pack_png_bytes: Option<&[u8]>,
+        has_assets: bool,
+        has_data: bool,
     ) -> Option<Arc<ContentSummary>> {
         let pack_mcmeta: PackMcmeta = serde_json::from_slice(&pack_mcmeta_bytes)
             .inspect_err(|e| {
@@ -1239,8 +1250,18 @@ impl ModMetadataManager {
             version_str: "".into(),
             rich_description: Some(Arc::new(pack_mcmeta.pack.description)),
             png_icon,
-            extra: ContentType::ResourcePack,
+            extra: pack_type(has_assets, has_data),
         }))
+    }
+}
+
+/// A pack with only world data is a datapack. One carrying assets, with or without data, is
+/// treated as the resource pack it also is.
+fn pack_type(has_assets: bool, has_data: bool) -> ContentType {
+    if has_data && !has_assets {
+        ContentType::Datapack
+    } else {
+        ContentType::ResourcePack
     }
 }
 

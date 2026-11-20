@@ -171,6 +171,7 @@ impl GlobalLabels {
                             Some("resourcepacks") => ContentFolder::ResourcePacks,
                             Some("shaderpacks") => ContentFolder::Shaders,
                             Some("plugins") => ContentFolder::Plugins,
+                            Some("datapacks") => ContentFolder::Datapacks,
                             _ => continue,
                         };
                         add(folder, &modpack_file_source(summary, file), file.summary.as_deref(), file.path.as_str());
@@ -201,6 +202,7 @@ impl GlobalLabels {
             Some("mods") => t::instance::content::mods(),
             Some("plugins") => t::server::plugins(),
             Some("resourcepacks") => t::instance::content::resourcepacks(),
+            Some("datapacks") => t::instance::content::datapacks(),
             _ => t::instance::content::shaders(),
         };
         let kind = match identity.get(1).copied() {

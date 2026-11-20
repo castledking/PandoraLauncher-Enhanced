@@ -315,6 +315,58 @@ impl Processor {
             MessageToFrontend::OpenUrl { url } => {
                 cx.open_url(&url);
             },
+            MessageToFrontend::RevealInstalledContent { .. } => {
+                self.with_main_window(message, cx, |this, message, window, cx| {
+                    let MessageToFrontend::RevealInstalledContent {
+                        id,
+                        content_folder,
+                        filenames,
+                    } = message
+                    else {
+                        unreachable!();
+                    };
+
+                    crate::component::file_drop::set_pending_reveal(id, content_folder, filenames, cx);
+
+                    let Some(entry) = this.data.instances.read(cx).entries.get(&id).cloned() else {
+                        return;
+                    };
+                    let (name, is_server) = {
+                        let entry = entry.read(cx);
+                        (entry.name.clone(), entry.configuration.server.is_some())
+                    };
+
+                    if is_server {
+                        let target_page = crate::ui::PageType::ServerPage { name };
+                        if crate::interface_config::InterfaceConfig::get(cx).main_page != target_page {
+                            crate::root::switch_page(target_page, &[crate::ui::PageType::Servers], window, cx);
+                        }
+                    } else {
+                        let subpage = match content_folder {
+                            bridge::instance::ContentFolder::Mods | bridge::instance::ContentFolder::Plugins => {
+                                crate::pages::instance::instance_page::InstanceSubpageType::Mods
+                            },
+                            bridge::instance::ContentFolder::ResourcePacks => {
+                                crate::pages::instance::instance_page::InstanceSubpageType::ResourcePacks
+                            },
+                            bridge::instance::ContentFolder::Shaders => {
+                                crate::pages::instance::instance_page::InstanceSubpageType::Shaders
+                            },
+                            bridge::instance::ContentFolder::Datapacks => {
+                                crate::pages::instance::instance_page::InstanceSubpageType::Datapacks
+                            },
+                        };
+                        crate::interface_config::InterfaceConfig::get_mut(cx).instance_subpage = subpage;
+
+                        let target_page = crate::ui::PageType::InstancePage { name };
+                        if crate::interface_config::InterfaceConfig::get(cx).main_page != target_page {
+                            crate::root::switch_page(target_page, &[crate::ui::PageType::Instances], window, cx);
+                        }
+                    }
+
+                    window.refresh();
+                });
+            },
         }
     }
 }

@@ -257,6 +257,7 @@ impl BackendState {
 
         let mut dot_minecraft_dir = None;
         let mut instance_running = false;
+        let mut is_server = false;
 
         let loader = content.loader;
         let minecraft_version = content.minecraft_version;
@@ -281,6 +282,7 @@ impl BackendState {
             let mut instance_state = self.instance_state.write();
             if let Some(instance) = instance_state.instances.get_mut(instance_id) {
                 instance_running = !instance.processes.is_empty();
+                is_server = instance.configuration.get().server.is_some();
 
                 if instance.configuration.get().loader == Loader::Vanilla {
                     instance.configuration.modify(|config| {
@@ -319,6 +321,14 @@ impl BackendState {
                     continue;
                 };
 
+                // A server reads datapacks from inside its world
+                let install_path: Arc<Path> = match install_path.strip_prefix("datapacks") {
+                    Ok(rest) if is_server => Path::new(&crate::instance::server_level_name(&dot_minecraft_dir))
+                        .join("datapacks")
+                        .join(rest)
+                        .into(),
+                    _ => install_path,
+                };
                 let target_path = dot_minecraft_dir.join(&install_path);
 
                 if instance_running
@@ -422,6 +432,7 @@ impl BackendState {
                 ref project_id,
                 ref version_id,
                 install_dependencies,
+                ref only_loaders,
             } => {
                 if let Some(installed_content_ids) = installed_content_ids {
                     let unique = installed_content_ids.lock().modrinth_projects.insert(project_id.clone());
@@ -447,6 +458,35 @@ impl BackendState {
                     drop(tracker);
 
                     Some(version)
+                } else if let Some(only_loaders) = only_loaders {
+                    // The user picked the loader, so only its builds will do: for the instance's own
+                    // version if there are any, otherwise the newest of any version, as below
+                    let fetch = |game_versions: Option<Arc<[Arc<str>]>>| {
+                        self.meta.fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
+                            project_id: project_id.clone(),
+                            game_versions,
+                            loaders: Some(only_loaders.clone()),
+                        }))
+                    };
+                    let is_empty = |result: &Result<Arc<schema::modrinth::ModrinthProjectVersionsResult>, MetaLoadError>| {
+                        matches!(result, Err(MetaLoadError::NonOK(404)))
+                            || result.as_ref().ok().map(|r| r.0.is_empty()).unwrap_or(false)
+                    };
+
+                    let mut result = fetch(Some(Arc::new([content.minecraft_version.into()]))).await;
+                    tracker.add_count(1);
+                    if is_empty(&result) {
+                        tracker.add_total(1);
+                        result = fetch(None).await;
+                        is_wrong_version = true;
+                        tracker.add_count(1);
+                    }
+
+                    let not_found = is_empty(&result);
+                    tracker.set_finished(ProgressTrackerFinishType::from_err(not_found || result.is_err()));
+                    drop(tracker);
+
+                    result?.0.first().map(|v| Arc::new(v.clone()))
                 } else {
                     let modrinth_loader = content.loader.as_modrinth_loader();
                     let compatible = content.loader.compatible_modrinth_loaders();
@@ -584,7 +624,20 @@ impl BackendState {
                     return Err(ContentInstallError::UnableToFindVersion);
                 }
 
-                let content_folder_base = if let Some(plugins) = plugins_folder_for(content.loader, &mod_summary) {
+                // A build Modrinth files under the datapack loader is a datapack, even when its zip
+                // also carries assets and so reads as a resource pack. One that's a mod jar (the same
+                // project's Fabric build, say) is still a mod.
+                let datapack_build = version
+                    .loaders
+                    .as_ref()
+                    .is_some_and(|loaders| loaders.contains(&ModrinthLoader::Datapack))
+                    && matches!(
+                        mod_summary.extra,
+                        ContentType::Datapack | ContentType::ResourcePack | ContentType::Unknown
+                    );
+                let content_folder_base = if datapack_build {
+                    Some(Path::new("datapacks"))
+                } else if let Some(plugins) = plugins_folder_for(content.loader, &mod_summary) {
                     Some(plugins)
                 } else if let Some(content_folder) = mod_summary.extra.content_folder() {
                     Some(Path::new(content_folder))
@@ -652,6 +705,7 @@ impl BackendState {
                                             project_id: project_id.clone(),
                                             version_id,
                                             install_dependencies: true,
+                                            only_loaders: None,
                                         },
                                         content_source: ContentSource::ModrinthProject {
                                             project_id: project_id.clone(),
@@ -985,6 +1039,12 @@ impl BackendState {
                 let mut hasher = Sha1::new();
                 hasher.update(&data);
                 let hash: [u8; 20] = hasher.finalize().into();
+
+                // A file brought in by hand that's already known to be a project's build, such as
+                // one identified when it was dropped onto the launcher
+                if content_file.content_source != ContentSource::Manual {
+                    self.mod_metadata_manager.set_content_source(hash, content_file.content_source.clone());
+                }
 
                 let hash_as_str = hex::encode(hash);
 
@@ -1506,7 +1566,10 @@ fn url_to_filename(url: &str) -> Result<SafePath, ContentInstallError> {
 /// Plugin jars look like plain Java modules to the metadata reader, which would otherwise send
 /// them to `mods/`. On a Paper server every jar fetched for it is a plugin.
 fn plugins_folder_for(loader: Loader, summary: &ContentSummary) -> Option<&'static Path> {
-    let is_pack = matches!(summary.extra, ContentType::ResourcePack | ContentType::ShaderPack);
+    let is_pack = matches!(
+        summary.extra,
+        ContentType::ResourcePack | ContentType::ShaderPack | ContentType::Datapack
+    );
     (loader == Loader::Paper && !is_pack).then(|| Path::new("plugins"))
 }
 

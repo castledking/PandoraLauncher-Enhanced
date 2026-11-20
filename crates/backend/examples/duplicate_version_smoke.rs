@@ -139,6 +139,7 @@ fn main() {
                 project_id: (*project_id).into(),
                 version_id: None,
                 install_dependencies: false,
+                only_loaders: None,
             },
             content_source: ContentSource::ModrinthProject {
                 project_id: (*project_id).into(),

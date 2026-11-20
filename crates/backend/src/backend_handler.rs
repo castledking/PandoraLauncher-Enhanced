@@ -170,6 +170,42 @@ impl BackendState {
             MessageToBackend::RequestLoadWorlds { id } => {
                 tokio::task::spawn(Instance::load_worlds(self.clone(), id));
             },
+            MessageToBackend::InspectDroppedFile { path, channel } => {
+                let this = self.clone();
+                tokio::task::spawn(async move {
+                    _ = channel.send(this.inspect_dropped_file(path).await);
+                });
+            },
+            MessageToBackend::ResolveProject { input, channel } => {
+                let this = self.clone();
+                tokio::task::spawn(async move {
+                    _ = channel.send(this.resolve_project_input(&input).await);
+                });
+            },
+            MessageToBackend::SearchProjects { query, channel } => {
+                let this = self.clone();
+                tokio::task::spawn(async move {
+                    _ = channel.send(this.search_projects(&query).await);
+                });
+            },
+            MessageToBackend::InstallDroppedFiles {
+                files,
+                target,
+                modal_action,
+            } => {
+                self.install_dropped_files(files, target, modal_action).await;
+            },
+            MessageToBackend::SetContentProject {
+                id,
+                content_folder,
+                hashes,
+                source,
+            } => {
+                self.set_content_project(id, content_folder, &hashes, source);
+            },
+            MessageToBackend::AddDatapackToWorld { id, datapack, world } => {
+                self.add_datapack_to_world(id, &datapack, &world);
+            },
             MessageToBackend::RequestLoadServers { id } => {
                 tokio::task::spawn(Instance::load_servers(self.clone(), id));
             },
@@ -1570,7 +1606,7 @@ impl BackendState {
                 custom_jar,
                 modal_action,
             } => {
-                self.create_server_instance(
+                _ = self.create_server_instance(
                     name,
                     version,
                     platform,

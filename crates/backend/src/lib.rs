@@ -11,6 +11,8 @@ mod backend_filesystem;
 mod backend_handler;
 mod content_links;
 mod curseforge_manual_download;
+mod datapacks;
+mod dropped_files;
 mod directories;
 mod duplicate;
 mod export;

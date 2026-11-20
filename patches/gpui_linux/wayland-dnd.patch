@@ -1,0 +1,290 @@
+--- a/src/linux/wayland/clipboard.rs
++++ b/src/linux/wayland/clipboard.rs
+@@ -75,7 +75,7 @@
+         self.mime_types.push(mime_type)
+     }
+ 
+-    fn has_mime_type(&self, mime_type: &str) -> bool {
++    pub(crate) fn has_mime_type(&self, mime_type: &str) -> bool {
+         self.mime_types.iter().any(|t| t == mime_type)
+     }
+ 
+--- a/src/linux/wayland/client.rs
++++ b/src/linux/wayland/client.rs
+@@ -372,6 +372,7 @@
+     data_offer: Option<wl_data_offer::WlDataOffer>,
+     window: Option<WaylandWindowStatePtr>,
+     position: Point<Pixels>,
++    serial: u32,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -923,6 +924,7 @@
+                 data_offer: None,
+                 window: None,
+                 position: Point::default(),
++                serial: 0,
+             },
+             external_drag: None,
+             click: ClickState {
+@@ -2554,7 +2556,7 @@
+         _: &wl_data_device::WlDataDevice,
+         event: wl_data_device::Event,
+         _: &(),
+-        _: &Connection,
++        connection: &Connection,
+         _: &QueueHandle<Self>,
+     ) {
+         let client = this.get_client();
+@@ -2592,79 +2594,60 @@
+             } => {
+                 state.serial_tracker.update(SerialKind::DataDevice, serial);
+                 if let Some(data_offer) = data_offer {
++                    let offer_index = state
++                        .data_offers
++                        .iter()
++                        .position(|wrapper| wrapper.inner.id() == data_offer.id());
++                    let offers_file_list = offer_index
++                        .map(|index| state.data_offers[index].has_mime_type(FILE_LIST_MIME_TYPE))
++                        .unwrap_or(false);
++
+                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
++                        data_offer.accept(serial, None);
+                         return;
+                     };
+ 
++                    if !offers_file_list {
++                        data_offer.accept(serial, None);
++                        return;
++                    }
++
++                    // Detach from data_offers so a concurrent clipboard event cannot destroy the
++                    // active drag offer before Leave or Drop cleans it up.
++                    if let Some(index) = offer_index {
++                        state.data_offers.remove(index);
++                    }
++
++                    // Per the Wayland wl_data_offer.accept spec, accept must use the serial from
++                    // wl_data_device.enter; calling it earlier during wl_data_offer.offer uses a
++                    // stale serial that compositors ignore.
+                     const ACTIONS: DndAction = DndAction::Copy;
++                    data_offer.accept(serial, Some(FILE_LIST_MIME_TYPE.to_string()));
+                     data_offer.set_actions(ACTIONS, ACTIONS);
+ 
+-                    let pipe = Pipe::new().unwrap();
+-                    data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
+-                        BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+-                    });
+-                    let fd = pipe.read;
+-                    drop(pipe.write);
++                    let position = Point::new(x.into(), y.into());
++                    state.drag.data_offer = Some(data_offer);
++                    state.drag.window = Some(drag_window.clone());
++                    state.drag.position = position;
++                    state.drag.serial = serial;
+ 
+-                    let read_task = state.common.background_executor.spawn(async {
+-                        let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
+-                        let text = String::from_utf8(buffer)?;
+-                        anyhow::Ok(text)
++                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
++                        position,
++                        paths: gpui::ExternalPaths(SmallVec::new()),
+                     });
+-
+-                    let this = this.clone();
+-                    state
+-                        .common
+-                        .foreground_executor
+-                        .spawn(async move {
+-                            let file_list = match read_task.await {
+-                                Ok(list) => list,
+-                                Err(err) => {
+-                                    log::error!("error reading drag and drop pipe: {err:?}");
+-                                    return;
+-                                }
+-                            };
+-
+-                            let paths: SmallVec<[_; 2]> = file_list
+-                                .lines()
+-                                .filter_map(|path| Url::parse(path).log_err())
+-                                .filter_map(|url| match url.to_file_path() {
+-                                    Ok(url) => Some(url),
+-                                    Err(()) => {
+-                                        log::error!("Failed turn {url:?} into a file path");
+-                                        None
+-                                    }
+-                                })
+-                                .collect();
+-                            let position = Point::new(x.into(), y.into());
+-
+-                            // Prevent dropping text from other programs.
+-                            if paths.is_empty() {
+-                                data_offer.destroy();
+-                                return;
+-                            }
+-
+-                            let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+-                                position,
+-                                paths: gpui::ExternalPaths(paths),
+-                            });
+-
+-                            let client = this.get_client();
+-                            let mut state = client.borrow_mut();
+-                            state.drag.data_offer = Some(data_offer);
+-                            state.drag.window = Some(drag_window.clone());
+-                            state.drag.position = position;
+-
+-                            drop(state);
+-                            drag_window.handle_input(input);
+-                        })
+-                        .detach();
++                    drop(state);
++                    drag_window.handle_input(input);
+                 }
+             }
+             wl_data_device::Event::Motion { x, y, .. } => {
+                 let Some(drag_window) = state.drag.window.clone() else {
+                     return;
+                 };
++                if let Some(data_offer) = &state.drag.data_offer {
++                    const ACTIONS: DndAction = DndAction::Copy;
++                    data_offer.accept(state.drag.serial, Some(FILE_LIST_MIME_TYPE.to_string()));
++                    data_offer.set_actions(ACTIONS, ACTIONS);
++                }
+                 let position = Point::new(x.into(), y.into());
+                 state.drag.position = position;
+ 
+@@ -2673,35 +2656,100 @@
+                 drag_window.handle_input(input);
+             }
+             wl_data_device::Event::Leave => {
+-                let Some(drag_window) = state.drag.window.clone() else {
++                let Some(drag_window) = state.drag.window.take() else {
+                     return;
+                 };
+-                let data_offer = state.drag.data_offer.clone().unwrap();
+-                data_offer.destroy();
+-
+-                state.drag.data_offer = None;
+-                state.drag.window = None;
++                if let Some(data_offer) = state.drag.data_offer.take() {
++                    data_offer.destroy();
++                }
++                state.drag.serial = 0;
+ 
+                 let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
+                 drop(state);
+                 drag_window.handle_input(input);
+             }
+             wl_data_device::Event::Drop => {
+-                let Some(drag_window) = state.drag.window.clone() else {
++                let Some(drag_window) = state.drag.window.take() else {
+                     return;
+                 };
+-                let data_offer = state.drag.data_offer.clone().unwrap();
+-                data_offer.finish();
+-                data_offer.destroy();
+-
+-                state.drag.data_offer = None;
+-                state.drag.window = None;
++                let Some(data_offer) = state.drag.data_offer.take() else {
++                    return;
++                };
++                let position = state.drag.position;
++                state.drag.serial = 0;
+ 
+-                let input = PlatformInput::FileDrop(FileDropEvent::Submit {
+-                    position: state.drag.position,
++                // Request the URI list on Drop (not Enter): strict Wayland drag sources do not
++                // transfer data until drop, and wl_data_offer.finish must follow the transfer.
++                let pipe = Pipe::new().unwrap();
++                data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
++                    BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+                 });
+-                drop(state);
+-                drag_window.handle_input(input);
++                let fd = pipe.read;
++                drop(pipe.write);
++                let _ = connection.flush();
++
++                let read_task = state.common.background_executor.spawn(async {
++                    let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
++                    let text = String::from_utf8(buffer)?;
++                    anyhow::Ok(text)
++                });
++
++                let connection = connection.clone();
++                state
++                    .common
++                    .foreground_executor
++                    .spawn(async move {
++                        let file_list = match read_task.await {
++                            Ok(list) => list,
++                            Err(err) => {
++                                log::error!("error reading drag and drop pipe: {err:?}");
++                                data_offer.destroy();
++                                let _ = connection.flush();
++                                drag_window
++                                    .handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
++                                return;
++                            }
++                        };
++
++                        data_offer.finish();
++                        data_offer.destroy();
++                        let _ = connection.flush();
++
++                        let paths: SmallVec<[_; 2]> = file_list
++                            .lines()
++                            .map(|line| line.trim())
++                            .filter(|line| !line.is_empty() && !line.starts_with('#'))
++                            .filter_map(|path| Url::parse(path).log_err())
++                            .filter_map(|url| match url.to_file_path() {
++                                Ok(url) => Some(url),
++                                Err(()) => {
++                                    log::error!("Failed turn {url:?} into a file path");
++                                    None
++                                }
++                            })
++                            .collect();
++
++                        if paths.is_empty() {
++                            drag_window
++                                .handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
++                            return;
++                        }
++
++                        // Replace the empty hover placeholder with the real dropped paths before
++                        // submitting the drop.
++                        drag_window
++                            .handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
++                        drag_window.handle_input(PlatformInput::FileDrop(
++                            FileDropEvent::Entered {
++                                position,
++                                paths: gpui::ExternalPaths(paths),
++                            },
++                        ));
++                        drag_window.handle_input(PlatformInput::FileDrop(
++                            FileDropEvent::Submit { position },
++                        ));
++                    })
++                    .detach();
+             }
+             _ => {}
+         }
+@@ -2725,14 +2773,6 @@
+         let mut state = client.borrow_mut();
+ 
+         if let wl_data_offer::Event::Offer { mime_type } = event {
+-            // Drag and drop
+-            if mime_type == FILE_LIST_MIME_TYPE {
+-                let serial = state.serial_tracker.get(SerialKind::DataDevice);
+-                let mime_type = mime_type.clone();
+-                data_offer.accept(serial.as_raw(), Some(mime_type));
+-            }
+-
+-            // Clipboard
+             if let Some(offer) = state
+                 .data_offers
+                 .iter_mut()

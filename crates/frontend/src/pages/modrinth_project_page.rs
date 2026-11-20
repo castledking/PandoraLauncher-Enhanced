@@ -18,8 +18,8 @@ use gpui_component::{
 use schema::{
     content::ContentSource,
     modrinth::{
-        ModrinthDisclosureKind, ModrinthDisclosuresRequest, ModrinthDisclosuresResult, ModrinthProjectRequest,
-        ModrinthProjectResult, ModrinthProjectType, ModrinthSideRequirement,
+        ModrinthDisclosureKind, ModrinthDisclosuresRequest, ModrinthDisclosuresResult, ModrinthLoader,
+        ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectType, ModrinthSideRequirement,
     },
 };
 use strum::IntoEnumIterator;
@@ -291,7 +291,17 @@ impl Render for ModrinthProjectPage {
             let mut link_row = h_flex().gap_1().flex_wrap();
 
             let project_id_str = project.id.clone();
-            let project_type = project.project_type;
+            // Modrinth calls a datapack project a mod. One with nothing but datapack builds is
+            // installed as the datapack it is.
+            let datapack_only = project
+                .loaders
+                .as_deref()
+                .is_some_and(|loaders| !loaders.is_empty() && loaders.iter().all(|loader| *loader == ModrinthLoader::Datapack));
+            let (project_type, preferred_loader) = if datapack_only {
+                (ModrinthProjectType::Datapack, Some(ModrinthLoader::Datapack))
+            } else {
+                (project.project_type, None)
+            };
 
             let install_button: AnyElement = {
                 let data = self.data.clone();
@@ -325,6 +335,7 @@ impl Render for ModrinthProjectPage {
                                     project_type,
                                     install_for,
                                     None,
+                                    preferred_loader,
                                     &data,
                                     window,
                                     cx,

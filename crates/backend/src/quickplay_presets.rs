@@ -509,6 +509,7 @@ pub async fn resolve_installs(
                     project_id: project_id.clone(),
                     version_id: Some(version_id.clone()),
                     install_dependencies: false,
+                    only_loaders: None,
                 },
                 content_source: ContentSource::ModrinthProject {
                     project_id: project_id.clone(),

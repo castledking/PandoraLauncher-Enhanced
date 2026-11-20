@@ -57,6 +57,8 @@ pub struct LauncherUI {
     _instance_removed_subscription: Subscription,
     _instance_moved_to_top_subscription: Subscription,
     _window_activation_subscription: Subscription,
+    /// Whether files from outside the launcher are being dragged over it.
+    file_drag_active: bool,
 }
 
 pub const ICONIZED_SIDEBAR_WIDTH: f32 = 64.0;
@@ -382,6 +384,7 @@ impl LauncherUI {
             _instance_removed_subscription,
             _instance_moved_to_top_subscription,
             _window_activation_subscription,
+            file_drag_active: false,
         }
     }
 
@@ -1012,15 +1015,50 @@ impl Render for LauncherUI {
             .child(footer);
 
         let snow = InterfaceConfig::get(cx).snow_effect;
+
+        // A drag that ended or left the window leaves nothing to say it did, so the hint goes as
+        // soon as there's no drag
+        if !cx.has_active_drag() {
+            self.file_drag_active = false;
+            crate::component::file_drop::set_over_content(false, window, cx);
+        }
+        let show_drop_hint = self.file_drag_active && !crate::component::file_drop::is_over_content(cx);
+
         div()
+            .id("launcher-root")
             .relative()
             .size_full()
+            .on_drag_move(cx.listener(|this, _: &DragMoveEvent<ExternalPaths>, _, cx| {
+                if !this.file_drag_active {
+                    this.file_drag_active = true;
+                    cx.notify();
+                }
+            }))
+            // Files dropped anywhere but an instance's content: which instance or server is asked
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                this.file_drag_active = false;
+                let request = crate::modals::drop_install::DropRequest {
+                    files: paths.paths().to_vec(),
+                    target: None,
+                    fallback_folder: None,
+                };
+                crate::modals::drop_install::handle_drop(request, &this.data, window, cx);
+            }))
             .child(ResizePanel::new(
                 &self.sidebar_state,
                 sidebar,
                 self.page.clone().render(&self, window, cx),
             ))
             .when(snow, |this| this.child(self.snow.clone()))
+            .when(show_drop_hint, |this| {
+                this.child(
+                    div().absolute().top_0().left_0().size_full().p_4().child(crate::component::file_drop::drop_overlay(
+                        "file-drop-anywhere",
+                        t::instance::content::drop::anywhere().into(),
+                        cx,
+                    )),
+                )
+            })
     }
 }
 

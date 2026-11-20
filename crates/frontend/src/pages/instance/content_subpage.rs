@@ -54,7 +54,15 @@ pub struct InstanceContentSubpage {
     instance_loader: Loader,
     instance_version: Ustr,
     instance_name: SharedString,
+    /// What the instance or server is called on screen, for the drop hint.
+    instance_title: SharedString,
+    data: DataEntities,
+    /// Whether files from outside the launcher are being dragged over this content.
+    file_drag_over: bool,
     is_server: bool,
+    /// A client instance's worlds, which its datapacks can be added to.
+    worlds_state: Option<bridge::message::BridgeDataLoadState>,
+    worlds_serial: bridge::serial::AtomicOptionSerial,
     backend_handle: BackendHandle,
     content_states: ContentStates,
     content_list: Entity<ListState<ContentListDelegate>>,
@@ -94,6 +102,7 @@ pub enum ContentType {
     ResourcePacks,
     Shaders,
     Plugins,
+    Datapacks,
 }
 
 impl ContentType {
@@ -103,6 +112,7 @@ impl ContentType {
             ContentType::ResourcePacks => ContentFolder::ResourcePacks,
             ContentType::Shaders => ContentFolder::Shaders,
             ContentType::Plugins => ContentFolder::Plugins,
+            ContentType::Datapacks => ContentFolder::Datapacks,
         }
     }
 
@@ -112,6 +122,7 @@ impl ContentType {
             ContentType::ResourcePacks => t::instance::content::resourcepacks(),
             ContentType::Shaders => t::instance::content::shaders(),
             ContentType::Plugins => t::server::plugins(),
+            ContentType::Datapacks => t::instance::content::datapacks(),
         }
     }
 
@@ -121,6 +132,7 @@ impl ContentType {
             ContentType::ResourcePacks => t::instance::content::install::select_resourcepacks(),
             ContentType::Shaders => t::instance::content::install::select_shaders(),
             ContentType::Plugins => t::server::select_plugins(),
+            ContentType::Datapacks => t::instance::content::install::select_datapacks(),
         }
     }
 
@@ -130,6 +142,7 @@ impl ContentType {
             ContentType::ResourcePacks => ModrinthProjectType::Resourcepack,
             ContentType::Shaders => ModrinthProjectType::Shader,
             ContentType::Plugins => ModrinthProjectType::Plugin,
+            ContentType::Datapacks => ModrinthProjectType::Datapack,
         }
     }
 
@@ -139,6 +152,7 @@ impl ContentType {
             ContentType::ResourcePacks => CurseforgeClassId::Resourcepack,
             ContentType::Shaders => CurseforgeClassId::Shader,
             ContentType::Plugins => CurseforgeClassId::BukkitPlugin,
+            ContentType::Datapacks => CurseforgeClassId::Datapack,
         }
     }
 
@@ -152,7 +166,7 @@ impl ContentType {
                 InstanceContentSortKey::FileSize,
                 InstanceContentSortKey::Category,
             ],
-            ContentType::ResourcePacks | ContentType::Shaders | ContentType::Plugins => &[
+            ContentType::ResourcePacks | ContentType::Shaders | ContentType::Plugins | ContentType::Datapacks => &[
                 InstanceContentSortKey::Filename,
                 InstanceContentSortKey::ModifiedTime,
                 InstanceContentSortKey::FileSize,
@@ -167,6 +181,7 @@ impl ContentType {
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_key,
             ContentType::Shaders => config.instance_shaders_sort_key,
             ContentType::Plugins => config.instance_plugins_sort_key,
+            ContentType::Datapacks => config.instance_datapacks_sort_key,
         }
     }
 
@@ -176,6 +191,7 @@ impl ContentType {
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_enabled_first,
             ContentType::Shaders => config.instance_shaders_sort_enabled_first,
             ContentType::Plugins => config.instance_plugins_sort_enabled_first,
+            ContentType::Datapacks => config.instance_datapacks_sort_enabled_first,
         }
     }
 
@@ -185,6 +201,7 @@ impl ContentType {
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_key = value,
             ContentType::Shaders => config.instance_shaders_sort_key = value,
             ContentType::Plugins => config.instance_plugins_sort_key = value,
+            ContentType::Datapacks => config.instance_datapacks_sort_key = value,
         }
     }
 
@@ -194,6 +211,7 @@ impl ContentType {
             ContentType::ResourcePacks => config.instance_resourcepacks_sort_enabled_first = value,
             ContentType::Shaders => config.instance_shaders_sort_enabled_first = value,
             ContentType::Plugins => config.instance_plugins_sort_enabled_first = value,
+            ContentType::Datapacks => config.instance_datapacks_sort_enabled_first = value,
         }
     }
 
@@ -216,7 +234,10 @@ impl InstanceContentSubpage {
         let instance_version = instance.configuration.minecraft_version;
         let instance_id = instance.id;
         let instance_name = instance.name.clone();
+        let instance_title = instance.title.clone();
         let is_server = instance.configuration.server.is_some();
+        let worlds_state =
+            (matches!(content_type, ContentType::Datapacks) && !is_server).then(|| instance.worlds_state.clone());
         let content_states = instance.content_states.clone();
 
         let content_folder = content_type.content_folder();
@@ -336,7 +357,12 @@ impl InstanceContentSubpage {
             instance_loader,
             instance_version,
             instance_name,
+            instance_title,
+            data: data.clone(),
+            file_drag_over: false,
             is_server,
+            worlds_state,
+            worlds_serial: Default::default(),
             backend_handle,
             content_states,
             content_list,
@@ -396,7 +422,7 @@ fn calculate_update_count(loader: Loader, version: Ustr, content: &Arc<[Instance
 }
 
 impl Render for InstanceContentSubpage {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
         if self.content_list.read(cx).delegate().global_labels_changed(cx) {
             let content = combined_content_of(&self.content, self.mods_content.as_ref(), cx);
             self.content_list.update(cx, |list, cx| {
@@ -412,6 +438,33 @@ impl Render for InstanceContentSubpage {
         self.content_states.observe(self.content_type.content_folder());
         if self.mods_content.is_some() {
             self.content_states.observe(ContentFolder::Mods);
+        }
+        // The worlds a datapack can be added to, for the right-click menu
+        if let Some(worlds_state) = &self.worlds_state {
+            worlds_state.set_observed();
+            if worlds_state.should_load() {
+                self.backend_handle.send_with_serial(
+                    bridge::message::MessageToBackend::RequestLoadWorlds { id: self.instance },
+                    &self.worlds_serial,
+                );
+            }
+        }
+
+        // If dropped content just landed in this folder, scroll straight to it and highlight it
+        if let Some(reveal) = crate::component::file_drop::pending_reveal_for_instance(self.instance, cx)
+            && reveal.folder == self.content_type.content_folder()
+        {
+            let revealed = self.content_list.update(cx, |list, cx| {
+                if let Some(row) = list.delegate_mut().reveal_filenames(&reveal.filenames) {
+                    list.scroll_to_item(IndexPath::new(row), ScrollStrategy::Center, window, cx);
+                    true
+                } else {
+                    false
+                }
+            });
+            if revealed {
+                crate::component::file_drop::clear_pending_reveal(cx);
+            }
         }
 
         let self_entity = cx.entity();
@@ -473,6 +526,7 @@ impl Render for InstanceContentSubpage {
                             },
                             ContentType::Shaders => t::instance::content::update_all_shaders(self.update_count),
                             ContentType::Plugins => t::server::update_all_plugins(self.update_count),
+                            ContentType::Datapacks => t::instance::content::update_all_datapacks(self.update_count),
                         })
                         .success()
                         .compact()
@@ -543,14 +597,41 @@ impl Render for InstanceContentSubpage {
             .top(px(4.0))
             .right(px(12.0));
 
+        if !cx.has_active_drag() {
+            self.file_drag_over = false;
+        }
         let theme = cx.theme();
-        v_flex().p_4().size_full().child(header).child(
+        // Datapacks don't do anything until they're in a world, which isn't obvious
+        let datapack_hint = matches!(self.content_type, ContentType::Datapacks).then(|| {
+            div().ml_1().mb_2().text_sm().text_color(theme.muted_foreground).child(if self.is_server {
+                t::instance::content::datapacks::server_hint()
+            } else {
+                t::instance::content::datapacks::hint()
+            })
+        });
+        v_flex().p_4().size_full().child(header).children(datapack_hint).child(
             div()
                 .id("content-list-area")
                 .relative()
-                .drag_over(|style, _: &ExternalPaths, _, cx| style.bg(cx.theme().accent))
+                .on_drag_move(cx.listener(|this, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                    let over = event.bounds.contains(&event.event.position);
+                    crate::component::file_drop::set_over_content(over, window, cx);
+                    if this.file_drag_over != over {
+                        this.file_drag_over = over;
+                        cx.notify();
+                    }
+                }))
+                // Straight into this instance or server: one file asks which project it is, several
+                // just go in. A file whose type can't be told goes into this tab's folder.
                 .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-                    this.install_paths(paths.paths(), window, cx);
+                    this.file_drag_over = false;
+                    crate::component::file_drop::set_over_content(false, window, cx);
+                    let request = crate::modals::drop_install::DropRequest {
+                        files: paths.paths().to_vec(),
+                        target: Some(this.instance),
+                        fallback_folder: Some(this.content_type.content_folder()),
+                    };
+                    crate::modals::drop_install::handle_drop(request, &this.data, window, cx);
                 }))
                 .size_full()
                 .border_1()
@@ -558,6 +639,13 @@ impl Render for InstanceContentSubpage {
                 .border_color(theme.border)
                 .child(List::new(&self.content_list).search_placeholder(t::common::search()))
                 .child(filter_bar_controls)
+                .when(self.file_drag_over, |this| {
+                    this.child(crate::component::file_drop::drop_overlay(
+                        "file-drop-here",
+                        t::instance::content::drop::into(&self.instance_title).into(),
+                        cx,
+                    ))
+                })
                 .on_click({
                     let content_list = self.content_list.clone();
                     move |_, _, cx| {

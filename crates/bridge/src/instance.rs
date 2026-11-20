@@ -120,6 +120,10 @@ pub enum ContentFolder {
     /// Bukkit-style server plugins. Only ever populated for server instances on a plugin
     /// platform, so client instances simply never load it.
     Plugins,
+    /// Datapacks. A server loads them from its world, `world/datapacks`. A client instance keeps
+    /// them in `datapacks/` the way the Modrinth App and `.mrpack` files do, since vanilla only reads
+    /// datapacks from inside a world; they're copied into a world from there.
+    Datapacks,
 }
 
 impl ContentFolder {
@@ -129,6 +133,7 @@ impl ContentFolder {
             ContentFolder::ResourcePacks => "resourcepacks",
             ContentFolder::Shaders => "shaderpacks",
             ContentFolder::Plugins => "plugins",
+            ContentFolder::Datapacks => "datapacks",
         }
     }
 }
@@ -246,6 +251,8 @@ pub enum ContentType {
     },
     ResourcePack,
     ShaderPack,
+    /// A pack with a `data/` folder and no `assets/`, which only does anything as a datapack.
+    Datapack,
 }
 
 impl ContentType {
@@ -272,6 +279,7 @@ impl ContentType {
             | Self::CurseforgeModpack { .. } => Some("mods"),
             ContentType::ResourcePack => Some("resourcepacks"),
             ContentType::ShaderPack => Some("shaderpacks"),
+            ContentType::Datapack => Some("datapacks"),
             // Only reached for non-server installs, since a plugin fetched for a client instance
             // is a mod. `plugins_folder_for` overrides this to `plugins` for plugin servers.
             ContentType::BukkitPlugin | ContentType::PaperPlugin => Some("plugins"),
@@ -283,6 +291,7 @@ impl ContentType {
         match self {
             Self::ResourcePack => false,
             Self::ShaderPack => false,
+            Self::Datapack => false,
             // Plugins target the Bukkit API rather than one Minecraft release, and routinely run on
             // versions they don't list yet
             Self::BukkitPlugin | Self::PaperPlugin => false,
@@ -316,6 +325,7 @@ impl ContentType {
             ContentType::Forge | ContentType::LegacyForge => [ModrinthLoader::Forge].into(),
             ContentType::NeoForge => [ModrinthLoader::NeoForge].into(),
             ContentType::ResourcePack => [ModrinthLoader::Minecraft].into(),
+            ContentType::Datapack => [ModrinthLoader::Datapack].into(),
             ContentType::ShaderPack => [ModrinthLoader::Iris, ModrinthLoader::Optifine, ModrinthLoader::Canvas].into(),
             // A Bukkit plugin runs on anything implementing the Bukkit API, and plenty only list
             // Spigot or Bukkit, so updates are looked up across all of them
@@ -371,7 +381,8 @@ impl ContentType {
             | ContentType::ModrinthModpack { .. }
             | ContentType::CurseforgeModpack { .. }
             | ContentType::ResourcePack
-            | ContentType::ShaderPack => None,
+            | ContentType::ShaderPack
+            | ContentType::Datapack => None,
         }
     }
 }

@@ -12,9 +12,9 @@ use crate::{
 
 pub fn create_pair() -> (BackendReceiver, BackendHandle, FrontendReceiver, FrontendHandle) {
     #[cfg(debug_assertions)]
-    let (frontend_send, frontend_recv) = tokio::sync::mpsc::channel(64);
+    let (frontend_send, frontend_recv) = tokio::sync::mpsc::channel(4096);
     #[cfg(debug_assertions)]
-    let (backend_send, backend_recv) = tokio::sync::mpsc::channel(64);
+    let (backend_send, backend_recv) = tokio::sync::mpsc::channel(4096);
 
     #[cfg(not(debug_assertions))]
     let (frontend_send, frontend_recv) = tokio::sync::mpsc::unbounded_channel();

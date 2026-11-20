@@ -162,8 +162,10 @@ impl Instance {
         let mut dot_minecraft_path = path.to_owned();
         dot_minecraft_path.push(".minecraft");
 
+        let is_server = self.configuration.get().server.is_some();
         for content_folder in ContentFolder::iter() {
-            self.content_state[content_folder].path = dot_minecraft_path.join(content_folder.folder_name()).into();
+            self.content_state[content_folder].path =
+                content_folder_path(&dot_minecraft_path, content_folder, is_server).into();
             self.mark_content_dirty(backend, content_folder, FolderChanges::all_dirty(), true);
         }
 
@@ -820,7 +822,7 @@ impl Instance {
 
         let info_path: Arc<Path> = path.join("info_v1.json").into();
 
-        let instance_info = if !info_path.exists()
+        let mut instance_info = if !info_path.exists()
             && let Some(fallback) = launcher_import::try_load_from_other_launcher_formats(&path)
         {
             Persistent::load_or(info_path.clone(), fallback)
@@ -835,8 +837,9 @@ impl Instance {
         let saves_path = dot_minecraft_path.join("saves");
         let server_dat_path = dot_minecraft_path.join("servers.dat");
 
+        let is_server = instance_info.get().server.is_some();
         let content_state = enum_map::EnumMap::from_fn(|content_type: ContentFolder| {
-            ContentFolderState::new(dot_minecraft_path.join(content_type.folder_name()).into())
+            ContentFolderState::new(content_folder_path(&dot_minecraft_path, content_type, is_server).into())
         });
 
         let icon = read_icon(&path);
@@ -1372,6 +1375,37 @@ fn create_instance_content_summary(
     })
 }
 
+/// Where a content folder is inside an instance's `.minecraft`. A server reads datapacks from its
+/// world, which `level-name` in server.properties names; everything else is a folder of its own.
+pub(crate) fn content_folder_path(dot_minecraft: &Path, folder: ContentFolder, is_server: bool) -> PathBuf {
+    match folder {
+        ContentFolder::Datapacks if is_server => dot_minecraft.join(server_level_name(dot_minecraft)).join("datapacks"),
+        folder => dot_minecraft.join(folder.folder_name()),
+    }
+}
+
+/// The folder a server keeps its world in. Anything but a plain folder name is ignored, since the
+/// server itself would put the world somewhere the launcher shouldn't be writing.
+pub(crate) fn server_level_name(dot_minecraft: &Path) -> String {
+    let contents = std::fs::read_to_string(dot_minecraft.join("server.properties")).unwrap_or_default();
+    let level_name = schema::server::parse_server_properties(&contents)
+        .into_iter()
+        .find(|property| &*property.key == "level-name")
+        .map(|property| property.value.trim().to_string());
+    match level_name {
+        Some(name)
+            if !name.is_empty()
+                && name != "."
+                && name != ".."
+                && !name.contains(['/', '\\'])
+                && !name.contains(':') =>
+        {
+            name
+        },
+        _ => "world".into(),
+    }
+}
+
 fn lowercase_arc(s: &Arc<str>) -> Arc<str> {
     let lowercase = s.to_lowercase();
     if lowercase == &**s {
@@ -1390,7 +1424,12 @@ fn try_load_resourcepack_folder(
         return None;
     };
 
-    let summary = ModMetadataManager::create_resource_pack(pack_mcmeta_bytes, pack_png_bytes)?;
+    let summary = ModMetadataManager::create_resource_pack(
+        pack_mcmeta_bytes,
+        pack_png_bytes,
+        path.join("assets").is_dir(),
+        path.join("data").is_dir(),
+    )?;
     let label = read_aux_for(&summary, path).map(|aux| aux.label).unwrap_or_default();
 
     let mut hasher = DefaultHasher::new();

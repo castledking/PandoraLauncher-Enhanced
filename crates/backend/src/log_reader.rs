@@ -35,6 +35,65 @@ pub fn replace(string: &str) -> Cow<'_, str> {
     replaced
 }
 
+/// Reads a server's output, which is plain lines of text rather than the log4j XML a client is set
+/// up to print.
+///
+/// Servers used to go through [`start_game_output`] too, which takes a line starting with `<` for
+/// markup. A server logging an HTML error page (Mojang's API answers with one when it's having a
+/// bad day) then either stopped the reader outright or had it swallow every line that followed,
+/// so the console went quiet while the server carried on.
+pub fn start_plain_output(
+    stdout: PipeReader,
+    stderr: Option<PipeReader>,
+) -> tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg> {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(stderr) = stderr {
+        spawn_line_reader(stderr, GameOutputLogLevel::Error, true, sender.clone());
+    }
+    spawn_line_reader(stdout, GameOutputLogLevel::Info, false, sender);
+    receiver
+}
+
+/// Sends each line of `pipe` on as it arrives, until the pipe closes or nobody is listening.
+/// `redact` hides tokens and the computer's username, as the client's stderr does.
+fn spawn_line_reader(
+    pipe: PipeReader,
+    level: GameOutputLogLevel,
+    redact: bool,
+    sender: tokio::sync::mpsc::UnboundedSender<GameOutputMsg>,
+) {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(pipe);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) => return,
+                Ok(_) => {
+                    let text = String::from_utf8_lossy(&line);
+                    let text = if redact { replace(&text) } else { text };
+                    let text = text.trim_end();
+                    if text.trim_ascii().is_empty() {
+                        continue;
+                    }
+                    let sent = sender.send(GameOutputMsg {
+                        time: Utc::now().timestamp_millis(),
+                        level,
+                        text: Arc::new([text.into()]),
+                    });
+                    if sent.is_err() {
+                        return;
+                    }
+                },
+                Err(err) => {
+                    log::error!("Error while reading process output: {err:?}");
+                    return;
+                },
+            }
+        }
+    });
+}
+
 pub fn start_game_output(
     stdout: PipeReader,
     stderr: Option<PipeReader>,
@@ -1098,4 +1157,39 @@ impl LogReader {
 
 fn is_xml_whitespace(byte: u8) -> bool {
     matches!(byte, b'\r' | b'\n' | b'\t' | b' ')
+}
+
+#[cfg(test)]
+mod plain_output {
+    use std::io::Write;
+
+    #[test]
+    fn a_line_starting_with_markup_is_just_a_line() {
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let mut receiver = super::start_plain_output(reader, None);
+
+        // What Paper logs when Mojang's API answers a lookup with an error page
+        writer
+            .write_all(
+                b"[20:26:53 ERROR]: Got an error with a html body: <!DOCTYPE html>\n<html xmlns='x'>\n\r\n<head>\n    \
+                  <meta content='text/html' />\n[20:26:54 INFO]: Done (5.9s)!\r\n",
+            )
+            .unwrap();
+        drop(writer);
+
+        let mut lines = Vec::new();
+        while let Some(message) = receiver.blocking_recv() {
+            lines.extend(message.text.iter().map(|line| line.to_string()));
+        }
+        assert_eq!(
+            lines,
+            [
+                "[20:26:53 ERROR]: Got an error with a html body: <!DOCTYPE html>",
+                "<html xmlns='x'>",
+                "<head>",
+                "    <meta content='text/html' />",
+                "[20:26:54 INFO]: Done (5.9s)!",
+            ]
+        );
+    }
 }

@@ -31,24 +31,48 @@ use crate::{BackendState, log_reader, metadata::items::MinecraftVersionManifestM
 /// navigates away from the page and back.
 const CONSOLE_HISTORY_LINES: usize = 2000;
 
-/// A server the launcher has started, and the pipes needed to talk to it.
+/// A server the launcher has started, and the pipe needed to talk to it.
 pub struct RunningServer {
     /// The server's stdin, which is how commands are delivered. `None` once the pipe is closed.
     stdin: Option<std::io::PipeWriter>,
-    history: std::collections::VecDeque<GameOutputMsg>,
-    subscribers: Vec<UnboundedSender<GameOutputMsg>>,
     /// Set while a stop was asked for, so the exit isn't reported as a crash.
     stopping: bool,
+}
+
+/// What a server has printed, and who is watching it.
+///
+/// Kept apart from [`RunningServer`] so that it outlives the process: a console that is open
+/// across a restart stays subscribed and simply carries on with the next session, instead of
+/// being left holding a channel that closed with the old process.
+#[derive(Default)]
+struct ServerConsole {
+    history: std::collections::VecDeque<GameOutputMsg>,
+    subscribers: Vec<UnboundedSender<GameOutputMsg>>,
+}
+
+impl ServerConsole {
+    fn push(&mut self, message: GameOutputMsg) {
+        if self.history.len() >= CONSOLE_HISTORY_LINES {
+            self.history.pop_front();
+        }
+        self.subscribers.retain(|subscriber| subscriber.send(message.clone()).is_ok());
+        self.history.push_back(message);
+    }
 }
 
 #[derive(Default)]
 pub struct ServerRegistry {
     servers: Mutex<FxHashMap<InstanceID, RunningServer>>,
+    consoles: Mutex<FxHashMap<InstanceID, ServerConsole>>,
 }
 
 impl ServerRegistry {
     fn with<R>(&self, id: InstanceID, f: impl FnOnce(&mut RunningServer) -> R) -> Option<R> {
         self.servers.lock().get_mut(&id).map(f)
+    }
+
+    fn console<R>(&self, id: InstanceID, f: impl FnOnce(&mut ServerConsole) -> R) -> R {
+        f(self.consoles.lock().entry(id).or_default())
     }
 }
 
@@ -187,17 +211,12 @@ impl BackendState {
         let output = child
             .stdout
             .take()
-            .map(|stdout| log_reader::start_game_output(stdout, child.stderr.take()));
+            .map(|stdout| log_reader::start_plain_output(stdout, child.stderr.take()));
 
-        self.servers.servers.lock().insert(
-            id,
-            RunningServer {
-                stdin,
-                history: std::collections::VecDeque::with_capacity(64),
-                subscribers: Vec::new(),
-                stopping: false,
-            },
-        );
+        // The scrollback starts over with the new session. Whoever is watching stays subscribed,
+        // so a console left open through a restart goes straight on to the new output.
+        self.servers.console(id, |console| console.history.clear());
+        self.servers.servers.lock().insert(id, RunningServer { stdin, stopping: false });
 
         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             instance.processes.push(child.process);
@@ -228,13 +247,7 @@ impl BackendState {
                         ));
                     }
 
-                    this.servers.with(id, |server| {
-                        if server.history.len() >= CONSOLE_HISTORY_LINES {
-                            server.history.pop_front();
-                        }
-                        server.history.push_back(message.clone());
-                        server.subscribers.retain(|subscriber| subscriber.send(message.clone()).is_ok());
-                    });
+                    this.servers.console(id, |console| console.push(message));
                 }
 
                 // stdout closing means the server has exited
@@ -311,25 +324,39 @@ impl BackendState {
         }
     }
 
+    /// Stops the server and starts it again once it has gone.
+    ///
+    /// The wait happens on its own task. Waiting here would hold up the whole message loop for
+    /// as long as the server takes to save and exit, and with it the check that notices the old
+    /// process has ended, so the UI never saw the server stop and the console was left attached
+    /// to the old session.
     pub async fn restart_server(self: &Arc<Self>, id: InstanceID, modal_action: ModalAction) {
-        if self.is_server_running(id) {
-            self.stop_server(id);
+        if !self.is_server_running(id) {
+            self.start_server(id, modal_action).await;
+            return;
+        }
 
+        self.stop_server(id);
+
+        let this = self.clone();
+        tokio::task::spawn(async move {
             // Give the server time to shut down on its own before starting it again
             for _ in 0..120 {
-                if !self.is_server_running(id) {
+                if !this.is_server_running(id) {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
 
-            if self.is_server_running(id) {
+            if this.is_server_running(id) {
                 modal_action.set_finished_with_error("The server did not shut down in time".into());
                 return;
             }
-        }
 
-        self.start_server(id, modal_action).await;
+            // Back through the handler, since starting a server resolves a Java runtime, which
+            // isn't `Send` and so can't run on this task
+            this.self_handle.send(bridge::message::MessageToBackend::StartServer { id, modal_action });
+        });
     }
 
     pub fn send_server_command(self: &Arc<Self>, id: InstanceID, command: &str) {
@@ -338,21 +365,20 @@ impl BackendState {
             return;
         }
 
+        if !self.is_server_running(id) {
+            return;
+        }
+
         // The console shows what was typed, since the server only echoes commands it recognises
-        self.servers.with(id, |server| {
-            let echo = GameOutputMsg {
+        self.servers.console(id, |console| {
+            console.push(GameOutputMsg {
                 time: chrono::Utc::now().timestamp_millis(),
                 level: bridge::game_output::GameOutputLogLevel::Info,
                 text: Arc::new([format!("> {command}").into()]),
-            };
-            if server.history.len() >= CONSOLE_HISTORY_LINES {
-                server.history.pop_front();
-            }
-            server.history.push_back(echo.clone());
-            server.subscribers.retain(|subscriber| subscriber.send(echo.clone()).is_ok());
-
-            write_command(&mut server.stdin, command)
+            })
         });
+
+        self.servers.with(id, |server| write_command(&mut server.stdin, command));
     }
 
     /// Hands the frontend the console scrollback plus a channel for everything printed from now
@@ -366,13 +392,10 @@ impl BackendState {
         )>,
     ) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let history = self
-            .servers
-            .with(id, |server| {
-                server.subscribers.push(sender);
-                server.history.iter().cloned().collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let history = self.servers.console(id, |console| {
+            console.subscribers.push(sender);
+            console.history.iter().cloned().collect::<Vec<_>>()
+        });
 
         _ = channel.send((history, receiver));
     }

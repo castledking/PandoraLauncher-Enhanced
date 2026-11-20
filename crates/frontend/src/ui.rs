@@ -56,6 +56,7 @@ pub struct LauncherUI {
     _instance_modified_subscription: Subscription,
     _instance_removed_subscription: Subscription,
     _instance_moved_to_top_subscription: Subscription,
+    _window_activation_subscription: Subscription,
 }
 
 pub const ICONIZED_SIDEBAR_WIDTH: f32 = 64.0;
@@ -294,6 +295,15 @@ impl LauncherUI {
                 cx.notify();
             });
 
+        // A release published since the last periodic check should show as soon as someone looks
+        // at the launcher, whatever games or servers are running at the time
+        data.backend_handle.send(MessageToBackend::CheckForUpdates);
+        let _window_activation_subscription = cx.observe_window_activation(window, |this, window, _| {
+            if window.is_window_active() {
+                this.data.backend_handle.send(MessageToBackend::CheckForUpdates);
+            }
+        });
+
         request_preset_instances(data, cx);
 
         let config = InterfaceConfig::get(cx);
@@ -363,6 +373,7 @@ impl LauncherUI {
             _instance_modified_subscription,
             _instance_removed_subscription,
             _instance_moved_to_top_subscription,
+            _window_activation_subscription,
         }
     }
 

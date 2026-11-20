@@ -3,10 +3,10 @@ use std::{
     io::Cursor,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::Engine;
@@ -26,6 +26,13 @@ use crate::{HttpClientProvider, directories::LauncherDirectories};
 /// is open, including after a temporary 404 while its assets are still being published.
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// The soonest a check asked for by bringing the launcher up may follow the previous one, so that
+/// switching back and forth between windows doesn't fetch the manifest every time.
+const ON_DEMAND_CHECK_GAP: Duration = Duration::from_secs(60);
+
+/// When updates were last looked for, by either kind of check.
+static LAST_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
+
 /// Set once an update is in place, after which there's nothing newer to find until the restart.
 static UPDATE_INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -34,12 +41,38 @@ pub async fn check_for_updates_periodically(http_client: HttpClientProvider, sen
     // connection dropped for a moment isn't worth interrupting a game for
     let mut quiet = false;
     loop {
-        if !UPDATE_INSTALLED.load(Ordering::Relaxed) {
+        if !UPDATE_INSTALLED.load(Ordering::Relaxed) && claim_check() {
             check_for_updates(http_client.redirecting(), send.clone(), quiet).await;
         }
         quiet = true;
         tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
     }
+}
+
+/// Looks for an update straight away, unless that was done within the last minute.
+///
+/// Called whenever the launcher is opened or brought to the front. Otherwise a release published
+/// since the last periodic check only showed up to five minutes later, so the quickest way to see
+/// it was to close everything that was running and start the launcher again.
+pub fn check_for_updates_now(http_client: reqwest::Client, send: FrontendHandle) {
+    if UPDATE_INSTALLED.load(Ordering::Relaxed) || !claim_check() {
+        return;
+    }
+    // Quiet, like the periodic checks: a connection that dropped for a moment isn't worth a
+    // notification every time the window is focused
+    tokio::task::spawn(check_for_updates(http_client, send, true));
+}
+
+/// Whether it's time to look for an update, noting that one is about to be made if so. Shared by
+/// both kinds of check, so the window opening at startup and the first periodic check don't both
+/// fetch the manifest.
+fn claim_check() -> bool {
+    let mut last = LAST_CHECK.lock().unwrap_or_else(PoisonError::into_inner);
+    if last.is_some_and(|last| last.elapsed() < ON_DEMAND_CHECK_GAP) {
+        return false;
+    }
+    *last = Some(Instant::now());
+    true
 }
 
 pub async fn check_for_updates(http_client: reqwest::Client, send: FrontendHandle, quiet: bool) {

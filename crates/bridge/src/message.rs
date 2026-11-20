@@ -311,6 +311,9 @@ pub enum MessageToBackend {
     GetJavaRuntimes {
         channel: tokio::sync::oneshot::Sender<Vec<JavaRuntimeEntry>>,
     },
+    /// Looks for a launcher update now, as the launcher was brought up. Skipped if one was looked
+    /// for within the last minute.
+    CheckForUpdates,
     /// The notes of every release, newest first.
     GetReleaseNotes {
         channel: tokio::sync::oneshot::Sender<Result<Arc<[ReleaseNotes]>, Arc<str>>>,

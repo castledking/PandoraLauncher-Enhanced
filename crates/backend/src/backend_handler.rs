@@ -1527,6 +1527,9 @@ impl BackendState {
                 let runtimes = self.launcher.list_java_runtimes(&self.meta).await;
                 _ = channel.send(runtimes);
             },
+            MessageToBackend::CheckForUpdates => {
+                crate::update::check_for_updates_now(self.http_client_provider.redirecting(), self.send.clone());
+            },
             MessageToBackend::GetReleaseNotes { channel } => {
                 let http_client = self.http_client_provider.redirecting();
                 tokio::task::spawn(async move {

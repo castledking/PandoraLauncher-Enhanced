@@ -693,7 +693,6 @@ impl Instance {
             state.pending_load = None;
             state.load_state.load_finished();
             let should_load = state.load_state.should_load();
-            let is_server = this.configuration.get().server.is_some();
             drop(guard);
 
             backend.send.send(MessageToFrontend::InstanceContentUpdated {
@@ -702,7 +701,7 @@ impl Instance {
                 content: Arc::clone(&result),
             });
 
-            crate::content_links::after_content_loaded(&backend, id, content_folder, is_server, &result);
+            crate::content_links::after_content_loaded(&backend, id, content_folder, &result);
 
             keep_alive.notify();
             if should_load {

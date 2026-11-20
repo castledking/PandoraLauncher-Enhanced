@@ -700,6 +700,34 @@ impl<'a> MetadataItem for ModrinthProjectMetadataItem<'a> {
 }
 
 #[derive(Debug)]
+pub struct ModrinthDisclosuresMetadataItem<'a>(pub &'a schema::modrinth::ModrinthDisclosuresRequest);
+
+impl<'a> MetadataItem for ModrinthDisclosuresMetadataItem<'a> {
+    type T = schema::modrinth::ModrinthDisclosuresResult;
+
+    fn request(&self, client: &reqwest::Client) -> RequestBuilder {
+        // Disclosures are only on the v3 API
+        client.get(format!("https://api.modrinth.com/v3/project/{}/disclosures", self.0.project_id))
+    }
+
+    fn host(&self) -> &str {
+        parse_host(MODRINTH_PROJECT_URL)
+    }
+
+    fn expires(&self) -> bool {
+        true
+    }
+
+    fn state(&self, states: &mut MetadataManagerStates) -> MetaStateWrapper<Self::T> {
+        states.modrinth_disclosures.entry(self.0.clone()).or_default().clone()
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {
+        Ok(serde_json::from_slice(bytes)?)
+    }
+}
+
+#[derive(Debug)]
 pub struct CurseforgeSearchMetadataItem<'a>(pub &'a CurseforgeSearchRequest);
 
 impl<'a> MetadataItem for CurseforgeSearchMetadataItem<'a> {
@@ -863,6 +891,64 @@ impl<'a> MetadataItem for CurseforgeChangelogMetadataItem<'a> {
 
     fn state(&self, states: &mut MetadataManagerStates) -> MetaStateWrapper<Self::T> {
         states.curseforge_changelogs.entry(self.0.clone()).or_default().clone()
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {
+        Ok(serde_json::from_slice(bytes)?)
+    }
+}
+
+#[derive(Debug)]
+pub struct CurseforgeModMetadataItem<'a>(pub &'a schema::curseforge::CurseforgeModRequest);
+
+impl<'a> MetadataItem for CurseforgeModMetadataItem<'a> {
+    type T = schema::curseforge::CurseforgeModResult;
+
+    fn request(&self, client: &reqwest::Client) -> RequestBuilder {
+        client
+            .get(format!("https://api.curseforge.com/v1/mods/{}", self.0.mod_id))
+            .header("x-api-key", CURSEFORGE_API_KEY)
+    }
+
+    fn host(&self) -> &str {
+        "api.curseforge.com"
+    }
+
+    fn expires(&self) -> bool {
+        true
+    }
+
+    fn state(&self, states: &mut MetadataManagerStates) -> MetaStateWrapper<Self::T> {
+        states.curseforge_mods.entry(self.0.clone()).or_default().clone()
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {
+        Ok(serde_json::from_slice(bytes)?)
+    }
+}
+
+#[derive(Debug)]
+pub struct CurseforgeDescriptionMetadataItem<'a>(pub &'a schema::curseforge::CurseforgeDescriptionRequest);
+
+impl<'a> MetadataItem for CurseforgeDescriptionMetadataItem<'a> {
+    type T = schema::curseforge::CurseforgeDescriptionResult;
+
+    fn request(&self, client: &reqwest::Client) -> RequestBuilder {
+        client
+            .get(format!("https://api.curseforge.com/v1/mods/{}/description", self.0.mod_id))
+            .header("x-api-key", CURSEFORGE_API_KEY)
+    }
+
+    fn host(&self) -> &str {
+        "api.curseforge.com"
+    }
+
+    fn expires(&self) -> bool {
+        true
+    }
+
+    fn state(&self, states: &mut MetadataManagerStates) -> MetaStateWrapper<Self::T> {
+        states.curseforge_descriptions.entry(self.0.clone()).or_default().clone()
     }
 
     fn deserialize(bytes: &[u8]) -> Result<Self::T, MetaLoadError> {

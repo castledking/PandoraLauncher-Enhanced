@@ -134,6 +134,30 @@ impl BackendState {
                                 meta.fetch_with_keepalive(CurseforgeChangelogMetadataItem(request), force_reload).await;
                             (result.map(MetadataResult::CurseforgeChangelogResult), handle)
                         },
+                        bridge::meta::MetadataRequest::ModrinthDisclosures(ref request) => {
+                            let (result, handle) = meta
+                                .fetch_with_keepalive(
+                                    crate::metadata::items::ModrinthDisclosuresMetadataItem(request),
+                                    force_reload,
+                                )
+                                .await;
+                            (result.map(MetadataResult::ModrinthDisclosuresResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeMod(ref request) => {
+                            let (result, handle) = meta
+                                .fetch_with_keepalive(crate::metadata::items::CurseforgeModMetadataItem(request), force_reload)
+                                .await;
+                            (result.map(MetadataResult::CurseforgeModResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeDescription(ref request) => {
+                            let (result, handle) = meta
+                                .fetch_with_keepalive(
+                                    crate::metadata::items::CurseforgeDescriptionMetadataItem(request),
+                                    force_reload,
+                                )
+                                .await;
+                            (result.map(MetadataResult::CurseforgeDescriptionResult), handle)
+                        },
                     };
                     let result = result.map_err(|err| format!("{}", err).into());
                     send.send(MessageToFrontend::MetadataResult {

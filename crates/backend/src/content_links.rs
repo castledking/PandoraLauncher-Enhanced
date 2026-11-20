@@ -1,6 +1,10 @@
-//! Links content added to a server by hand to the Modrinth or CurseForge project it came from,
-//! by looking its file up by hash, and gives linked content that doesn't ship an icon the icon of
-//! its project.
+//! Links content added by hand to the Modrinth or CurseForge project it came from, by looking its
+//! file up by hash, and gives linked content that doesn't ship an icon the icon of its project.
+//!
+//! A mod dropped into an instance after downloading it from either site is the same file the site
+//! has, so once it's linked it gets update checks, a project page and a version picker just like
+//! one installed through the launcher. Files neither site knows, such as a mod built locally, stay
+//! as they are.
 
 use std::{path::Path, sync::Arc};
 
@@ -43,7 +47,6 @@ pub(crate) fn after_content_loaded(
     backend: &Arc<BackendState>,
     id: InstanceID,
     folder: ContentFolder,
-    is_server: bool,
     content: &[InstanceContentSummary],
 ) {
     let manager = &backend.mod_metadata_manager;
@@ -59,12 +62,7 @@ pub(crate) fn after_content_loaded(
         let has_icon = summary.content_summary.png_icon.is_some();
 
         match &summary.content_source {
-            // Only servers get looked up. On client instances, content added by hand stays the
-            // player's to manage, and isn't touched by update checks.
             ContentSource::Manual | ContentSource::ModrinthUnknown => {
-                if !is_server {
-                    continue;
-                }
                 if let Some(entry) = unlinked.get_mut(&hash) {
                     entry.paths.push(summary.path.clone());
                 } else if manager.claim_identify_attempt(hash) {

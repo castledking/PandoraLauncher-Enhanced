@@ -8,7 +8,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable,
+    ActiveTheme as _, Disableable, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
@@ -36,15 +36,27 @@ pub struct ImportPage {
     disabled_manually: FxHashSet<Arc<Path>>,
     import_accounts: bool,
     import_instances: bool,
+    /// Shown inside the create instance dialog, which has to close once an import starts.
+    in_dialog: bool,
     _get_import_job_task: Task<()>,
     _open_file_task: Task<()>,
 }
 
 impl ImportPage {
     pub fn new(data: &DataEntities, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self::create(data.backend_handle.clone(), data.instances.clone(), false)
+    }
+
+    /// The same importer, for the Import tab of the create instance dialog.
+    pub fn in_dialog(backend_handle: BackendHandle, instances: Entity<InstanceEntries>) -> Self {
+        Self::create(backend_handle, instances, true)
+    }
+
+    fn create(backend_handle: BackendHandle, instances: Entity<InstanceEntries>, in_dialog: bool) -> Self {
         Self {
-            backend_handle: data.backend_handle.clone(),
-            instances: data.instances.clone(),
+            backend_handle,
+            instances,
+            in_dialog,
             import_from: None,
             import_from_path: None,
             import_job: None,
@@ -151,6 +163,9 @@ impl Render for ImportPage {
                                 return;
                             };
                             _ = page_entity.update_in(cx, |page, window, cx| {
+                                if page.in_dialog {
+                                    window.close_dialog(cx);
+                                }
                                 let modal_action = ModalAction::default();
 
                                 page.backend_handle.send(MessageToBackend::CreateInstanceFromFile {
@@ -309,6 +324,9 @@ impl Render for ImportPage {
                             let Some(import_job) = &page.import_job else {
                                 return;
                             };
+                            if page.in_dialog {
+                                window.close_dialog(cx);
+                            }
 
                             let modal_action = ModalAction::default();
 

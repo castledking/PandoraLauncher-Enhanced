@@ -27,6 +27,9 @@ pub enum MetadataRequest {
     CurseforgeSearch(CurseforgeSearchRequest),
     CurseforgeGetModFiles(CurseforgeGetModFilesRequest),
     CurseforgeChangelog(CurseforgeChangelogRequest),
+    ModrinthDisclosures(schema::modrinth::ModrinthDisclosuresRequest),
+    CurseforgeMod(schema::curseforge::CurseforgeModRequest),
+    CurseforgeDescription(schema::curseforge::CurseforgeDescriptionRequest),
 }
 
 #[derive(Debug)]
@@ -42,4 +45,7 @@ pub enum MetadataResult {
     CurseforgeSearchResult(Arc<CurseforgeSearchResult>),
     CurseforgeGetModFilesResult(Arc<CurseforgeGetModFilesResult>),
     CurseforgeChangelogResult(Arc<CurseforgeChangelogResult>),
+    ModrinthDisclosuresResult(Arc<schema::modrinth::ModrinthDisclosuresResult>),
+    CurseforgeModResult(Arc<schema::curseforge::CurseforgeModResult>),
+    CurseforgeDescriptionResult(Arc<schema::curseforge::CurseforgeDescriptionResult>),
 }

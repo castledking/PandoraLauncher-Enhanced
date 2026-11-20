@@ -83,6 +83,11 @@ pub enum PageType {
         project_title: SharedString,
         install_for: Option<SharedString>,
     },
+    CurseforgeProject {
+        project_id: u32,
+        project_title: SharedString,
+        install_for: Option<SharedString>,
+    },
     InstancePage {
         name: SharedString,
     },
@@ -118,6 +123,7 @@ impl PageType {
             PageType::Import => t::import::label().into(),
             PageType::Syncing => t::instance::sync::label().into(),
             PageType::ModrinthProject { project_title, .. } => project_title.clone(),
+            PageType::CurseforgeProject { project_title, .. } => project_title.clone(),
             PageType::InstancePage { name } => {
                 InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
             },
@@ -141,6 +147,7 @@ pub enum LauncherPage {
     Import(Entity<ImportPage>),
     Syncing(Entity<SyncingPage>),
     ModrinthProject(Entity<ModrinthProjectPage>),
+    CurseforgeProject(Entity<crate::pages::curseforge_project_page::CurseforgeProjectPage>),
     InstancePage(Entity<InstancePage>),
     Servers(Entity<ServersPage>),
     ServerPage(Entity<ServerPage>),
@@ -172,6 +179,7 @@ impl LauncherPage {
             LauncherPage::Import(entity) => process(entity, window, cx),
             LauncherPage::Syncing(entity) => process(entity, window, cx),
             LauncherPage::ModrinthProject(entity) => process(entity, window, cx),
+            LauncherPage::CurseforgeProject(entity) => process(entity, window, cx),
             LauncherPage::InstancePage(entity) => process(entity, window, cx),
             LauncherPage::Servers(entity) => process(entity, window, cx),
             LauncherPage::ServerPage(entity) => process(entity, window, cx),
@@ -434,6 +442,34 @@ impl LauncherUI {
                 let page =
                     cx.new(|cx| ModrinthProjectPage::new(project_id, install_for_id.flatten(), data, window, cx));
                 Ok(LauncherPage::ModrinthProject(page))
+            },
+            PageType::CurseforgeProject {
+                project_id,
+                install_for,
+                project_title,
+            } => {
+                let install_for_id = install_for
+                    .as_ref()
+                    .map(|name| InstanceEntries::find_id_by_name(&data.instances, name, cx));
+
+                if let Some(None) = install_for_id {
+                    return Err(PageType::CurseforgeProject {
+                        project_id,
+                        install_for: None,
+                        project_title,
+                    });
+                }
+
+                let page = cx.new(|cx| {
+                    crate::pages::curseforge_project_page::CurseforgeProjectPage::new(
+                        project_id,
+                        install_for_id.flatten(),
+                        data,
+                        window,
+                        cx,
+                    )
+                });
+                Ok(LauncherPage::CurseforgeProject(page))
             },
             PageType::InstancePage { ref name } => {
                 let Some(id) = InstanceEntries::find_id_by_name(&data.instances, name, cx) else {

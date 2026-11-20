@@ -406,6 +406,104 @@ pub struct ModrinthProjectRequest {
     pub project_id: Arc<str>,
 }
 
+/// A project's content disclosures, from `/v3/project/{id}/disclosures`.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct ModrinthDisclosuresRequest {
+    pub project_id: Arc<str>,
+}
+
+/// What a project discloses about itself before anyone downloads it: advertising, paid features,
+/// telemetry, generative AI and so on. Modrinth shows these in the Details panel of a project page.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModrinthDisclosuresResult {
+    #[serde(default)]
+    pub disclosures: Vec<ModrinthDisclosure>,
+}
+
+impl ModrinthDisclosuresResult {
+    /// The disclosures the project still makes. One its creator removed stays in the list with a
+    /// deletion time.
+    pub fn active(&self) -> impl Iterator<Item = &ModrinthDisclosureKind> {
+        self.disclosures
+            .iter()
+            .filter(|disclosure| disclosure.deleted_at.is_none())
+            .map(|disclosure| &disclosure.kind)
+            .filter(|kind| !matches!(kind, ModrinthDisclosureKind::Unknown))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModrinthDisclosure {
+    #[serde(flatten)]
+    pub kind: ModrinthDisclosureKind,
+    #[serde(default)]
+    pub deleted_at: Option<Arc<str>>,
+}
+
+/// The kinds of disclosure, with whatever detail the creator gave. Free-form values such as the
+/// telemetry consent are kept as strings, so that one Modrinth adds later doesn't stop the rest of
+/// the list from loading.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ModrinthDisclosureKind {
+    AiContent {
+        #[serde(default)]
+        note: Option<Arc<str>>,
+        /// Any of `code`, `assets` and `text`.
+        #[serde(default)]
+        uses: Vec<Arc<str>>,
+    },
+    AiFunctionality {
+        #[serde(default)]
+        note: Option<Arc<str>>,
+    },
+    Advertisements {
+        #[serde(default)]
+        note: Option<Arc<str>>,
+    },
+    EpilepsyTriggers {
+        #[serde(default)]
+        note: Option<Arc<str>>,
+    },
+    SystemInteractions {
+        #[serde(default)]
+        note: Option<Arc<str>>,
+        #[serde(default)]
+        interactions: Vec<Arc<str>>,
+    },
+    Telemetry {
+        /// `opt_in`, `opt_out` or `always_active`.
+        #[serde(default)]
+        consent: Option<Arc<str>>,
+        #[serde(default)]
+        data_collected: Vec<Arc<str>>,
+    },
+    DerivativeWork {
+        #[serde(default)]
+        sources: Vec<ModrinthDerivativeSource>,
+    },
+    PaidFeatures {
+        #[serde(default)]
+        features: Vec<Arc<str>>,
+    },
+    Archived {
+        #[serde(default)]
+        note: Option<Arc<str>>,
+    },
+    /// A kind this launcher doesn't know yet.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModrinthDerivativeSource {
+    pub label: Arc<str>,
+    #[serde(default)]
+    pub link: Option<Arc<str>>,
+    #[serde(default)]
+    pub note: Option<Arc<str>>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModrinthProjectResult {
     pub id: Arc<str>,
@@ -447,4 +545,29 @@ pub struct ModrinthGalleryImage {
     pub featured: bool,
     pub title: Option<Arc<str>>,
     pub description: Option<Arc<str>>,
+}
+
+#[cfg(test)]
+mod disclosure_tests {
+    use super::{ModrinthDisclosureKind, ModrinthDisclosuresResult};
+
+    #[test]
+    fn reads_disclosures_and_skips_removed_and_unknown_ones() {
+        // Essential's, as the API answered it, plus a removed one and a kind from the future
+        let json = r#"{"disclosures":[
+            {"type":"advertisements","note":"A list of featured servers is visible in the multiplayer menu","updated_at":"2026-08-13T16:36:47Z"},
+            {"type":"paid_features","features":["Optional cosmetics are available for purchase"],"updated_at":"2026-08-13T16:34:31Z"},
+            {"type":"telemetry","consent":"opt_out","data_collected":["https://essential.gg/privacy-policy"],"updated_at":"2026-08-13T16:29:52Z"},
+            {"type":"archived","note":null,"updated_at":"2026-08-13T16:29:52Z","deleted_at":"2026-09-01T00:00:00Z"},
+            {"type":"something_new","whatever":1,"updated_at":"2026-08-13T16:29:52Z"}
+        ]}"#;
+        let result: ModrinthDisclosuresResult = serde_json::from_str(json).unwrap();
+        let active: Vec<_> = result.active().collect();
+        assert_eq!(active.len(), 3);
+        assert!(matches!(active[0], ModrinthDisclosureKind::Advertisements { note: Some(_) }));
+        assert!(matches!(active[1], ModrinthDisclosureKind::PaidFeatures { features } if features.len() == 1));
+        assert!(
+            matches!(active[2], ModrinthDisclosureKind::Telemetry { consent: Some(consent), .. } if &**consent == "opt_out")
+        );
+    }
 }

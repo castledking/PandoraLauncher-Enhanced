@@ -23,7 +23,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     list::{ListDelegate, ListItem, ListState},
-    menu::ContextMenuExt,
+    menu::{ContextMenuExt, PopupMenuItem},
     spinner::Spinner,
     switch::Switch,
     v_flex,
@@ -176,6 +176,29 @@ impl ContentListDelegate {
 
     /// The label menu for a right-click on the row `element_id`. Like the row's own buttons, it
     /// acts on the whole selection when the row is part of it, and on the row alone otherwise.
+    /// The project a row is linked to, and the name to title its page with. Content that isn't
+    /// linked to a Modrinth or CurseForge project has no page.
+    fn project_page_for(&self, element_id: u64) -> Option<(ContentSource, SharedString)> {
+        let summary = self.content.iter().find(|summary| summary.filename_hash == element_id)?;
+        if !matches!(
+            summary.content_source,
+            ContentSource::ModrinthProject { .. } | ContentSource::CurseforgeProject { .. }
+        ) {
+            return None;
+        }
+        let title = match &summary.content_summary.name {
+            Some(name) => SharedString::new(name.clone()),
+            None => SharedString::from(display_filename(&summary.filename).to_string()),
+        };
+        Some((summary.content_source.clone(), title))
+    }
+
+    fn open_project_page(&self, element_id: u64, window: &mut Window, cx: &mut App) {
+        if let Some((source, title)) = self.project_page_for(element_id) {
+            defer_open_project_page(source, title, self.id, self.data.clone(), window, cx);
+        }
+    }
+
     fn label_menu_for(&self, element_id: u64) -> Option<LabelMenu> {
         let clicked = self.content.iter().find(|summary| summary.filename_hash == element_id)?;
         let targets: Vec<&InstanceContentSummary> = if self.is_selected(element_id) {
@@ -580,9 +603,32 @@ impl ContentListDelegate {
             })
             .context_menu({
                 let list = cx.entity();
-                move |menu, window, cx| match list.read(cx).delegate().label_menu_for(element_id) {
-                    Some(label_menu) => Rc::new(label_menu).build(menu, window, cx),
-                    None => menu,
+                move |mut menu, window, cx| {
+                    let delegate = list.read(cx).delegate();
+                    if let Some((source, title)) = delegate.project_page_for(element_id) {
+                        let data = delegate.data.clone();
+                        let instance = delegate.id;
+                        menu = menu
+                            .item(
+                                PopupMenuItem::new(t::instance::content::open_page())
+                                    .icon(PandoraIcon::ExternalLink)
+                                    .on_click(move |_, window, cx| {
+                                        defer_open_project_page(
+                                            source.clone(),
+                                            title.clone(),
+                                            instance,
+                                            data.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .separator();
+                    }
+                    match list.read(cx).delegate().label_menu_for(element_id) {
+                        Some(label_menu) => Rc::new(label_menu).build(menu, window, cx),
+                        None => menu,
+                    }
                 }
             });
 
@@ -605,8 +651,13 @@ impl ContentListDelegate {
                     }
                 }),
             )
-            .on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
+            .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
                 cx.stop_propagation();
+                // Double-clicking a row opens its project's page, the way Prism opens a mod's
+                if click.standard_click() && click.click_count() == 2 && !click.modifiers().modified() {
+                    this.delegate().open_project_page(element_id, window, cx);
+                    return;
+                }
                 if click.standard_click() {
                     let delegate = this.delegate_mut();
                     delegate.confirming_delete.lock().clear();
@@ -1361,6 +1412,20 @@ impl ListDelegate for ContentListDelegate {
 }
 
 /// The filename without the `.disabled` a disabled item's file has; the toggle already says that.
+/// Deferred, since switching page replaces the page the list is part of.
+fn defer_open_project_page(
+    source: ContentSource,
+    title: SharedString,
+    instance: InstanceID,
+    data: DataEntities,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.defer(cx, move |window, cx| {
+        crate::pages::open_project_page(&source, title, Some(instance), &data, window, cx);
+    });
+}
+
 fn display_filename(filename: &str) -> &str {
     filename.strip_suffix(".disabled").unwrap_or(filename)
 }

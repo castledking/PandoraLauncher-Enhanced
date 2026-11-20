@@ -14,8 +14,10 @@ use gpui_component::{
     h_flex,
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
+    scroll::ScrollableElement,
     select::{Select, SelectState},
     skeleton::Skeleton,
+    tab::{Tab, TabBar},
     v_flex,
 };
 use schema::{
@@ -45,11 +47,15 @@ struct CreateInstanceModalState {
     error_loading_versions: Option<SharedString>,
     name_invalid: bool,
     instance_names: Arc<[SharedString]>,
+    instances: Entity<InstanceEntries>,
     original_fallback_name: SharedString,
     unique_fallback_name: SharedString,
     icon: Option<EmbeddedOrRaw>,
     group_input_state: Entity<InputState>,
     existing_groups: Vec<SharedString>,
+    /// Whether the dialog shows the importer instead of the form for a new instance.
+    importing: bool,
+    import: Option<Entity<crate::pages::import::ImportPage>>,
     _versions_updated_subscription: Subscription,
     _name_input_subscription: Subscription,
     _version_selected_subscription: Subscription,
@@ -143,11 +149,14 @@ impl CreateInstanceModalState {
             error_loading_versions: None,
             name_invalid: false,
             instance_names,
+            instances: instances.clone(),
             original_fallback_name: Default::default(),
             unique_fallback_name: Default::default(),
             icon: None,
             group_input_state,
             existing_groups,
+            importing: false,
+            import: None,
             _versions_updated_subscription,
             _name_input_subscription,
             _version_selected_subscription,
@@ -263,7 +272,59 @@ impl CreateInstanceModalState {
         }
     }
 
+    /// New or Import, at the top of the dialog. Importing used to be a separate page in the sidebar,
+    /// which was the last place anyone looked for it.
+    fn render_mode_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        TabBar::new("create-instance-mode")
+            .underline()
+            .selected_index(usize::from(self.importing))
+            .on_click(cx.listener(|this, selected: &usize, _, cx| {
+                this.importing = *selected == 1;
+                cx.notify();
+            }))
+            .child(Tab::new().label(t::instance::create::new()))
+            .child(Tab::new().label(t::import::label()))
+    }
+
+    fn render_import(&mut self, modal: Dialog, cx: &mut Context<Self>) -> Dialog {
+        let backend_handle = self.backend_handle.clone();
+        let instances = self.instances.clone();
+        let import = self
+            .import
+            .get_or_insert_with(|| cx.new(|_| crate::pages::import::ImportPage::in_dialog(backend_handle, instances)))
+            .clone();
+
+        modal
+            .overlay_closable(false)
+            .title(t::instance::create())
+            .width(px(640.0))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(self.render_mode_tabs(cx))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(t::instance::create::import_hint()),
+                    )
+                    .child(div().max_h(px(460.0)).overflow_y_scrollbar().child(import)),
+            )
+            .footer(
+                h_flex().w_full().child(
+                    Button::new("cancel")
+                        .flex_1()
+                        .label(t::common::cancel())
+                        .on_click(|_, window, cx| window.close_dialog(cx)),
+                ),
+            )
+    }
+
     pub fn render(&mut self, modal: Dialog, _window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+        if self.importing {
+            return self.render_import(modal, cx);
+        }
+
         if let Some(error) = self.error_loading_versions.clone() {
             let error_widget = Alert::new("error", format!("{}", error))
                 .icon(PandoraIcon::CircleX)
@@ -349,6 +410,7 @@ impl CreateInstanceModalState {
 
         let content = v_flex()
             .gap_3()
+            .child(self.render_mode_tabs(cx))
             .child(crate::labelled(
                 t::instance::name(),
                 Input::new(&self.name_input_state).when(self.name_invalid, |this| this.border_color(cx.theme().danger)),

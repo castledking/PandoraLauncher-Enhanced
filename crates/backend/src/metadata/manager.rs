@@ -113,6 +113,16 @@ pub struct MetadataManagerStates {
     pub(super) curseforge_fingerprints:
         HashMap<CurseforgeFingerprintRequest, MetaStateWrapper<CurseforgeFingerprintResponse>>,
     pub(super) curseforge_projects: HashMap<u32, MetaStateWrapper<CurseforgeProject>>,
+    pub(super) modrinth_disclosures: HashMap<
+        schema::modrinth::ModrinthDisclosuresRequest,
+        MetaStateWrapper<schema::modrinth::ModrinthDisclosuresResult>,
+    >,
+    pub(super) curseforge_mods:
+        HashMap<schema::curseforge::CurseforgeModRequest, MetaStateWrapper<schema::curseforge::CurseforgeModResult>>,
+    pub(super) curseforge_descriptions: HashMap<
+        schema::curseforge::CurseforgeDescriptionRequest,
+        MetaStateWrapper<schema::curseforge::CurseforgeDescriptionResult>,
+    >,
 }
 
 #[derive(Clone, Copy, enum_map::Enum)]

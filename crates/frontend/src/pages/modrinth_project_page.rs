@@ -6,7 +6,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, WindowExt,
+    ActiveTheme, Icon, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     notification::NotificationType,
@@ -17,7 +17,10 @@ use gpui_component::{
 };
 use schema::{
     content::ContentSource,
-    modrinth::{ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectType, ModrinthSideRequirement},
+    modrinth::{
+        ModrinthDisclosureKind, ModrinthDisclosuresRequest, ModrinthDisclosuresResult, ModrinthProjectRequest,
+        ModrinthProjectResult, ModrinthProjectType, ModrinthSideRequirement,
+    },
 };
 use strum::IntoEnumIterator;
 
@@ -38,6 +41,7 @@ pub struct ModrinthProjectPage {
     project_id: SharedString,
     install_for: Option<InstanceID>,
     project: Option<Arc<ModrinthProjectResult>>,
+    disclosures: Option<Arc<ModrinthDisclosuresResult>>,
     error: Option<SharedString>,
     active_tab: usize,
     can_install_latest: bool,
@@ -46,6 +50,7 @@ pub struct ModrinthProjectPage {
     content_states: Option<ContentStates>,
     _project_retry_task: Task<()>,
     _project_subscription: Option<Subscription>,
+    _disclosures_subscription: Option<Subscription>,
 }
 
 impl ModrinthProjectPage {
@@ -137,6 +142,7 @@ impl ModrinthProjectPage {
             project_id,
             install_for,
             project: None,
+            disclosures: None,
             error: None,
             active_tab: 0,
             can_install_latest,
@@ -145,6 +151,7 @@ impl ModrinthProjectPage {
             content_states,
             _project_retry_task: Task::ready(()),
             _project_subscription: None,
+            _disclosures_subscription: None,
         };
         page.fetch_project(cx);
         page
@@ -166,6 +173,28 @@ impl ModrinthProjectPage {
             cx.notify();
         }));
         self.update_project_from_metadata(state, cx);
+
+        let disclosures = FrontendMetadata::request(
+            &self.data.metadata,
+            MetadataRequest::ModrinthDisclosures(ModrinthDisclosuresRequest {
+                project_id: Arc::from(self.project_id.as_ref()),
+            }),
+            cx,
+        );
+        self._disclosures_subscription = Some(cx.observe(&disclosures, |page, state, cx| {
+            page.update_disclosures(state, cx);
+            cx.notify();
+        }));
+        self.update_disclosures(disclosures, cx);
+    }
+
+    /// Disclosures load separately from the project, and a project page is still worth showing
+    /// without them, so failing to load them just leaves the section out.
+    fn update_disclosures(&mut self, state: Entity<FrontendMetadataState>, cx: &mut Context<Self>) {
+        let result: FrontendMetadataResult<ModrinthDisclosuresResult> = state.read(cx).result();
+        if let FrontendMetadataResult::Loaded(disclosures) = result {
+            self.disclosures = Some(Arc::new(disclosures.clone()));
+        }
     }
 
     fn update_project_from_metadata(&mut self, state: Entity<FrontendMetadataState>, cx: &mut Context<Self>) {
@@ -517,6 +546,7 @@ impl Render for ModrinthProjectPage {
                 )
                 .child(link_row)
                 .child(info_el)
+                .children(self.disclosures.as_deref().and_then(|disclosures| render_disclosures(disclosures, cx)))
                 .child(tabs_el)
                 .child(body_el)
                 .into_any_element()
@@ -558,4 +588,131 @@ impl Render for ModrinthProjectPage {
 
         content
     }
+}
+
+/// The project's content disclosures, the way Modrinth's Details panel lists them: one line each
+/// saying what the project contains, with whatever detail its creator gave underneath.
+fn render_disclosures(disclosures: &ModrinthDisclosuresResult, cx: &App) -> Option<AnyElement> {
+    let rows: Vec<AnyElement> = disclosures.active().map(|disclosure| render_disclosure(disclosure, cx)).collect();
+    if rows.is_empty() {
+        return None;
+    }
+
+    Some(
+        v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().warning.opacity(0.5))
+            .bg(cx.theme().warning.opacity(0.06))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .text_sm()
+                    .font_semibold()
+                    .child(Icon::new(PandoraIcon::TriangleAlert).text_color(cx.theme().warning))
+                    .child(t::instance::content::disclosures()),
+            )
+            .children(rows)
+            .into_any_element(),
+    )
+}
+
+fn render_disclosure(disclosure: &ModrinthDisclosureKind, cx: &App) -> AnyElement {
+    use t::instance::content::disclosures as label;
+
+    let joined = |items: &[Arc<str>]| -> Option<SharedString> {
+        let items: Vec<&str> = items.iter().map(|item| item.trim()).filter(|item| !item.is_empty()).collect();
+        (!items.is_empty()).then(|| items.join(", ").into())
+    };
+    let note = |note: &Option<Arc<str>>| -> Option<SharedString> {
+        note.as_deref()
+            .map(str::trim)
+            .filter(|note| !note.is_empty())
+            .map(|note| SharedString::from(note.to_string()))
+    };
+
+    let (title, details): (SharedString, Vec<SharedString>) = match disclosure {
+        ModrinthDisclosureKind::Advertisements { note: text } => {
+            (label::advertisements().into(), note(text).into_iter().collect())
+        },
+        ModrinthDisclosureKind::PaidFeatures { features } => {
+            (label::paid_features().into(), joined(features).into_iter().collect())
+        },
+        ModrinthDisclosureKind::Telemetry {
+            consent,
+            data_collected,
+        } => {
+            let consent = match consent.as_deref() {
+                Some("opt_in") => Some(label::telemetry::opt_in()),
+                Some("opt_out") => Some(label::telemetry::opt_out()),
+                Some("always_active") => Some(label::telemetry::always_active()),
+                _ => None,
+            };
+            let title = match consent {
+                Some(consent) => format!("{} ({consent})", label::telemetry()).into(),
+                None => label::telemetry().into(),
+            };
+            (title, joined(data_collected).into_iter().collect())
+        },
+        ModrinthDisclosureKind::AiContent { note: text, uses } => {
+            let uses: Vec<&str> = uses
+                .iter()
+                .map(|usage| match &**usage {
+                    "code" => label::ai_content::code(),
+                    "assets" => label::ai_content::assets(),
+                    "text" => label::ai_content::text(),
+                    other => other,
+                })
+                .collect();
+            let title = if uses.is_empty() {
+                label::ai_content().into()
+            } else {
+                format!("{} ({})", label::ai_content(), uses.join(", ")).into()
+            };
+            (title, note(text).into_iter().collect())
+        },
+        ModrinthDisclosureKind::AiFunctionality { note: text } => {
+            (label::ai_functionality().into(), note(text).into_iter().collect())
+        },
+        ModrinthDisclosureKind::EpilepsyTriggers { note: text } => {
+            (label::epilepsy_triggers().into(), note(text).into_iter().collect())
+        },
+        ModrinthDisclosureKind::SystemInteractions {
+            note: text,
+            interactions,
+        } => (
+            label::system_interactions().into(),
+            joined(interactions).into_iter().chain(note(text)).collect(),
+        ),
+        ModrinthDisclosureKind::DerivativeWork { sources } => {
+            let details = sources
+                .iter()
+                .map(|source| {
+                    let mut line = source.label.to_string();
+                    if let Some(link) = source.link.as_deref().filter(|link| !link.is_empty()) {
+                        line.push_str(&format!(" ({link})"));
+                    }
+                    if let Some(note) = source.note.as_deref().filter(|note| !note.is_empty()) {
+                        line.push_str(&format!(": {note}"));
+                    }
+                    SharedString::from(line)
+                })
+                .collect();
+            (label::derivative_work().into(), details)
+        },
+        ModrinthDisclosureKind::Archived { note: text } => (label::archived().into(), note(text).into_iter().collect()),
+        ModrinthDisclosureKind::Unknown => (SharedString::default(), Vec::new()),
+    };
+
+    v_flex()
+        .text_sm()
+        .child(div().font_medium().child(title))
+        .children(
+            details
+                .into_iter()
+                .map(|detail| div().text_color(cx.theme().muted_foreground).child(detail)),
+        )
+        .into_any_element()
 }

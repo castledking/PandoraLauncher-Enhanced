@@ -54,6 +54,88 @@ pub struct CurseforgeChangelogRequest {
     pub file_id: u32,
 }
 
+/// A whole project, from `/v1/mods/{id}`, for its page.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct CurseforgeModRequest {
+    pub mod_id: u32,
+}
+
+/// A project's description, which CurseForge serves as HTML.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct CurseforgeDescriptionRequest {
+    pub mod_id: u32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CurseforgeDescriptionResult {
+    pub data: Option<Arc<str>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CurseforgeModResult {
+    pub data: CurseforgeModDetails,
+}
+
+/// A project as its page shows it: everything a search hit carries, which is what installing
+/// works from, plus its links and screenshots.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseforgeModDetails {
+    #[serde(flatten)]
+    pub hit: CurseforgeHit,
+    #[serde(default)]
+    pub links: CurseforgeModLinks,
+    #[serde(default)]
+    pub screenshots: Vec<CurseforgeScreenshot>,
+    #[serde(default)]
+    pub date_modified: Option<Arc<str>>,
+}
+
+/// CurseForge sends an empty string for a link a project doesn't have.
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseforgeModLinks {
+    #[serde(default)]
+    pub website_url: Option<Arc<str>>,
+    #[serde(default)]
+    pub wiki_url: Option<Arc<str>>,
+    #[serde(default)]
+    pub issues_url: Option<Arc<str>>,
+    #[serde(default)]
+    pub source_url: Option<Arc<str>>,
+}
+
+impl CurseforgeModLinks {
+    fn present(link: &Option<Arc<str>>) -> Option<&Arc<str>> {
+        link.as_ref().filter(|link| !link.trim().is_empty())
+    }
+
+    pub fn website(&self) -> Option<&Arc<str>> {
+        Self::present(&self.website_url)
+    }
+
+    pub fn wiki(&self) -> Option<&Arc<str>> {
+        Self::present(&self.wiki_url)
+    }
+
+    pub fn issues(&self) -> Option<&Arc<str>> {
+        Self::present(&self.issues_url)
+    }
+
+    pub fn source(&self) -> Option<&Arc<str>> {
+        Self::present(&self.source_url)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseforgeScreenshot {
+    #[serde(default)]
+    pub title: Option<Arc<str>>,
+    pub thumbnail_url: Arc<str>,
+    pub url: Arc<str>,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurseforgeFingerprintRequest {
@@ -502,5 +584,32 @@ mod tests {
     #[test]
     fn fingerprint_ignores_whitespace() {
         assert_eq!(fingerprint(b"Pandora Launcher\r\n\tEnhanced"), fingerprint(b"PandoraLauncherEnhanced"));
+    }
+}
+
+#[cfg(test)]
+mod project_page_tests {
+    use super::CurseforgeModResult;
+
+    #[test]
+    fn reads_a_project_with_its_links_and_screenshots() {
+        // Trimmed from what /v1/mods/238222 (JEI) answers
+        let json = r#"{"data":{"id":238222,"gameId":432,"name":"Just Enough Items (JEI)","slug":"jei",
+            "summary":"View Items and Recipes","downloadCount":500000000,"classId":6,
+            "logo":{"thumbnailUrl":"https://media.forgecdn.net/a.jpeg","url":"https://media.forgecdn.net/b.jpeg"},
+            "authors":[{"id":1,"name":"mezz","url":"https://www.curseforge.com/members/mezz"}],
+            "categories":[{"name":"API and Library","isClass":false}],
+            "latestFilesIndexes":[{"gameVersion":"1.21.1","fileId":5,"modLoader":6}],
+            "links":{"websiteUrl":"https://www.curseforge.com/minecraft/mc-mods/jei","wikiUrl":"",
+                "issuesUrl":"https://github.com/mezz/JustEnoughItems/issues","sourceUrl":"https://github.com/mezz/JustEnoughItems"},
+            "screenshots":[{"id":1,"modId":238222,"title":"Recipes","description":"",
+                "thumbnailUrl":"https://media.forgecdn.net/t.png","url":"https://media.forgecdn.net/s.png"}],
+            "dateModified":"2026-11-19T15:47:53.523Z"}}"#;
+        let project = serde_json::from_str::<CurseforgeModResult>(json).unwrap().data;
+        assert_eq!(project.hit.id, 238222);
+        assert_eq!(&*project.hit.slug, "jei");
+        assert_eq!(project.links.wiki(), None, "an empty link counts as none");
+        assert!(project.links.source().is_some());
+        assert_eq!(project.screenshots.len(), 1);
     }
 }

@@ -2158,6 +2158,10 @@ sv = "Skapa Instans"
 ru = "Создать экземпляр"
 fr = "Créer une instance"
 it = "Crea istanza"
+[instance.create.new]
+en = "New"
+[instance.create.import_hint]
+en = "Bring in a modpack file (.mrpack or CurseForge .zip), or instances from another launcher."
 [instance.name]
 en = "Name"
 tr = "Ad"
@@ -3219,6 +3223,38 @@ sv = "av ${name: &str}"
 ru = "от ${name: &str}"
 fr = "par ${name: &str}"
 it = "di ${name: &str}"
+[instance.content.disclosures]
+en = "Content disclosures"
+[instance.content.disclosures.advertisements]
+en = "Contains advertising"
+[instance.content.disclosures.paid_features]
+en = "Contains paid features"
+[instance.content.disclosures.telemetry]
+en = "Contains telemetry"
+[instance.content.disclosures.telemetry.opt_in]
+en = "opt-in"
+[instance.content.disclosures.telemetry.opt_out]
+en = "opt-out"
+[instance.content.disclosures.telemetry.always_active]
+en = "always active"
+[instance.content.disclosures.ai_content]
+en = "Contains AI-generated content"
+[instance.content.disclosures.ai_content.code]
+en = "code"
+[instance.content.disclosures.ai_content.assets]
+en = "assets"
+[instance.content.disclosures.ai_content.text]
+en = "text"
+[instance.content.disclosures.ai_functionality]
+en = "Relies on generative AI"
+[instance.content.disclosures.epilepsy_triggers]
+en = "Photosensitivity warning"
+[instance.content.disclosures.system_interactions]
+en = "Interacts with your system outside the game"
+[instance.content.disclosures.derivative_work]
+en = "Based on another work"
+[instance.content.disclosures.archived]
+en = "Archived"
 [instance.content.no_description]
 en = "No Description"
 tr = "Açıklama Yok"

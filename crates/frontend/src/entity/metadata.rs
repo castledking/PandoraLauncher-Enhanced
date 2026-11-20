@@ -11,10 +11,16 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use schema::{
-    curseforge::{CurseforgeChangelogResult, CurseforgeGetModFilesResult, CurseforgeSearchResult},
+    curseforge::{
+        CurseforgeChangelogResult, CurseforgeDescriptionResult, CurseforgeGetModFilesResult, CurseforgeModResult,
+        CurseforgeSearchResult,
+    },
     fabric_loader_manifest::FabricLoaderManifest,
     forge::{ForgeMavenManifest, NeoforgeMavenManifest},
-    modrinth::{ModrinthChangelogResult, ModrinthProjectResult, ModrinthProjectVersionsResult, ModrinthSearchResult},
+    modrinth::{
+        ModrinthChangelogResult, ModrinthDisclosuresResult, ModrinthProjectResult, ModrinthProjectVersionsResult,
+        ModrinthSearchResult,
+    },
     version_manifest::MinecraftVersionManifest,
 };
 
@@ -183,3 +189,6 @@ define_as_metadata_result!(ModrinthChangelogResult);
 define_as_metadata_result!(CurseforgeSearchResult);
 define_as_metadata_result!(CurseforgeGetModFilesResult);
 define_as_metadata_result!(CurseforgeChangelogResult);
+define_as_metadata_result!(ModrinthDisclosuresResult);
+define_as_metadata_result!(CurseforgeModResult);
+define_as_metadata_result!(CurseforgeDescriptionResult);

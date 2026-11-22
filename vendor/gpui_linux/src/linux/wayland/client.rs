@@ -373,6 +373,7 @@ pub struct DragState {
     window: Option<WaylandWindowStatePtr>,
     position: Point<Pixels>,
     serial: u32,
+    paths: Option<SmallVec<[std::path::PathBuf; 2]>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -925,6 +926,7 @@ impl WaylandClient {
                 window: None,
                 position: Point::default(),
                 serial: 0,
+                paths: None,
             },
             external_drag: None,
             click: ClickState {
@@ -2626,10 +2628,69 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     data_offer.set_actions(ACTIONS, ACTIONS);
 
                     let position = Point::new(x.into(), y.into());
-                    state.drag.data_offer = Some(data_offer);
+                    state.drag.data_offer = Some(data_offer.clone());
                     state.drag.window = Some(drag_window.clone());
                     state.drag.position = position;
                     state.drag.serial = serial;
+                    state.drag.paths = None;
+
+                    // Optimistically request the URI list during hover so drop targets can inspect
+                    // dragged filenames (e.g. "Replace 'foo.jar'"). Strict Wayland sources that
+                    // only transfer data on Drop will still work via the Drop fallback below.
+                    if let Ok(pipe) = Pipe::new() {
+                        data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
+                            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+                        });
+                        let fd = pipe.read;
+                        drop(pipe.write);
+                        let _ = connection.flush();
+
+                        let read_task = state.common.background_executor.spawn(async {
+                            let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
+                            let text = String::from_utf8(buffer)?;
+                            anyhow::Ok(text)
+                        });
+                        let this_for_enter = this.clone();
+                        state
+                            .common
+                            .foreground_executor
+                            .spawn(async move {
+                                let Ok(file_list) = read_task.await else {
+                                    return;
+                                };
+                                let paths: SmallVec<[std::path::PathBuf; 2]> = file_list
+                                    .lines()
+                                    .map(|line| line.trim())
+                                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                                    .filter_map(|path| Url::parse(path).log_err())
+                                    .filter_map(|url| url.to_file_path().ok())
+                                    .collect();
+                                if paths.is_empty() {
+                                    return;
+                                }
+                                let client = this_for_enter.get_client();
+                                let mut state = client.borrow_mut();
+                                if state.drag.serial != serial {
+                                    return;
+                                }
+                                let Some(drag_window) = state.drag.window.clone() else {
+                                    return;
+                                };
+                                let position = state.drag.position;
+                                state.drag.paths = Some(paths.clone());
+                                drop(state);
+
+                                drag_window
+                                    .handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
+                                drag_window.handle_input(PlatformInput::FileDrop(
+                                    FileDropEvent::Entered {
+                                        position,
+                                        paths: gpui::ExternalPaths(paths),
+                                    },
+                                ));
+                            })
+                            .detach();
+                    }
 
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position,
@@ -2663,6 +2724,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     data_offer.destroy();
                 }
                 state.drag.serial = 0;
+                state.drag.paths = None;
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
                 drop(state);
@@ -2676,10 +2738,26 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     return;
                 };
                 let position = state.drag.position;
+                let cached_paths = state.drag.paths.take();
                 state.drag.serial = 0;
 
-                // Request the URI list on Drop (not Enter): strict Wayland drag sources do not
-                // transfer data until drop, and wl_data_offer.finish must follow the transfer.
+                if let Some(paths) = cached_paths {
+                    data_offer.finish();
+                    data_offer.destroy();
+                    let _ = connection.flush();
+                    drop(state);
+                    drag_window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
+                    drag_window.handle_input(PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position,
+                        paths: gpui::ExternalPaths(paths),
+                    }));
+                    drag_window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
+                        position,
+                    }));
+                    return;
+                }
+
+                // Fallback for strict Wayland drag sources that do not transfer data until Drop.
                 let pipe = Pipe::new().unwrap();
                 data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
                     BorrowedFd::borrow_raw(pipe.write.as_raw_fd())

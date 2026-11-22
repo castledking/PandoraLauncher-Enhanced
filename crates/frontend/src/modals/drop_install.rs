@@ -6,7 +6,11 @@
 //!
 //! Also the dialog for linking content added by hand to its project afterwards.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use bridge::{
     dropped::{DropTarget, DroppedFile, DroppedFileInfo, ResolvedProject},
@@ -54,26 +58,126 @@ pub struct DropRequest {
     pub fallback_folder: Option<ContentFolder>,
 }
 
+/// An already-installed file in an instance/server whose filename matches a dragged file.
+pub struct ExistingMatch {
+    pub folder: ContentFolder,
+    pub filename: SharedString,
+    pub path: Arc<Path>,
+    pub source: ContentSource,
+}
+
+fn filename_matches(existing: &str, dropped: &str) -> bool {
+    let existing = existing.strip_suffix(".disabled").unwrap_or(existing);
+    #[cfg(windows)]
+    {
+        existing.eq_ignore_ascii_case(dropped)
+    }
+    #[cfg(not(windows))]
+    {
+        existing == dropped
+    }
+}
+
+/// Checks whether `dropped_path` has the same filename as an already-installed content file in
+/// `instance_id` (searching `preferred_folder` first, then the remaining content folders).
+pub fn find_matching_installed_file(
+    instance_id: InstanceID,
+    preferred_folder: Option<ContentFolder>,
+    dropped_path: &Path,
+    data: &DataEntities,
+    cx: &App,
+) -> Option<ExistingMatch> {
+    let dropped_name = dropped_path.file_name()?.to_string_lossy();
+    let entry = data.instances.read(cx).entries.get(&instance_id)?.clone();
+    let instance = entry.read(cx);
+
+    let mut folders: Vec<ContentFolder> = Vec::with_capacity(5);
+    if let Some(preferred) = preferred_folder {
+        folders.push(preferred);
+    }
+    for folder in [
+        ContentFolder::Mods,
+        ContentFolder::Plugins,
+        ContentFolder::ResourcePacks,
+        ContentFolder::Shaders,
+        ContentFolder::Datapacks,
+    ] {
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+
+    for folder in folders {
+        let Some(items) = instance.content[folder].read(cx).as_ref() else {
+            continue;
+        };
+        if let Some(summary) = items.iter().find(|item| filename_matches(&item.filename, &dropped_name)) {
+            let source = match &summary.content_source {
+                s @ (ContentSource::ModrinthProject { .. } | ContentSource::CurseforgeProject { .. }) => s.clone(),
+                _ => ContentSource::Manual,
+            };
+            return Some(ExistingMatch {
+                folder,
+                filename: SharedString::from(dropped_name.into_owned()),
+                path: summary.path.clone(),
+                source,
+            });
+        }
+    }
+    None
+}
+
 pub fn handle_drop(request: DropRequest, data: &DataEntities, window: &mut Window, cx: &mut App) {
     if request.files.is_empty() {
         return;
     }
-    // Several files dropped onto an instance's own content need nothing asked: each goes where
-    // its type says, and gets linked to its project once the folder reloads
-    if request.files.len() > 1
-        && let Some(target) = request.target
-    {
-        let files = request
-            .files
-            .iter()
-            .map(|path| DroppedFile {
-                path: path.clone().into(),
-                source: ContentSource::Manual,
-                fallback_folder: request.fallback_folder,
-            })
-            .collect();
-        install(files, DropTarget::Instance(target), &data.backend_handle, window, cx);
-        return;
+    if let Some(target) = request.target {
+        // Dropping a single file onto an instance/server whose content already has a file with the
+        // same filename replaces it in place, skips the modal, and keeps its selected project.
+        if request.files.len() == 1
+            && let Some(existing) =
+                find_matching_installed_file(target, request.fallback_folder, &request.files[0], data, cx)
+        {
+            let files: Arc<[DroppedFile]> = Arc::from([DroppedFile {
+                path: request.files[0].clone().into(),
+                source: existing.source,
+                fallback_folder: Some(existing.folder),
+                replace_old: Some(existing.path),
+            }]);
+            install(files, DropTarget::Instance(target), &data.backend_handle, window, cx);
+            return;
+        }
+
+        // Several files dropped onto an instance's own content need nothing asked: each goes where
+        // its type says, and gets linked to its project once the folder reloads (keeping any
+        // existing project if a file replaces one with the same filename).
+        if request.files.len() > 1 {
+            let files = request
+                .files
+                .iter()
+                .map(|path| {
+                    if let Some(existing) =
+                        find_matching_installed_file(target, request.fallback_folder, path, data, cx)
+                    {
+                        DroppedFile {
+                            path: path.clone().into(),
+                            source: existing.source,
+                            fallback_folder: Some(existing.folder),
+                            replace_old: Some(existing.path),
+                        }
+                    } else {
+                        DroppedFile {
+                            path: path.clone().into(),
+                            source: ContentSource::Manual,
+                            fallback_folder: request.fallback_folder,
+                            replace_old: None,
+                        }
+                    }
+                })
+                .collect();
+            install(files, DropTarget::Instance(target), &data.backend_handle, window, cx);
+            return;
+        }
     }
 
     window.close_all_dialogs(cx);
@@ -377,6 +481,7 @@ impl DropInstallDialog {
                 } else {
                     self.request.fallback_folder
                 },
+                replace_old: None,
             })
             .collect();
         window.close_dialog(cx);

@@ -421,16 +421,42 @@ impl BackendState {
             let mut installed_targets: Vec<(ContentFolder, Arc<str>)> = Vec::new();
             for file in files.iter() {
                 let (path, folder, filename) = this.dropped_file_path(file).await;
-                if let (Some(folder), Some(filename)) = (folder, filename) {
-                    installed_targets.push((folder, filename));
+                let mut content_source = file.source.clone();
+                let mut replace_old = file.replace_old.clone();
+
+                // When replacing an existing file of the same name in an instance/server, keep the
+                // previously linked Modrinth/CurseForge project even if the frontend didn't pass it
+                // (e.g. multi-file drop or an unloaded folder).
+                if let (Some(folder), Some(filename)) = (folder, &filename) {
+                    if !matches!(
+                        content_source,
+                        ContentSource::ModrinthProject { .. } | ContentSource::CurseforgeProject { .. }
+                    ) || replace_old.is_none()
+                    {
+                        if let Some((existing_path, existing_source)) =
+                            this.existing_same_name_content(target_id, folder, filename).await
+                        {
+                            if replace_old.is_none() {
+                                replace_old = Some(existing_path);
+                            }
+                            if !matches!(
+                                content_source,
+                                ContentSource::ModrinthProject { .. } | ContentSource::CurseforgeProject { .. }
+                            ) && let Some(existing_source) = existing_source
+                            {
+                                content_source = existing_source;
+                            }
+                        }
+                    }
+                    installed_targets.push((folder, filename.clone()));
                 }
                 install_files.push(ContentInstallFile {
-                    replace_old: None,
+                    replace_old,
                     path,
                     download: ContentDownload::File {
                         path: file.path.to_path_buf(),
                     },
-                    content_source: file.source.clone(),
+                    content_source,
                     reason: ContentInstallReason::Standalone,
                 });
             }
@@ -500,6 +526,44 @@ impl BackendState {
         }
 
         (ContentInstallPath::Automatic, None, filename)
+    }
+
+    /// Finds an already-installed file with the same filename (enabled or `.disabled`) in
+    /// `folder`, along with any Modrinth/CurseForge project previously linked to its hash.
+    async fn existing_same_name_content(
+        &self,
+        id: InstanceID,
+        folder: ContentFolder,
+        filename: &str,
+    ) -> Option<(Arc<Path>, Option<ContentSource>)> {
+        let folder_dir = {
+            let guard = self.instance_state.read();
+            guard.instances.get(id)?.content_state[folder].path.clone()
+        };
+        let filename_owned = filename.to_string();
+        let manager = self.mod_metadata_manager.clone();
+        tokio::task::spawn_blocking(move || {
+            let direct = folder_dir.join(&filename_owned);
+            let disabled = folder_dir.join(format!("{filename_owned}.disabled"));
+            let existing = if direct.is_file() {
+                direct
+            } else if disabled.is_file() {
+                disabled
+            } else {
+                return None;
+            };
+            let source = std::fs::read(&existing).ok().and_then(|bytes| {
+                let hash: [u8; 20] = Sha1::digest(&bytes).into();
+                match manager.read_content_sources().get(&hash) {
+                    s @ (ContentSource::ModrinthProject { .. } | ContentSource::CurseforgeProject { .. }) => Some(s),
+                    _ => None,
+                }
+            });
+            Some((existing.into(), source))
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     /// Records files as builds of `source`, overriding whatever they were linked to, and reloads

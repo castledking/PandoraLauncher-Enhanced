@@ -3273,6 +3273,8 @@ en = "Archived"
 en = "Install into an existing or fresh instance or server"
 [instance.content.drop.into]
 en = "Install into '${name: &str}'"
+[instance.content.drop.replace]
+en = "Replace '${file: &str}' in '${name: &str}'"
 [instance.content.drop.title]
 en = "Install file"
 [instance.content.drop.server_entry]

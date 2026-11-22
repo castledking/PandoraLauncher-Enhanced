@@ -198,11 +198,13 @@ fn main() {
                 path: sodium.clone().into(),
                 source: ContentSource::ModrinthProject { project_id: "AANobbMI".into() },
                 fallback_folder: None,
+                replace_old: None,
             },
             DroppedFile {
                 path: unknown.clone().into(),
                 source: ContentSource::ModrinthProject { project_id: "gvQqBUqZ".into() },
                 fallback_folder: None,
+                replace_old: None,
             },
         ]),
         target: DropTarget::NewInstance {
@@ -246,6 +248,47 @@ fn main() {
     }
     println!("  ok: my-own-mod.jar is now recorded as JEI");
 
+    println!("\n== replace my-own-mod.jar with a newer build of the same name and keep JEI");
+    let replacement_dir = launcher_dir.join("downloads").join("v2");
+    std::fs::create_dir_all(&replacement_dir).unwrap();
+    let unknown_v2 = replacement_dir.join("my-own-mod.jar");
+    write_fabric_jar(&unknown_v2, "my_own_mod", "My Own Mod", "0.2.0");
+    let modal = ModalAction::default();
+    backend_handle.send(MessageToBackend::InstallDroppedFiles {
+        files: Arc::from([DroppedFile {
+            path: unknown_v2.into(),
+            source: ContentSource::Manual,
+            fallback_folder: Some(ContentFolder::Mods),
+            replace_old: None,
+        }]),
+        target: DropTarget::Instance(dropped),
+        modal_action: modal.clone(),
+    });
+    wait_modal("replace my-own-mod.jar with v0.2.0", &modal);
+    std::thread::sleep(Duration::from_millis(300));
+    backend_handle.send(MessageToBackend::RequestLoadContentFolder { id: dropped, content_folder: ContentFolder::Mods });
+    let start = Instant::now();
+    loop {
+        let replaced = seen.lock().unwrap().content.get(&(dropped, ContentFolder::Mods)).and_then(|content| {
+            content.iter().find(|summary| &*summary.filename == "my-own-mod.jar").map(|summary| {
+                (summary.content_summary.version_str.clone(), summary.content_source.clone())
+            })
+        });
+        if let Some((ver, source)) = &replaced
+            && ver.as_ref() == "v0.2.0"
+        {
+            assert_eq!(
+                *source,
+                ContentSource::CurseforgeProject { project_id: 238222 },
+                "replacing a same-name jar should keep the existing linked project"
+            );
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "replacement v0.2.0 never showed: {replaced:?}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    println!("  ok: my-own-mod.jar updated to v0.2.0 and kept JEI");
+
     println!("\n== a file that can't be told goes to the tab it was dropped on");
     let modal = ModalAction::default();
     backend_handle.send(MessageToBackend::InstallDroppedFiles {
@@ -253,6 +296,7 @@ fn main() {
             path: mystery.clone().into(),
             source: ContentSource::Manual,
             fallback_folder: Some(ContentFolder::ResourcePacks),
+            replace_old: None,
         }]),
         target: DropTarget::Instance(dropped),
         modal_action: modal.clone(),
@@ -269,6 +313,7 @@ fn main() {
             path: unknown.clone().into(),
             source: ContentSource::Manual,
             fallback_folder: None,
+            replace_old: None,
         }]),
         target: DropTarget::NewServer {
             name: "Dropped Server".into(),

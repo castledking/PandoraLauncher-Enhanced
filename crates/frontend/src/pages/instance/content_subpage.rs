@@ -59,6 +59,8 @@ pub struct InstanceContentSubpage {
     data: DataEntities,
     /// Whether files from outside the launcher are being dragged over this content.
     file_drag_over: bool,
+    /// When dragging a single file whose filename matches an existing item here, its filename.
+    file_drag_replace: Option<SharedString>,
     is_server: bool,
     /// A client instance's worlds, which its datapacks can be added to.
     worlds_state: Option<bridge::message::BridgeDataLoadState>,
@@ -360,6 +362,7 @@ impl InstanceContentSubpage {
             instance_title,
             data: data.clone(),
             file_drag_over: false,
+            file_drag_replace: None,
             is_server,
             worlds_state,
             worlds_serial: Default::default(),
@@ -599,6 +602,7 @@ impl Render for InstanceContentSubpage {
 
         if !cx.has_active_drag() {
             self.file_drag_over = false;
+            self.file_drag_replace = None;
         }
         let theme = cx.theme();
         // Datapacks don't do anything until they're in a world, which isn't obvious
@@ -616,15 +620,35 @@ impl Render for InstanceContentSubpage {
                 .on_drag_move(cx.listener(|this, event: &DragMoveEvent<ExternalPaths>, window, cx| {
                     let over = event.bounds.contains(&event.event.position);
                     crate::component::file_drop::set_over_content(over, window, cx);
-                    if this.file_drag_over != over {
+                    let replace = if over {
+                        let paths = event.drag(cx).paths();
+                        (paths.len() == 1)
+                            .then(|| {
+                                crate::modals::drop_install::find_matching_installed_file(
+                                    this.instance,
+                                    Some(this.content_type.content_folder()),
+                                    &paths[0],
+                                    &this.data,
+                                    cx,
+                                )
+                                .map(|matched| matched.filename)
+                            })
+                            .flatten()
+                    } else {
+                        None
+                    };
+                    if this.file_drag_over != over || this.file_drag_replace != replace {
                         this.file_drag_over = over;
+                        this.file_drag_replace = replace;
                         cx.notify();
                     }
                 }))
-                // Straight into this instance or server: one file asks which project it is, several
-                // just go in. A file whose type can't be told goes into this tab's folder.
+                // Straight into this instance or server: one file asks which project it is (unless
+                // replacing a file with the same filename), several just go in. A file whose type
+                // can't be told goes into this tab's folder.
                 .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                     this.file_drag_over = false;
+                    this.file_drag_replace = None;
                     crate::component::file_drop::set_over_content(false, window, cx);
                     let request = crate::modals::drop_install::DropRequest {
                         files: paths.paths().to_vec(),
@@ -640,11 +664,11 @@ impl Render for InstanceContentSubpage {
                 .child(List::new(&self.content_list).search_placeholder(t::common::search()))
                 .child(filter_bar_controls)
                 .when(self.file_drag_over, |this| {
-                    this.child(crate::component::file_drop::drop_overlay(
-                        "file-drop-here",
-                        t::instance::content::drop::into(&self.instance_title).into(),
-                        cx,
-                    ))
+                    let hint: SharedString = match &self.file_drag_replace {
+                        Some(file) => t::instance::content::drop::replace(file, &self.instance_title).into(),
+                        None => t::instance::content::drop::into(&self.instance_title).into(),
+                    };
+                    this.child(crate::component::file_drop::drop_overlay("file-drop-here", hint, cx))
                 })
                 .on_click({
                     let content_list = self.content_list.clone();

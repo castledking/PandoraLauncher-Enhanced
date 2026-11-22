@@ -59,4 +59,6 @@ pub struct DroppedFile {
     pub source: ContentSource,
     /// Where it goes if its type can't be told from its contents, such as the tab it was dropped on.
     pub fallback_folder: Option<ContentFolder>,
+    /// Existing installed file being replaced in place (same filename), if any.
+    pub replace_old: Option<Arc<Path>>,
 }

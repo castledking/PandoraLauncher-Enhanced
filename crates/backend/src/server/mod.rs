@@ -494,6 +494,69 @@ impl BackendState {
         self.send.send(instance.create_modify_message());
     }
 
+    /// Moves a stopped server to `platform` running Minecraft `version`. The new server is fetched
+    /// before anything is saved, so a platform that has no build for that version, or a download
+    /// that fails, leaves the server exactly as it was. Worlds, plugins and mods are left where
+    /// they are; only what runs them changes.
+    pub async fn set_server_software(
+        self: &Arc<Self>,
+        id: InstanceID,
+        platform: ServerPlatform,
+        version: ustr::Ustr,
+        modal_action: ModalAction,
+    ) {
+        if self.is_server_running(id) {
+            modal_action.set_finished_with_error("Stop the server before changing its software".into());
+            return;
+        }
+
+        let Some((server_dir, current)) = self
+            .instance_state
+            .write()
+            .instances
+            .get_mut(id)
+            .map(|instance| (instance.dot_minecraft_path.clone(), instance.configuration.get().clone()))
+        else {
+            modal_action.set_finished_with_error("Unable to find that server".into());
+            return;
+        };
+        if current.server.is_none() {
+            modal_action.set_finished_with_error("That instance is not a server".into());
+            return;
+        }
+
+        let target = software_switched(&current, platform, version);
+
+        // Provisioned the way a start would, global Java defaults included, since Forge and
+        // NeoForge run their installer with that Java
+        let mut provision_configuration = target.clone();
+        crate::launch::apply_global_launch_defaults(&mut provision_configuration, self.config.lock().get());
+
+        _ = std::fs::create_dir_all(&server_dir);
+        let provisioned = match self.provision_server(&server_dir, &provision_configuration, &modal_action).await {
+            Ok(provisioned) => provisioned,
+            Err(err) => {
+                modal_action.set_finished_with_error(format!("{err}").into());
+                return;
+            },
+        };
+
+        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            // Only what the switch decides is written, so settings changed meanwhile are kept
+            instance.configuration.modify(|cfg| {
+                let mut switched = software_switched(cfg, platform, version);
+                if let Some(server) = &mut switched.server {
+                    server.build = provisioned.build;
+                }
+                *cfg = switched;
+            });
+            self.send.send(instance.create_modify_message());
+        }
+
+        self.send.send_success(format!("Switched to {} {version}", platform.pretty_name()));
+        modal_action.set_finished();
+    }
+
     /// Turns auto restart on or off for a server.
     pub fn set_server_auto_restart(self: &Arc<Self>, id: InstanceID, auto_restart: bool) {
         let mut state = self.instance_state.write();
@@ -551,6 +614,43 @@ impl BackendState {
             .load_java_binary_for_server(&self.meta, &self.http_client_provider.client(), configuration, &version_info)
             .await
     }
+}
+
+/// `configuration` moved to `platform` and `version`, with everything that belonged to the old
+/// software cleared: the resolved build, a preferred loader version (Forge's are tied to one
+/// Minecraft version) and, if the loader changed, the client instance mods were synced from.
+/// A custom jar is switched off but kept, so it is still there to turn back on.
+fn software_switched(
+    configuration: &InstanceConfiguration,
+    platform: ServerPlatform,
+    version: ustr::Ustr,
+) -> InstanceConfiguration {
+    let mut switched = configuration.clone();
+    let loader = platform.loader();
+    let changed = switched.minecraft_version != version
+        || switched.loader != loader
+        || switched.server.as_ref().map(|server| server.platform) != Some(platform);
+
+    if switched.loader != loader
+        && let Some(server) = &mut switched.server
+    {
+        server.linked_instance = None;
+    }
+    switched.minecraft_version = version;
+    switched.loader = loader;
+    if changed {
+        switched.preferred_loader_version = None;
+    }
+    if let Some(server) = &mut switched.server {
+        if changed {
+            server.build = None;
+        }
+        server.platform = platform;
+        if let Some(custom_jar) = &mut server.custom_jar {
+            custom_jar.enabled = false;
+        }
+    }
+    switched
 }
 
 /// The name a user-supplied jar will have inside the server directory, once it's checked to be a jar
@@ -790,7 +890,72 @@ impl BackendState {
 mod tests {
     use bridge::game_output::GameOutputLogLevel;
 
-    use super::split_server_log_prefix;
+    use schema::{
+        instance::InstanceConfiguration,
+        loader::Loader,
+        server::{ServerConfiguration, ServerCustomJar, ServerPlatform},
+    };
+
+    use super::{software_switched, split_server_log_prefix};
+
+    fn paper_server() -> InstanceConfiguration {
+        let mut configuration = InstanceConfiguration::new("1.20.1".into(), Loader::Paper);
+        let mut server = ServerConfiguration::new(ServerPlatform::Paper);
+        server.build = Some("196".into());
+        server.eula_accepted = true;
+        server.auto_restart = true;
+        server.custom_jar = Some(ServerCustomJar {
+            enabled: true,
+            file: "spigot.jar".into(),
+        });
+        configuration.server = Some(server);
+        configuration
+    }
+
+    #[test]
+    fn switching_software_moves_loader_and_version_and_clears_the_old_build() {
+        let switched = software_switched(&paper_server(), ServerPlatform::Fabric, "1.21.1".into());
+        let server = switched.server.as_ref().unwrap();
+        assert_eq!(switched.minecraft_version, "1.21.1");
+        assert_eq!(switched.loader, Loader::Fabric);
+        assert_eq!(server.platform, ServerPlatform::Fabric);
+        assert_eq!(server.build, None);
+        // The rest of the server is untouched, and the custom jar is kept but no longer runs
+        assert!(server.eula_accepted && server.auto_restart);
+        assert_eq!(server.active_custom_jar(), None);
+        assert_eq!(server.custom_jar.as_ref().map(|jar| &*jar.file), Some("spigot.jar"));
+    }
+
+    #[test]
+    fn switching_between_plugin_platforms_keeps_the_loader() {
+        let mut configuration = paper_server();
+        configuration.server.as_mut().unwrap().linked_instance = Some("Pack".into());
+        let switched = software_switched(&configuration, ServerPlatform::Purpur, "1.20.1".into());
+        assert_eq!(switched.loader, Loader::Paper);
+        assert_eq!(switched.server.as_ref().unwrap().platform, ServerPlatform::Purpur);
+        assert_eq!(switched.server.as_ref().unwrap().build, None);
+        assert_eq!(switched.server.as_ref().unwrap().linked_instance.as_deref(), Some("Pack"));
+    }
+
+    #[test]
+    fn switching_loader_forgets_the_synced_instance_and_loader_version() {
+        let mut configuration = InstanceConfiguration::new("1.20.1".into(), Loader::Forge);
+        configuration.preferred_loader_version = Some("1.20.1-47.3.0".into());
+        let mut server = ServerConfiguration::new(ServerPlatform::Forge);
+        server.linked_instance = Some("Pack".into());
+        configuration.server = Some(server);
+
+        let switched = software_switched(&configuration, ServerPlatform::NeoForge, "1.20.1".into());
+        assert_eq!(switched.loader, Loader::NeoForge);
+        assert_eq!(switched.preferred_loader_version, None);
+        assert_eq!(switched.server.as_ref().unwrap().linked_instance, None);
+    }
+
+    #[test]
+    fn reapplying_the_same_software_keeps_the_build() {
+        let switched = software_switched(&paper_server(), ServerPlatform::Paper, "1.20.1".into());
+        assert_eq!(switched.server.as_ref().unwrap().build.as_deref(), Some("196"));
+    }
 
     #[test]
     fn strips_paper_prefix() {

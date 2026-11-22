@@ -29,7 +29,7 @@ use crate::{
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
     },
     icon::PandoraIcon,
-    pages::instances_page::VersionList,
+    pages::{instances_page::VersionList, servers_page::platform_icon},
 };
 
 pub const EULA_URL: &str = "https://aka.ms/MinecraftEULA";
@@ -54,6 +54,58 @@ fn platform_blurb(platform: ServerPlatform) -> &'static str {
         ServerPlatform::Forge => t::server::platform::forge_desc(),
         ServerPlatform::NeoForge => t::server::platform::neoforge_desc(),
     }
+}
+
+/// The six platforms as two rows of tiles, with a line saying what the selected one is for.
+/// Shared by the create dialog and a server's settings, so both pick a platform the same way.
+pub fn platform_picker(
+    selected: ServerPlatform,
+    locked: bool,
+    cx: &App,
+    on_select: impl Fn(ServerPlatform, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let on_select = std::rc::Rc::new(on_select);
+
+    let mut tiles = PLATFORMS.iter().enumerate().map(|(index, platform)| {
+        let platform = *platform;
+        let is_selected = platform == selected;
+        let icon_color = if is_selected {
+            theme.primary
+        } else {
+            theme.muted_foreground
+        };
+
+        div()
+            .id(("platform", index))
+            .flex_1()
+            .min_w_20()
+            .p_2()
+            .gap_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(if is_selected { theme.primary } else { theme.border })
+            .when(is_selected, |this| this.bg(theme.primary.opacity(0.12)))
+            .when(!locked, |this| {
+                let on_select = on_select.clone();
+                this.cursor_pointer()
+                    .hover(|this| this.bg(theme.secondary_hover))
+                    .on_click(move |_, window, cx| on_select(platform, window, cx))
+            })
+            .when(locked && !is_selected, |this| this.opacity(0.4))
+            .child(Icon::new(platform_icon(platform)).size_5().text_color(icon_color))
+            .child(div().text_xs().font_medium().child(platform.pretty_name()))
+    });
+
+    v_flex()
+        .gap_1p5()
+        // Two even rows of three, rather than letting the last tile wrap onto a row of its own
+        .child(h_flex().gap_2().children(tiles.by_ref().take(3)))
+        .child(h_flex().gap_2().children(tiles))
+        .child(div().text_xs().text_color(theme.muted_foreground).child(platform_blurb(selected)))
 }
 
 #[derive(Clone, PartialEq)]
@@ -313,57 +365,13 @@ impl CreateServerModalState {
     }
 
     fn render_platform_picker(&self, locked: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.platform;
-        let theme = cx.theme();
-
-        let mut tiles = PLATFORMS.iter().enumerate().map(|(index, platform)| {
-            let platform = *platform;
-            let is_selected = platform == selected;
-            let icon = match platform {
-                ServerPlatform::Vanilla => PandoraIcon::Box,
-                ServerPlatform::Paper => PandoraIcon::Feather,
-                ServerPlatform::Purpur => PandoraIcon::Zap,
-                ServerPlatform::Fabric => PandoraIcon::Layers,
-                ServerPlatform::Forge => PandoraIcon::Anvil,
-                ServerPlatform::NeoForge => PandoraIcon::Swords,
-            };
-
-            div()
-                .id(("platform", index))
-                .flex_1()
-                .min_w_20()
-                .p_2()
-                .gap_1()
-                .flex()
-                .flex_col()
-                .items_center()
-                .rounded(theme.radius)
-                .border_1()
-                .border_color(if is_selected { theme.primary } else { theme.border })
-                .when(is_selected, |this| this.bg(theme.primary.opacity(0.12)))
-                .when(!locked, |this| {
-                    this.cursor_pointer().hover(|this| this.bg(theme.secondary_hover)).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.platform = platform;
-                            cx.notify();
-                        },
-                    ))
-                })
-                .when(locked && !is_selected, |this| this.opacity(0.4))
-                .child(Icon::new(icon).size_5().text_color(if is_selected {
-                    theme.primary
-                } else {
-                    theme.muted_foreground
-                }))
-                .child(div().text_xs().font_medium().child(platform.pretty_name()))
-        });
-
-        v_flex()
-            .gap_1p5()
-            // Two even rows of three, rather than letting the last tile wrap onto a row of its own
-            .child(h_flex().gap_2().children(tiles.by_ref().take(3)))
-            .child(h_flex().gap_2().children(tiles))
-            .child(div().text_xs().text_color(theme.muted_foreground).child(platform_blurb(selected)))
+        let entity = cx.entity().downgrade();
+        platform_picker(self.platform, locked, cx, move |platform, _, cx| {
+            _ = entity.update(cx, |this, cx| {
+                this.platform = platform;
+                cx.notify();
+            });
+        })
     }
 
     fn pick_custom_jar(&mut self, window: &mut Window, cx: &mut Context<Self>) {

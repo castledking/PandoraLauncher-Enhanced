@@ -469,6 +469,23 @@ pub enum MessageToBackend {
         id: InstanceID,
         enabled: bool,
     },
+    /// The Minecraft releases a server platform has builds for, newest first. If the platform's
+    /// own list can't be fetched every release is offered and the switch itself finds out. `None`
+    /// only when the Minecraft version list itself is unavailable.
+    GetServerPlatformVersions {
+        platform: ServerPlatform,
+        channel: tokio::sync::oneshot::Sender<Option<Arc<[Ustr]>>>,
+    },
+    /// Moves a stopped server to another platform and/or Minecraft version. The new server is
+    /// downloaded (and for Forge and NeoForge, installed) first, and the server is only changed
+    /// once that worked, so a version the platform doesn't offer leaves it as it was. Turns a
+    /// custom jar off, since that would otherwise keep running instead of the new software.
+    SetServerSoftware {
+        id: InstanceID,
+        platform: ServerPlatform,
+        version: Ustr,
+        modal_action: ModalAction,
+    },
     PlanServerSync {
         server_id: InstanceID,
         client_id: InstanceID,

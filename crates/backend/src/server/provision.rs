@@ -2,7 +2,14 @@ use std::{path::Path, sync::Arc};
 
 use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
 use futures::StreamExt;
-use schema::{instance::InstanceConfiguration, server::ServerPlatform};
+use rustc_hash::FxHashSet;
+use schema::{
+    forge::{ForgeMavenManifest, NeoforgeMavenManifest},
+    instance::InstanceConfiguration,
+    loader::Loader,
+    server::ServerPlatform,
+    version_manifest::MinecraftVersionType,
+};
 use ustr::Ustr;
 
 use crate::{BackendState, metadata::items::MinecraftVersionManifestMetadataItem};
@@ -94,6 +101,98 @@ impl BackendState {
         tracker.set_count(1);
         tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
         result
+    }
+
+    /// The Minecraft releases `platform` publishes servers for, newest first, in the order of
+    /// Mojang's own manifest. Each platform's list comes from the same API its jars are downloaded
+    /// from, so what is offered here is what [`Self::provision_server`] can then fetch. When that
+    /// list can't be had every release is returned, and the download says whether it exists.
+    pub(crate) async fn server_platform_versions(self: &Arc<Self>, platform: ServerPlatform) -> Option<Arc<[Ustr]>> {
+        let manifest = self.meta.fetch(MinecraftVersionManifestMetadataItem).await.ok()?;
+        let releases: Vec<Ustr> = manifest
+            .versions
+            .iter()
+            .filter(|version| matches!(version.r#type, MinecraftVersionType::Release))
+            .map(|version| version.id)
+            .collect();
+
+        let supported = match self.platform_version_filter(platform).await {
+            Ok(supported) => supported,
+            Err(err) => {
+                log::warn!("Unable to list the versions {} supports: {err}", platform.pretty_name());
+                return Some(releases.into());
+            },
+        };
+
+        Some(releases.into_iter().filter(|version| supported.supports(version)).collect())
+    }
+
+    async fn platform_version_filter(self: &Arc<Self>, platform: ServerPlatform) -> Result<PlatformVersions, String> {
+        let client = self.http_client_provider.client();
+        match platform {
+            ServerPlatform::Vanilla => Ok(PlatformVersions::All),
+            ServerPlatform::Paper => {
+                #[derive(serde::Deserialize)]
+                struct Project {
+                    versions: std::collections::HashMap<String, Vec<String>>,
+                }
+                let project: Project = client
+                    .get("https://fill.papermc.io/v3/projects/paper")
+                    .send()
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .json()
+                    .await
+                    .map_err(|err| err.to_string())?;
+                Ok(PlatformVersions::Listed(project.versions.into_values().flatten().collect()))
+            },
+            ServerPlatform::Purpur => {
+                #[derive(serde::Deserialize)]
+                struct Project {
+                    versions: Vec<String>,
+                }
+                let project: Project = client
+                    .get("https://api.purpurmc.org/v2/purpur")
+                    .send()
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .json()
+                    .await
+                    .map_err(|err| err.to_string())?;
+                Ok(PlatformVersions::Listed(project.versions.into_iter().collect()))
+            },
+            ServerPlatform::Fabric => {
+                #[derive(serde::Deserialize)]
+                struct GameVersion {
+                    version: String,
+                }
+                let versions: Vec<GameVersion> = client
+                    .get("https://meta.fabricmc.net/v2/versions/game")
+                    .send()
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .json()
+                    .await
+                    .map_err(|err| err.to_string())?;
+                Ok(PlatformVersions::Listed(versions.into_iter().map(|version| version.version).collect()))
+            },
+            ServerPlatform::Forge => {
+                let manifest = self
+                    .meta
+                    .fetch(crate::metadata::items::ForgeInstallerMavenMetadataItem)
+                    .await
+                    .map_err(|err| format!("{err:?}"))?;
+                Ok(PlatformVersions::Listed(forge_minecraft_versions(&manifest)))
+            },
+            ServerPlatform::NeoForge => {
+                let manifest = self
+                    .meta
+                    .fetch(crate::metadata::items::NeoforgeInstallerMavenMetadataItem)
+                    .await
+                    .map_err(|err| format!("{err:?}"))?;
+                Ok(PlatformVersions::NeoForge(manifest))
+            },
+        }
     }
 
     async fn provision_vanilla(
@@ -503,5 +602,66 @@ impl BackendState {
         std::fs::rename(&partial, target).map_err(|err| format!("Unable to write the server: {err}"))?;
 
         Ok(())
+    }
+}
+
+/// Which Minecraft versions a platform has servers for.
+enum PlatformVersions {
+    All,
+    Listed(FxHashSet<String>),
+    /// NeoForge versions encode the Minecraft version in their own scheme, so they are matched
+    /// the same way the installer is picked rather than listed up front.
+    NeoForge(Arc<NeoforgeMavenManifest>),
+}
+
+impl PlatformVersions {
+    fn supports(&self, minecraft_version: &Ustr) -> bool {
+        match self {
+            PlatformVersions::All => true,
+            PlatformVersions::Listed(versions) => versions.contains(minecraft_version.as_str()),
+            PlatformVersions::NeoForge(manifest) => InstanceConfiguration::new(*minecraft_version, Loader::NeoForge)
+                .determine_neoforge_loader_version(manifest)
+                .is_some(),
+        }
+    }
+}
+
+/// Forge versions are `{minecraft}-{forge}`.
+fn forge_minecraft_versions(manifest: &ForgeMavenManifest) -> FxHashSet<String> {
+    manifest
+        .0
+        .iter()
+        .filter_map(|version| version.split_once('-').map(|(minecraft, _)| minecraft.to_string()))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use schema::forge::{ForgeMavenManifest, NeoforgeMavenManifest};
+
+    use super::{PlatformVersions, forge_minecraft_versions};
+
+    #[test]
+    fn forge_versions_are_read_from_the_prefix() {
+        let manifest = ForgeMavenManifest(vec![
+            "1.20.1-47.3.0".into(),
+            "1.20.1-47.2.0".into(),
+            "1.7.10-10.13.4.1614-1.7.10".into(),
+        ]);
+        let versions = PlatformVersions::Listed(forge_minecraft_versions(&manifest));
+        assert!(versions.supports(&"1.20.1".into()));
+        assert!(versions.supports(&"1.7.10".into()));
+        assert!(!versions.supports(&"1.21.1".into()));
+    }
+
+    #[test]
+    fn neoforge_versions_match_the_way_the_installer_is_picked() {
+        let manifest = NeoforgeMavenManifest(vec!["21.1.77".into(), "20.4.237".into(), "21.0.167".into()]);
+        let versions = PlatformVersions::NeoForge(manifest.into());
+        assert!(versions.supports(&"1.21.1".into()));
+        assert!(versions.supports(&"1.21".into()));
+        assert!(versions.supports(&"1.20.4".into()));
+        assert!(!versions.supports(&"1.20.1".into()));
+        assert!(!versions.supports(&"1.21.4".into()));
     }
 }

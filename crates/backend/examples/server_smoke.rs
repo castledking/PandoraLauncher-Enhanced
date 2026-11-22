@@ -6,6 +6,10 @@
 //!
 //! `custom [minecraft version]` instead creates a Paper server that runs a jar the user supplied
 //! (the vanilla jar, fetched from Mojang), and checks that jar is what starts.
+//!
+//! `switch` lists the versions each platform offers, then moves a Paper 1.20.1 server to Purpur,
+//! then to Fabric 1.21.1, checks a version the platform lacks is refused without changing
+//! anything, and starts the result.
 
 use std::{
     path::PathBuf,
@@ -30,6 +34,7 @@ struct Seen {
     server_id: Option<InstanceID>,
     ids_by_name: std::collections::HashMap<String, InstanceID>,
     status: Option<InstanceStatus>,
+    configuration: Option<schema::instance::InstanceConfiguration>,
     errors: Vec<String>,
 }
 
@@ -38,6 +43,7 @@ fn main() {
     let first = args.next();
     let sync_mode = first.as_deref() == Some("sync");
     let custom_mode = first.as_deref() == Some("custom");
+    let switch_mode = first.as_deref() == Some("switch");
     let platform = if sync_mode {
         ServerPlatform::Fabric
     } else if custom_mode {
@@ -50,6 +56,8 @@ fn main() {
     // Sync mode never starts a server, so it gets its own folder and can run alongside the others
     let launcher_dir = std::env::temp_dir().join(if sync_mode {
         "pandora_server_smoke_sync"
+    } else if switch_mode {
+        "pandora_server_smoke_switch"
     } else if custom_mode {
         "pandora_server_smoke_custom"
     } else {
@@ -68,6 +76,8 @@ fn main() {
 
     let name = if sync_mode {
         format!("smoke-generated-{version}")
+    } else if switch_mode {
+        "smoke-switch".to_string()
     } else if custom_mode {
         format!("smoke-custom-{version}")
     } else {
@@ -90,9 +100,15 @@ fn main() {
                             seen.server_id = Some(id);
                         }
                     },
-                    MessageToFrontend::InstanceModified { id, status, .. } => {
+                    MessageToFrontend::InstanceModified {
+                        id,
+                        status,
+                        configuration,
+                        ..
+                    } => {
                         let mut seen = seen.lock().unwrap();
                         if seen.server_id == Some(id) {
+                            seen.configuration = Some(configuration);
                             if seen.status != Some(status) {
                                 println!("  status -> {status:?}");
                             }
@@ -138,6 +154,12 @@ fn main() {
         }
         println!("  ok: {what} ({:.1}s)", start.elapsed().as_secs_f32());
     };
+
+    if switch_mode {
+        run_switch_scenario(&backend_handle, &seen, &launcher_dir, &name, &helper);
+        println!("\nALL OK");
+        std::process::exit(0);
+    }
 
     if sync_mode {
         run_sync_scenario(&backend_handle, &seen, &launcher_dir, &name, &version, &helper);
@@ -531,6 +553,198 @@ async fn download_vanilla_server(version: &str, target: &std::path::Path) {
     let bytes = reqwest::get(jar_url).await.unwrap().bytes().await.unwrap();
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     std::fs::write(target, bytes).unwrap();
+}
+
+/// Moves one server across platforms and versions from its settings, the way the Server software
+/// card does, and checks each switch downloads the new server and only then changes the server.
+fn run_switch_scenario(
+    backend_handle: &bridge::handle::BackendHandle,
+    seen: &Arc<Mutex<Seen>>,
+    launcher_dir: &std::path::Path,
+    name: &str,
+    helper: &tokio::runtime::Runtime,
+) {
+    let wait = |what: &str, timeout: Duration, mut done: Box<dyn FnMut() -> bool>| {
+        let start = Instant::now();
+        while !done() {
+            if start.elapsed() > timeout {
+                panic!("timed out waiting for {what}");
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        println!("  ok: {what} ({:.1}s)", start.elapsed().as_secs_f32());
+    };
+    let finish = |what: &str, modal: &ModalAction, timeout: Duration| -> Option<String> {
+        let start = Instant::now();
+        while modal.get_finished_at().is_none() {
+            if start.elapsed() > timeout {
+                panic!("timed out waiting for {what}");
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        println!("  {what} finished ({:.1}s)", start.elapsed().as_secs_f32());
+        modal.get_error_message().map(|error| error.to_string())
+    };
+
+    println!("\n== versions each platform offers");
+    for platform in [
+        ServerPlatform::Vanilla,
+        ServerPlatform::Paper,
+        ServerPlatform::Purpur,
+        ServerPlatform::Fabric,
+        ServerPlatform::Forge,
+        ServerPlatform::NeoForge,
+    ] {
+        let (send, recv) = tokio::sync::oneshot::channel();
+        backend_handle.send(MessageToBackend::GetServerPlatformVersions { platform, channel: send });
+        let versions = helper.block_on(recv).unwrap().expect("version list");
+        let has = |version: &str| versions.iter().any(|candidate| candidate.as_str() == version);
+        println!(
+            "  {:<8} {:>3} versions, newest {}, oldest {}",
+            platform.pretty_name(),
+            versions.len(),
+            versions.first().map(|v| v.as_str()).unwrap_or("-"),
+            versions.last().map(|v| v.as_str()).unwrap_or("-"),
+        );
+        assert!(versions.iter().all(|version| !version.contains("pre") && !version.contains("rc")));
+        match platform {
+            ServerPlatform::Vanilla => assert!(has("1.8.9") && has("1.21.1")),
+            ServerPlatform::Paper => assert!(has("1.20.1") && !has("1.21.2")),
+            ServerPlatform::Purpur => assert!(has("1.21.1") && !has("1.12.2")),
+            ServerPlatform::Fabric => assert!(has("1.21.1") && !has("1.12.2")),
+            ServerPlatform::Forge => assert!(has("1.20.1") && has("1.12.2")),
+            ServerPlatform::NeoForge => assert!(has("1.21.1") && has("1.20.4") && !has("1.19.2")),
+        }
+    }
+
+    println!("\n== create Paper 1.20.1 server '{name}'");
+    let modal = ModalAction::default();
+    backend_handle.send(MessageToBackend::CreateServerInstance {
+        name: name.into(),
+        version: "1.20.1".into(),
+        platform: ServerPlatform::Paper,
+        eula_accepted: true,
+        group: None,
+        generate_from: None,
+        custom_jar: None,
+        modal_action: modal.clone(),
+    });
+    assert_eq!(finish("create", &modal, Duration::from_secs(30)), None);
+    wait("server added", Duration::from_secs(15), {
+        let seen = seen.clone();
+        Box::new(move || seen.lock().unwrap().server_id.is_some())
+    });
+    let id = seen.lock().unwrap().server_id.unwrap();
+    let server_dir = launcher_dir.join("servers").join(name).join(".minecraft");
+    let jar_starting = |prefix: &str| {
+        std::fs::read_dir(&server_dir).unwrap().flatten().any(|entry| {
+            let file = entry.file_name();
+            let file = file.to_string_lossy();
+            file.starts_with(prefix) && file.ends_with(".jar")
+        })
+    };
+
+    let switch = |platform: ServerPlatform, version: &str| {
+        println!("\n== switch to {} {version}", platform.pretty_name());
+        let modal = ModalAction::default();
+        backend_handle.send(MessageToBackend::SetServerSoftware {
+            id,
+            platform,
+            version: version.into(),
+            modal_action: modal.clone(),
+        });
+        finish("switch", &modal, Duration::from_secs(600))
+    };
+    let configuration = || seen.lock().unwrap().configuration.clone().expect("server configuration");
+
+    assert_eq!(switch(ServerPlatform::Purpur, "1.20.1"), None);
+    wait("configuration says Purpur", Duration::from_secs(10), {
+        let seen = seen.clone();
+        Box::new(move || {
+            let seen = seen.lock().unwrap();
+            let server = seen.configuration.as_ref().and_then(|configuration| configuration.server.as_ref());
+            server.is_some_and(|server| server.platform == ServerPlatform::Purpur && server.build.is_some())
+        })
+    });
+    let switched = configuration();
+    assert_eq!(switched.loader, schema::loader::Loader::Paper);
+    assert_eq!(switched.minecraft_version, "1.20.1");
+    assert!(jar_starting("purpur-1.20.1-"), "the Purpur jar should already be downloaded");
+    println!("  ok: Purpur build {} downloaded", switched.server.as_ref().unwrap().build.unwrap());
+
+    assert_eq!(switch(ServerPlatform::Fabric, "1.21.1"), None);
+    wait("configuration says Fabric 1.21.1", Duration::from_secs(10), {
+        let seen = seen.clone();
+        Box::new(move || {
+            let seen = seen.lock().unwrap();
+            seen.configuration.as_ref().is_some_and(|configuration| {
+                configuration.minecraft_version == "1.21.1"
+                    && configuration.server.as_ref().is_some_and(|server| server.platform == ServerPlatform::Fabric)
+            })
+        })
+    });
+    let switched = configuration();
+    assert_eq!(switched.loader, schema::loader::Loader::Fabric);
+    assert!(jar_starting("fabric-1.21.1-"), "the Fabric launcher should already be downloaded");
+    println!("  ok: Fabric loader {} downloaded", switched.server.as_ref().unwrap().build.unwrap());
+
+    let error = switch(ServerPlatform::Purpur, "1.12.2").expect("Purpur has no 1.12.2, so the switch should fail");
+    println!("  refused: {error}");
+    std::thread::sleep(Duration::from_millis(500));
+    let unchanged = configuration();
+    assert_eq!(unchanged.minecraft_version, "1.21.1");
+    assert_eq!(unchanged.server.as_ref().unwrap().platform, ServerPlatform::Fabric);
+    println!("  ok: the server is still Fabric 1.21.1");
+
+    println!("\n== start the switched server");
+    // The user's own servers may hold 25565
+    let port = std::net::TcpListener::bind("0.0.0.0:0").unwrap().local_addr().unwrap().port();
+    backend_handle.send(MessageToBackend::SetServerProperties {
+        id,
+        properties: vec![ServerProperty {
+            key: "server-port".into(),
+            value: port.to_string().into(),
+        }]
+        .into(),
+    });
+    wait("server-port set", Duration::from_secs(10), {
+        let path = server_dir.join("server.properties");
+        Box::new(move || {
+            std::fs::read_to_string(&path)
+                .map(|text| text.contains(&format!("server-port={port}")))
+                .unwrap_or(false)
+        })
+    });
+    let modal = ModalAction::default();
+    backend_handle.send(MessageToBackend::StartServer {
+        id,
+        modal_action: modal.clone(),
+    });
+    assert_eq!(finish("start", &modal, Duration::from_secs(900)), None);
+    let (send, recv) = tokio::sync::oneshot::channel();
+    backend_handle.send(MessageToBackend::SubscribeServerConsole { id, channel: send });
+    let (history, mut live) = helper.block_on(recv).expect("console subscription");
+    let mut done = history.iter().any(|message| message.text.iter().any(|line| line.contains("Done (")));
+    let start = Instant::now();
+    while !done {
+        assert!(start.elapsed() < Duration::from_secs(300), "the server never finished starting");
+        let message = helper.block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), live.recv()).await.ok().flatten()
+        });
+        if let Some(message) = message {
+            done = message.text.iter().any(|line| line.contains("Done ("));
+            if message.text.iter().any(|line| line.contains("Fabric") || line.contains("Loading Minecraft")) {
+                println!("  console: {}", message.text.join(" | "));
+            }
+        }
+    }
+    println!("  ok: Fabric 1.21.1 came up ({:.1}s)", start.elapsed().as_secs_f32());
+
+    backend_handle.send(MessageToBackend::StopServer { id });
+    wait("server stopped", Duration::from_secs(120), {
+        let seen = seen.clone();
+        Box::new(move || seen.lock().unwrap().status == Some(InstanceStatus::NotRunning))
+    });
 }
 
 /// Generates a Fabric server from a Fabric client instance and checks that shared mods are copied,

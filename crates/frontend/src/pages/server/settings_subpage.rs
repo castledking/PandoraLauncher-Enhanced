@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend};
+use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend, modal_action::ModalAction};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IndexPath, Sizable, StyledExt,
@@ -10,16 +10,21 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     scroll::ScrollableElement,
     select::{Select, SelectEvent, SelectState},
+    skeleton::Skeleton,
     switch::Switch,
     v_flex,
 };
+use rustc_hash::FxHashMap;
 use schema::{
+    forge::VersionFragment,
     instance::{
         InstanceJavaRuntimeConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
         InstanceMemoryConfiguration,
     },
     loader::Loader,
+    server::ServerPlatform,
 };
+use ustr::Ustr;
 
 use crate::{
     component::{
@@ -28,12 +33,20 @@ use crate::{
     },
     entity::{DataEntities, instance::InstanceEntry},
     icon::PandoraIcon,
+    pages::{instances_page::VersionList, servers_page::server_details},
 };
 
 /// Servers need more than a client by default, so the fields start somewhere useful rather than
 /// at the client defaults.
 const DEFAULT_MIN_MEMORY: u32 = 1024;
 const DEFAULT_MAX_MEMORY: u32 = 4096;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VersionsState {
+    Loading,
+    Loaded,
+    Failed,
+}
 
 pub struct ServerSettingsSubpage {
     instance: Entity<InstanceEntry>,
@@ -49,6 +62,13 @@ pub struct ServerSettingsSubpage {
     java_runtime_enabled: bool,
     java_runtime_select: Entity<JavaRuntimeSelect>,
     sync_source: Entity<SelectState<NamedDropdown<Option<InstanceID>>>>,
+    /// The platform picked in the Server software card, which only takes effect once switched to.
+    software_platform: ServerPlatform,
+    software_version: Entity<SelectState<VersionList>>,
+    /// Kept for as long as the page is open, so flicking between platforms doesn't refetch.
+    platform_versions: FxHashMap<ServerPlatform, Arc<[Ustr]>>,
+    versions_state: VersionsState,
+    _platform_versions_task: Task<()>,
     _select_java_task: Task<()>,
     _select_jar_task: Task<()>,
     _java_runtimes_task: Task<()>,
@@ -119,6 +139,9 @@ impl ServerSettingsSubpage {
         let sync_source =
             cx.new(|cx| SelectState::new(NamedDropdown::new(sources), Some(IndexPath::new(preselected)), window, cx));
 
+        let software_platform = configuration.server.as_ref().map(|server| server.platform).unwrap_or_default();
+        let software_version = cx.new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
+
         let java_runtime_select = NamedDropdown::create_and_select(
             vec![java_runtime_picker::default_choice_item()],
             java_runtime.component,
@@ -147,6 +170,9 @@ impl ServerSettingsSubpage {
             cx.subscribe(&sync_source, |_, _, _: &SelectEvent<NamedDropdown<Option<InstanceID>>>, cx| {
                 cx.notify();
             }),
+            cx.subscribe(&software_version, |_, _, _: &SelectEvent<VersionList>, cx| {
+                cx.notify();
+            }),
             cx.subscribe(&java_runtime_select, |this, _, event: &SelectEvent<_>, _cx| {
                 let SelectEvent::Confirm(Some(component)) = event else {
                     return;
@@ -156,7 +182,7 @@ impl ServerSettingsSubpage {
             cx.observe(instance, |_, _, cx| cx.notify()),
         ];
 
-        Self {
+        let mut this = Self {
             instance: instance.clone(),
             instance_id,
             backend_handle: data.backend_handle.clone(),
@@ -170,12 +196,124 @@ impl ServerSettingsSubpage {
             java_runtime_enabled: java_runtime.enabled,
             java_runtime_select,
             sync_source,
+            software_platform,
+            software_version,
+            platform_versions: FxHashMap::default(),
+            versions_state: VersionsState::Loading,
+            _platform_versions_task: Task::ready(()),
             _select_java_task: Task::ready(()),
             _select_jar_task: Task::ready(()),
             _java_runtimes_task: Task::ready(()),
             _subscriptions: subscriptions,
         }
-        .load_java_runtimes(window, cx)
+        .load_java_runtimes(window, cx);
+        this.load_platform_versions(window, cx);
+        this
+    }
+
+    /// Fills the version picker with what the picked platform has servers for, asking the
+    /// backend the first time each platform is picked.
+    fn load_platform_versions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let platform = self.software_platform;
+        if self.platform_versions.contains_key(&platform) {
+            self.versions_state = VersionsState::Loaded;
+            self.fill_version_select(window, cx);
+            return;
+        }
+
+        self.versions_state = VersionsState::Loading;
+        let (send, recv) = tokio::sync::oneshot::channel();
+        self.backend_handle.send(MessageToBackend::GetServerPlatformVersions {
+            platform,
+            channel: send,
+        });
+        // Replacing the task drops the answer for a platform that has since been picked away from
+        self._platform_versions_task = cx.spawn_in(window, async move |this, cx| {
+            let versions = recv.await.ok().flatten();
+            _ = this.update_in(cx, |this, window, cx| match versions {
+                Some(versions) => {
+                    this.platform_versions.insert(platform, versions);
+                    this.versions_state = VersionsState::Loaded;
+                    this.fill_version_select(window, cx);
+                },
+                None => {
+                    this.versions_state = VersionsState::Failed;
+                    cx.notify();
+                },
+            });
+        });
+        cx.notify();
+    }
+
+    fn fill_version_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entry = self.instance.read(cx);
+        let current_version = SharedString::from(entry.configuration.minecraft_version.as_str());
+        let current_platform = entry.configuration.server.as_ref().map(|server| server.platform);
+
+        let mut versions: Vec<SharedString> = self
+            .platform_versions
+            .get(&self.software_platform)
+            .map(|versions| versions.iter().map(|version| SharedString::from(version.as_str())).collect())
+            .unwrap_or_default();
+        // A server always offers its own version on its own platform, even a snapshot the list
+        // leaves out, so the picker never claims it runs something else
+        if current_platform == Some(self.software_platform) && !versions.contains(&current_version) {
+            versions.insert(0, current_version.clone());
+        }
+
+        self.software_version.update(cx, |select, cx| {
+            // Moving between platforms keeps the picked version where the new one has it too
+            let to_select = select
+                .selected_value()
+                .cloned()
+                .filter(|version| versions.contains(version))
+                .or_else(|| Some(current_version).filter(|version| versions.contains(version)))
+                .or_else(|| versions.first().cloned());
+
+            select.set_items(
+                VersionList {
+                    versions: versions.clone(),
+                    matched_versions: versions,
+                },
+                window,
+                cx,
+            );
+            match to_select {
+                Some(version) => select.set_selected_value(&version, window, cx),
+                None => select.set_selected_index(None, window, cx),
+            }
+        });
+        cx.notify();
+    }
+
+    fn pick_platform(&mut self, platform: ServerPlatform, window: &mut Window, cx: &mut Context<Self>) {
+        if self.software_platform == platform {
+            return;
+        }
+        self.software_platform = platform;
+        self.load_platform_versions(window, cx);
+    }
+
+    /// The version picked for the picked platform, if the picker has one from its current list.
+    fn picked_version(&self, cx: &App) -> Option<SharedString> {
+        if self.versions_state != VersionsState::Loaded {
+            return None;
+        }
+        self.software_version.read(cx).selected_value().cloned()
+    }
+
+    fn switch_software(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(version) = self.picked_version(cx) else {
+            return;
+        };
+        let modal_action = ModalAction::default();
+        self.backend_handle.send(MessageToBackend::SetServerSoftware {
+            id: self.instance_id,
+            platform: self.software_platform,
+            version: version.as_str().into(),
+            modal_action: modal_action.clone(),
+        });
+        crate::modals::generic::show_notification(window, cx, t::server::software::error().into(), modal_action);
     }
 
     /// Fills the runtime picker with what the backend has to offer. Done once when the page
@@ -306,6 +444,142 @@ impl ServerSettingsSubpage {
     }
 }
 
+impl ServerSettingsSubpage {
+    /// Platform tiles and a version picker, so moving a server to other software is a pick and a
+    /// click instead of finding and downloading a jar by hand.
+    fn render_software(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let entry = self.instance.read(cx);
+        let server = entry.configuration.server.clone()?;
+        let current_version = entry.configuration.minecraft_version;
+        let is_running = entry.status != bridge::instance::InstanceStatus::NotRunning;
+        let theme = cx.theme().clone();
+
+        let current_platform = server.platform;
+        let picked_platform = self.software_platform;
+        let picked_version = self.picked_version(cx);
+        let changed = picked_version
+            .as_ref()
+            .is_some_and(|version| picked_platform != current_platform || version.as_str() != current_version.as_str());
+
+        let entity = cx.entity().downgrade();
+        let tiles =
+            crate::modals::create_server::platform_picker(picked_platform, false, cx, move |platform, window, cx| {
+                _ = entity.update(cx, |this, cx| this.pick_platform(platform, window, cx));
+            });
+
+        let version_picker = match self.versions_state {
+            VersionsState::Loading => Skeleton::new().w_full().min_h_8().max_h_8().rounded_md().into_any_element(),
+            VersionsState::Failed => h_flex()
+                .gap_2()
+                .child(div().flex_1().text_xs().text_color(theme.danger).child(t::server::software::load_error()))
+                .child(
+                    Button::new("retry-versions")
+                        .small()
+                        .outline()
+                        .label(t::server::software::retry())
+                        .on_click(cx.listener(|this, _, window, cx| this.load_platform_versions(window, cx))),
+                )
+                .into_any_element(),
+            VersionsState::Loaded if self.software_version.read(cx).selected_value().is_none() => div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(t::server::software::none(picked_platform.pretty_name()))
+                .into_any_element(),
+            VersionsState::Loaded => Select::new(&self.software_version)
+                .small()
+                .w_full()
+                .search_placeholder(t::common::search())
+                .into_any_element(),
+        };
+
+        // What the switch leaves behind, said before it happens rather than discovered after
+        let mut notes: Vec<(bool, SharedString)> = Vec::new();
+        if changed {
+            let picked_name = picked_platform.pretty_name();
+            if is_running {
+                notes.push((true, t::server::software::stop_first().into()));
+            }
+            if let Some(version) = &picked_version
+                && VersionFragment::string_to_parts(version) < VersionFragment::string_to_parts(&current_version)
+            {
+                notes.push((true, t::server::software::downgrade(version).into()));
+            }
+            if current_platform.uses_plugins() && !picked_platform.uses_plugins() {
+                notes.push((false, t::server::software::plugins_left(picked_name).into()));
+                notes.push((true, t::server::software::bukkit_worlds(picked_name).into()));
+            }
+            if current_platform.uses_mods() && !picked_platform.uses_mods() {
+                notes.push((false, t::server::software::mods_left(picked_name).into()));
+            }
+            if current_platform.uses_mods()
+                && picked_platform.uses_mods()
+                && current_platform.loader() != picked_platform.loader()
+            {
+                notes.push((
+                    false,
+                    t::server::software::other_loader(current_platform.pretty_name(), picked_name).into(),
+                ));
+            }
+            if server.active_custom_jar().is_some() {
+                notes.push((false, t::server::software::custom_jar_off().into()));
+            }
+        }
+
+        let switch_label: SharedString = match (&picked_version, changed) {
+            (Some(version), true) => {
+                t::server::software::switch(&format!("{} {version}", picked_platform.pretty_name())).into()
+            },
+            _ => t::server::software::switch_plain().into(),
+        };
+
+        Some(
+            card(PandoraIcon::Server, t::server::software::title(), t::server::software::desc(), cx)
+                .child(tiles)
+                .child(crate::labelled(t::server::software::version(), version_picker))
+                .children(notes.into_iter().map(|(warning, note)| {
+                    h_flex()
+                        .gap_1p5()
+                        .items_start()
+                        .text_xs()
+                        .text_color(if warning { theme.warning } else { theme.muted_foreground })
+                        .child(
+                            Icon::new(if warning {
+                                PandoraIcon::TriangleAlert
+                            } else {
+                                PandoraIcon::Info
+                            })
+                            .size_3p5()
+                            .flex_shrink_0()
+                            .mt_px(),
+                        )
+                        .child(div().flex_1().min_w_0().child(note))
+                }))
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(t::server::software::current(&server_details(&server, &current_version))),
+                        )
+                        .child(
+                            Button::new("switch-software")
+                                .small()
+                                .primary()
+                                .icon(PandoraIcon::ArrowLeftRight)
+                                .label(switch_label)
+                                .disabled(!changed || is_running)
+                                .on_click(cx.listener(|this, _, window, cx| this.switch_software(window, cx))),
+                        ),
+                ),
+        )
+    }
+}
+
 /// A titled, bordered block, so the settings read as a few distinct groups rather than a wall of
 /// fields.
 fn card(icon: PandoraIcon, title: &'static str, description: &'static str, cx: &App) -> Div {
@@ -342,6 +616,7 @@ fn card(icon: PandoraIcon, title: &'static str, description: &'static str, cx: &
 
 impl Render for ServerSettingsSubpage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let software = self.render_software(cx);
         let entry = self.instance.read(cx);
         let Some(server) = entry.configuration.server.clone() else {
             return div().into_any_element();
@@ -682,6 +957,7 @@ impl Render for ServerSettingsSubpage {
                     .gap_4()
                     .p_4()
                     .child(eula)
+                    .children(software)
                     .child(jar)
                     .child(resources)
                     .child(java)

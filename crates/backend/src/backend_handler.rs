@@ -1769,6 +1769,21 @@ impl BackendState {
             MessageToBackend::SetServerCustomJarEnabled { id, enabled } => {
                 self.set_server_custom_jar_enabled(id, enabled);
             },
+            MessageToBackend::GetServerPlatformVersions { platform, channel } => {
+                let this = self.clone();
+                tokio::task::spawn(async move {
+                    _ = channel.send(this.server_platform_versions(platform).await);
+                });
+            },
+            MessageToBackend::SetServerSoftware {
+                id,
+                platform,
+                version,
+                modal_action,
+            } => {
+                // Awaited here like StartServer: provisioning resolves Java, which isn't Send
+                self.set_server_software(id, platform, version, modal_action).await;
+            },
             MessageToBackend::PlanServerSync {
                 server_id,
                 client_id,

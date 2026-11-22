@@ -5935,6 +5935,43 @@ en = "Select a server jar"
 [server.jar.browse]
 en = "Browse"
 
+[server.software.title]
+en = "Server software"
+[server.software.desc]
+en = "Switch to another platform or Minecraft version. The new server is downloaded for you, and worlds, plugins and mods stay where they are."
+[server.software.version]
+en = "Minecraft version"
+[server.software.current]
+en = "Currently ${details: &str}"
+[server.software.switch]
+en = "Switch to ${name: &str}"
+[server.software.switch_plain]
+en = "Switch"
+[server.software.loading]
+en = "Loading versions…"
+[server.software.load_error]
+en = "Unable to load the Minecraft versions."
+[server.software.retry]
+en = "Retry"
+[server.software.none]
+en = "${platform: &str} doesn't have a server for any Minecraft release."
+[server.software.stop_first]
+en = "Stop the server before changing its software."
+[server.software.downgrade]
+en = "Minecraft can't safely open a world in an older version than it was last played in. Back up your worlds before going back to ${version: &str}."
+[server.software.plugins_left]
+en = "Your plugins stay in the plugins folder, but ${platform: &str} doesn't load plugins."
+[server.software.mods_left]
+en = "Your mods stay in the mods folder, but ${platform: &str} doesn't load mods."
+[server.software.other_loader]
+en = "Mods made for ${old: &str} usually won't load on ${new: &str}, so you may need their ${new: &str} versions."
+[server.software.bukkit_worlds]
+en = "Paper and Purpur keep the Nether and the End in their own world folders, which ${platform: &str} won't pick up."
+[server.software.custom_jar_off]
+en = "Your custom jar is switched off so the new software runs. You can turn it back on below."
+[server.software.error]
+en = "Unable to switch server software"
+
 [server.eula.agree]
 en = "I agree to the Minecraft End User License Agreement"
 [server.eula.read]

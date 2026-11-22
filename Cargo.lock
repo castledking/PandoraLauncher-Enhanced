@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "auth"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "chrono",
  "httparse",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "backend"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "anyhow",
  "auth",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "bridge"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "atomic-time",
  "atomic_enum",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "command"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "directories",
  "junction",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "frontend"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "anyhow",
  "atomic-time",
@@ -5010,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "nbt"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -5902,7 +5902,7 @@ dependencies = [
 
 [[package]]
 name = "pandora_launcher"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "backend",
  "backtrace",
@@ -7323,7 +7323,7 @@ dependencies = [
 
 [[package]]
 name = "schema"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "chrono",
  "enum-map",
@@ -8267,7 +8267,7 @@ dependencies = [
 
 [[package]]
 name = "t"
-version = "4.2.1"
+version = "4.2.2"
 dependencies = [
  "indexmap 2.14.0",
  "serde",

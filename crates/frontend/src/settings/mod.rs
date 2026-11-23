@@ -292,6 +292,34 @@ impl Render for SettingsRoot {
                                     }
                                 }
                             }),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("settings-back")
+                            .small()
+                            .ghost()
+                            .icon(PandoraIcon::ArrowLeft)
+                            .label(t::settings::back())
+                            .tooltip(if self.embedded {
+                                t::settings::back_desc()
+                            } else {
+                                t::settings::close_window()
+                            })
+                            .on_click({
+                                let embedded = self.embedded;
+                                move |_, window, cx| {
+                                    if embedded {
+                                        // Settings is a page in the main window's history, so this
+                                        // returns to whatever was open before it. Deferred for the
+                                        // same reason as the changelog link above.
+                                        window.defer(cx, |window, cx| crate::root::go_back(window, cx));
+                                    } else {
+                                        // A separate settings window has nowhere to go back to, and
+                                        // the page that opened it is still open behind it
+                                        window.remove_window();
+                                    }
+                                }
+                            }),
                     ),
             );
 

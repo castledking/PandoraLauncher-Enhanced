@@ -31,6 +31,8 @@ use crate::{
 
 pub mod component;
 pub mod data_asset_loader;
+#[cfg(test)]
+mod descender_tests;
 pub mod entity;
 pub mod game_output;
 pub mod icon;

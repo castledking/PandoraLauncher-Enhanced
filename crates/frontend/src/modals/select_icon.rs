@@ -46,6 +46,10 @@ pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, wind
             Button::new(("minecraft", index))
                 .success()
                 .with_size(px(64.0))
+                // A button with children only gets padding from its size, not a height, so these
+                // would be as tall as the image and the first row came out shorter than the rest
+                .size(px(64.0))
+                .p_0()
                 .child(
                     gpui::img(ImageSource::Resource(Resource::Embedded(MINECRAFT_ICON_PATHS[index].into()))).size_12(),
                 )

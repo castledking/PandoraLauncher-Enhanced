@@ -4,8 +4,8 @@ use gpui::*;
 use gpui_component::select::{Select, SelectEvent};
 
 use crate::{
-    component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem, SearchableNamedDropdown},
-    interface_config::{InterfaceConfig, LiveGameOutputDisplay},
+    component::named_dropdown::{DropdownName, NamedDropdownItem, SearchableNamedDropdown},
+    interface_config::InterfaceConfig,
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
 };
 
@@ -46,30 +46,6 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.quick_delete_skins,
                             |cfg, val| cfg.quick_delete_skins = val,
-                        ),
-                        ..Default::default()
-                    },
-                    SettingItem {
-                        title: t::settings::general::general::live_game_output_display,
-                        description: t::settings::general::general::live_game_output_display_desc,
-                        widget: create_live_game_output_dropdown(window, cx),
-                        ..Default::default()
-                    },
-                    SettingItem {
-                        title: t::settings::general::general::reuse_game_output_window,
-                        description: t::settings::general::general::reuse_game_output_window_desc,
-                        widget: SettingItemWidget::Switch(
-                            |cfg| cfg.reuse_game_output_window,
-                            |cfg, val| cfg.reuse_game_output_window = val,
-                        ),
-                        ..Default::default()
-                    },
-                    SettingItem {
-                        title: t::settings::general::general::show_quickplay_page,
-                        description: t::settings::general::general::show_quickplay_page_desc,
-                        widget: SettingItemWidget::Switch(
-                            |cfg| cfg.show_quickplay_page,
-                            |cfg, val| cfg.show_quickplay_page = val,
                         ),
                         ..Default::default()
                     },
@@ -152,37 +128,4 @@ fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWid
             .search_placeholder(t::common::search())
             .into_any_element()
     }))
-}
-
-fn create_live_game_output_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
-    let options = vec![
-        NamedDropdownItem {
-            name: DropdownName::translated(
-                t::settings::general::general::live_game_output_display::tab_on_instance_page,
-            ),
-            item: LiveGameOutputDisplay::TabOnInstancePage,
-        },
-        NamedDropdownItem {
-            name: DropdownName::translated(t::settings::general::general::live_game_output_display::separate_window),
-            item: LiveGameOutputDisplay::SeparateWindow,
-        },
-        NamedDropdownItem {
-            name: DropdownName::translated(t::settings::general::general::live_game_output_display::hidden),
-            item: LiveGameOutputDisplay::Hidden,
-        },
-    ];
-
-    let initial = InterfaceConfig::get(cx).live_game_output_display;
-    let dropdown = NamedDropdown::create_and_select(options, initial, window, cx);
-
-    cx.subscribe(&dropdown, |_, event: &SelectEvent<_>, cx| {
-        let SelectEvent::Confirm(Some(value)) = event else {
-            return;
-        };
-        InterfaceConfig::get_mut(cx).live_game_output_display = *value;
-        cx.refresh_windows();
-    })
-    .detach();
-
-    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
 }

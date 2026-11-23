@@ -17,11 +17,11 @@ use strum::IntoEnumIterator;
 use crate::{
     component::{
         background_effect::{self, BackgroundEffect, EffectPalette, EffectQuality},
-        named_dropdown::{DropdownName, NamedDropdownItem, SearchableNamedDropdown},
+        named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem, SearchableNamedDropdown},
     },
     entity::DataEntities,
     icon::PandoraIcon,
-    interface_config::InterfaceConfig,
+    interface_config::{InterfaceConfig, LiveGameOutputDisplay},
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage, SettingsRoot},
 };
 
@@ -122,6 +122,30 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                         ),
                         ..Default::default()
                     },
+                    SettingItem {
+                        title: t::settings::general::general::live_game_output_display,
+                        description: t::settings::general::general::live_game_output_display_desc,
+                        widget: create_live_game_output_dropdown(window, cx),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::general::general::reuse_game_output_window,
+                        description: t::settings::general::general::reuse_game_output_window_desc,
+                        widget: SettingItemWidget::Switch(
+                            |cfg| cfg.reuse_game_output_window,
+                            |cfg, val| cfg.reuse_game_output_window = val,
+                        ),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::general::general::show_quickplay_page,
+                        description: t::settings::general::general::show_quickplay_page_desc,
+                        widget: SettingItemWidget::Switch(
+                            |cfg| cfg.show_quickplay_page,
+                            |cfg, val| cfg.show_quickplay_page = val,
+                        ),
+                        ..Default::default()
+                    },
                 ]
                 .into(),
                 searched_items: None,
@@ -214,6 +238,39 @@ fn create_theme_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget
         };
         InterfaceConfig::get_mut(cx).set_active_theme(theme_name.clone());
         InterfaceConfig::apply_theme(cx, true);
+    })
+    .detach();
+
+    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
+}
+
+fn create_live_game_output_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
+    let options = vec![
+        NamedDropdownItem {
+            name: DropdownName::translated(
+                t::settings::general::general::live_game_output_display::tab_on_instance_page,
+            ),
+            item: LiveGameOutputDisplay::TabOnInstancePage,
+        },
+        NamedDropdownItem {
+            name: DropdownName::translated(t::settings::general::general::live_game_output_display::separate_window),
+            item: LiveGameOutputDisplay::SeparateWindow,
+        },
+        NamedDropdownItem {
+            name: DropdownName::translated(t::settings::general::general::live_game_output_display::hidden),
+            item: LiveGameOutputDisplay::Hidden,
+        },
+    ];
+
+    let initial = InterfaceConfig::get(cx).live_game_output_display;
+    let dropdown = NamedDropdown::create_and_select(options, initial, window, cx);
+
+    cx.subscribe(&dropdown, |_, event: &SelectEvent<_>, cx| {
+        let SelectEvent::Confirm(Some(value)) = event else {
+            return;
+        };
+        InterfaceConfig::get_mut(cx).live_game_output_display = *value;
+        cx.refresh_windows();
     })
     .detach();
 

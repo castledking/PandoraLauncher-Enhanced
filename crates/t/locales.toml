@@ -4778,6 +4778,20 @@ en = "Loading settings..."
 tr = "Ayarlar yükleniyor..."
 ru = "Загрузка настроек..."
 hu = "Beállítások betöltése..."
+[settings.back]
+en = "Back"
+de = "Zurück"
+fr = "Retour"
+it = "Indietro"
+pl = "Wstecz"
+ru = "Назад"
+tr = "Geri"
+hu = "Vissza"
+sv = "Tillbaka"
+[settings.back_desc]
+en = "Back to where you were before opening settings"
+[settings.close_window]
+en = "Close the settings window"
 
 [settings.general]
 en = "General"

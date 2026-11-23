@@ -1,0 +1,27 @@
+--- a/src/style.rs
++++ b/src/style.rs
+@@ -679,6 +679,24 @@
+                     (false, false) => Bounds::from_corners(min, max),
+                 };
+
++                // Text truncated with an ellipsis only needs clipping across. Its glyphs are
++                // centred on the line box, and a font's ascent plus descent is usually more than
++                // 1em (1.21em for Inter), so under a tight line height they reach past the box
++                // and clipping it there cut the bottoms off descenders. A box's height of slack
++                // above and below covers line heights down to a third of the glyphs' height;
++                // whatever the parent clips to still applies.
++                let bounds = if self.text.text_overflow.is_some()
++                    && self.overflow.y == Overflow::Hidden
++                {
++                    let slack = bounds.size.height;
++                    Bounds::from_corners(
++                        point(bounds.origin.x, bounds.origin.y - slack),
++                        point(bounds.bottom_right().x, bounds.bottom_right().y + slack),
++                    )
++                } else {
++                    bounds
++                };
++
+                 Some(ContentMask { bounds })
+             }
+         }

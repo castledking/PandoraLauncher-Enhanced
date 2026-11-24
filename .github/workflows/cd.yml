@@ -30,7 +30,7 @@ jobs:
             targets: x86_64-pc-windows-msvc
             buildscript: ./scripts/build_windows.sh
           - os_name: MacOS-arm64
-            os: macos-latest
+            os: macos-26-intel
             targets: aarch64-apple-darwin,x86_64-apple-darwin
             buildscript: ./scripts/build_mac.sh
 

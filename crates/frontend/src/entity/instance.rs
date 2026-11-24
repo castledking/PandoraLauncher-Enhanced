@@ -289,6 +289,26 @@ impl InstanceEntry {
         self.title.clone()
     }
 
+    /// The platform or loader name to display (e.g. a detected custom server fork like "Canvas",
+    /// the server's configured platform like "Purpur", or the client's loader like "Fabric").
+    pub fn display_platform(&self) -> &str {
+        self.configuration
+            .server
+            .as_ref()
+            .map(|server| server.display_platform())
+            .unwrap_or_else(|| self.configuration.loader.pretty_name())
+    }
+
+    /// The instance/server name with `$p` (platform) and `$v` (Minecraft version) resolved.
+    pub fn display_name(&self) -> SharedString {
+        let (expanded, replaced) = schema::server::expand_name_placeholders(
+            &self.name,
+            self.display_platform(),
+            self.configuration.minecraft_version.as_str(),
+        );
+        if replaced { expanded.into() } else { self.name.clone() }
+    }
+
     /// Whether this is an instance people play themselves: not a server, which has its own page,
     /// and not the old hidden quickplay instance before it's carried over.
     pub fn is_regular_instance(&self) -> bool {
@@ -322,9 +342,17 @@ impl InstanceEntry {
     }
 
     fn create_title(&self) -> SharedString {
-        let lower = self.name.to_ascii_lowercase();
+        let loader_string = self.display_platform();
+        let (expanded, replaced) = schema::server::expand_name_placeholders(
+            &self.name,
+            loader_string,
+            self.configuration.minecraft_version.as_str(),
+        );
+        if replaced {
+            return expanded.into();
+        }
 
-        let loader_string = self.configuration.loader.pretty_name();
+        let lower = self.name.to_ascii_lowercase();
         let loader_string_lower = loader_string.to_ascii_lowercase();
         let contains_loader = lower.contains(&loader_string_lower);
 

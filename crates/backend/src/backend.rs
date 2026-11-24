@@ -1868,6 +1868,8 @@ impl BackendState {
 
     /// Asks the instance's processes to close, and kills them if they haven't within 3 seconds.
     pub fn kill_instance(&self, instance: &mut Instance) {
+        self.servers.mark_stopping(instance.id);
+
         for (process, _) in instance.closing_processes.drain(..) {
             let result = process.kill();
 

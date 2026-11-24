@@ -70,12 +70,6 @@ fn sort_servers_slice(servers: &mut [&InstanceEntry]) {
     });
 }
 
-/// A server that somehow lost its configuration still needs a row, and one with no platform
-/// to sort by is better sorted as if it were the plainest option than not sorted at all.
-fn platform_of(server: &InstanceEntry) -> ServerPlatform {
-    server.configuration.server.as_ref().map_or(ServerPlatform::Vanilla, |c| c.platform)
-}
-
 pub struct ServersPage {
     data: DataEntities,
     server_table: Entity<TableState<ServerList>>,
@@ -171,13 +165,7 @@ impl Render for ServersPage {
 
                 let cards = self.server_table.update(cx, |table, cx| table.delegate().render_cards(cx));
 
-                v_flex()
-                    .size_full()
-                    .p_4()
-                    .gap_3()
-                    .child(header)
-                    .child(cards)
-                    .into_any_element()
+                v_flex().size_full().p_4().gap_3().child(header).child(cards).into_any_element()
             },
             // The table brings its own scrolling and its own header, so the card summary
             // above would be sitting on top of the columns
@@ -386,7 +374,7 @@ pub fn build_label(platform: ServerPlatform) -> &'static str {
 
 /// The platform and version line shown under a server's name, with whatever jar it runs.
 pub fn server_details(server: &ServerConfiguration, minecraft_version: &str) -> String {
-    let platform = format!("{} {}", server.platform.pretty_name(), minecraft_version);
+    let platform = format!("{} {}", server.display_platform(), minecraft_version);
     if let Some(jar) = server.active_custom_jar() {
         format!("{platform} · {} {jar}", t::server::jar::custom_label())
     } else if let Some(build) = &server.build {
@@ -510,6 +498,7 @@ fn render_server_card(server: &InstanceEntry, data: &DataEntities, cx: &mut App)
             .child(div().truncate().child(t::server::list::linked_to(&linked)))
     });
 
+    let display_name = server.display_name();
     let drag_info = CardDragInfo {
         id: server.id,
         name: server.name.clone(),
@@ -537,10 +526,13 @@ fn render_server_card(server: &InstanceEntry, data: &DataEntities, cx: &mut App)
         })
         .rounded(theme.radius_lg)
         .cursor_grab()
-        .on_drag(drag_info, move |info: &CardDragInfo, _, _, cx| {
-            cx.new(|_| SimpleDragPreview {
-                name: info.name.clone(),
-            })
+        .on_drag(drag_info, {
+            let preview_name = display_name.clone();
+            move |_: &CardDragInfo, _, _, cx| {
+                cx.new(|_| SimpleDragPreview {
+                    name: preview_name.clone(),
+                })
+            }
         })
         .drag_over(move |style, drag: &CardDragInfo, _, cx| {
             if drag.is_server && drag.id != target_id {
@@ -576,19 +568,15 @@ fn render_server_card(server: &InstanceEntry, data: &DataEntities, cx: &mut App)
         })
         .child(div().absolute().right_2().top_2().child(menu))
         .child(
-            h_flex()
-                .w_full()
-                .gap_2()
-                .child(icon)
-                .child(
-                    v_flex()
-                        .truncate()
-                        .w_full()
-                        .gap_0p5()
-                        .child(div().truncate().font_semibold().child(server.name.clone()))
-                        .child(div().truncate().text_xs().text_color(theme.muted_foreground).child(subtitle))
-                        .pr_6(),
-                ),
+            h_flex().w_full().gap_2().child(icon).child(
+                v_flex()
+                    .truncate()
+                    .w_full()
+                    .gap_0p5()
+                    .child(div().truncate().font_semibold().child(display_name))
+                    .child(div().truncate().text_xs().text_color(theme.muted_foreground).child(subtitle))
+                    .pr_6(),
+            ),
         )
         .child(
             h_flex()
@@ -764,20 +752,20 @@ impl ServerList {
                 sort_servers_slice(group);
             } else {
                 group.sort_by(|a, b| {
-                let pos_a = card_ordering.iter().position(|name| name == &a.name);
-                let pos_b = card_ordering.iter().position(|name| name == &b.name);
-                match (pos_a, pos_b) {
-                    (Some(pa), Some(pb)) => pa.cmp(&pb),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => {
-                        let running = |entry: &InstanceEntry| entry.status != InstanceStatus::NotRunning;
-                        running(b)
-                            .cmp(&running(a))
-                            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    let pos_a = card_ordering.iter().position(|name| name == &a.name);
+                    let pos_b = card_ordering.iter().position(|name| name == &b.name);
+                    match (pos_a, pos_b) {
+                        (Some(pa), Some(pb)) => pa.cmp(&pb),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => {
+                            let running = |entry: &InstanceEntry| entry.status != InstanceStatus::NotRunning;
+                            running(b)
+                                .cmp(&running(a))
+                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        },
                     }
-                }
-            });
+                });
             }
         }
 
@@ -821,11 +809,7 @@ impl ServerList {
                     ordering
                         .iter()
                         .position(|ordering_name| ordering_name == group_name)
-                        .or_else(|| {
-                            fallback_ordering
-                                .iter()
-                                .position(|ordering_name| ordering_name == group_name)
-                        })
+                        .or_else(|| fallback_ordering.iter().position(|ordering_name| ordering_name == group_name))
                         .map(|v| v + 1)
                         .unwrap_or(0)
                 } else {
@@ -879,7 +863,14 @@ impl ServerList {
                             return div().into_any_element();
                         };
                         let menu = menus.get(&group).cloned();
-                        Self::render_card_group(group.into(), std::mem::take(children), menu, backend_handle.clone(), cx, Some(info))
+                        Self::render_card_group(
+                            group.into(),
+                            std::mem::take(children),
+                            menu,
+                            backend_handle.clone(),
+                            cx,
+                            Some(info),
+                        )
                     })
                     .w_full()
                     .v_flex()
@@ -891,7 +882,14 @@ impl ServerList {
                     .gap_2()
                     .child(reorderable)
                     .when_some(no_group_children, |this, no_group_children| {
-                        this.child(Self::render_card_group("No Group".into(), no_group_children, None, self.data.backend_handle.clone(), cx, None))
+                        this.child(Self::render_card_group(
+                            "No Group".into(),
+                            no_group_children,
+                            None,
+                            self.data.backend_handle.clone(),
+                            cx,
+                            None,
+                        ))
                     })
                     .into_any_element()
             }
@@ -1035,7 +1033,7 @@ impl TableDelegate for ServerList {
         // and only replaced once a column has actually been chosen
         match col.key.as_ref() {
             "name" => self.items.sort_by(|a, b| {
-                let ordering = lexical_sort::natural_lexical_cmp(&a.name, &b.name);
+                let ordering = lexical_sort::natural_lexical_cmp(&a.display_name(), &b.display_name());
                 if sort == ColumnSort::Descending {
                     ordering.reverse()
                 } else {
@@ -1043,7 +1041,7 @@ impl TableDelegate for ServerList {
                 }
             }),
             "platform" => self.items.sort_by(|a, b| {
-                let ordering = platform_of(a).pretty_name().cmp(platform_of(b).pretty_name());
+                let ordering = a.display_platform().cmp(b.display_platform());
                 if sort == ColumnSort::Descending {
                     ordering.reverse()
                 } else {
@@ -1092,9 +1090,9 @@ impl TableDelegate for ServerList {
                 .gap_2()
                 .items_center()
                 .child(div().size_6().flex_shrink_0().child(platform_icon(config.platform)))
-                .child(div().truncate().child(server.name.clone()))
+                .child(div().truncate().child(server.display_name()))
                 .into_any_element(),
-            "platform" => config.platform.pretty_name().into_any_element(),
+            "platform" => SharedString::from(config.display_platform().to_owned()).into_any_element(),
             "version" => server.configuration.minecraft_version.as_str().into_any_element(),
             "status" => status_pill(status, cx).into_any_element(),
             "controls" => h_flex()

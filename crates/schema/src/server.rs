@@ -143,6 +143,15 @@ pub struct ServerConfiguration {
         deserialize_with = "crate::try_deserialize"
     )]
     pub custom_jar: Option<ServerCustomJar>,
+
+    /// Software name reported by the server when it last ran, when it differs from `platform`
+    /// (for example a Paper/Folia fork such as Canvas run through a custom jar).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_none",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub detected_platform: Option<Arc<str>>,
 }
 
 impl ServerConfiguration {
@@ -154,6 +163,7 @@ impl ServerConfiguration {
             auto_restart: false,
             linked_instance: None,
             custom_jar: None,
+            detected_platform: None,
         }
     }
 
@@ -161,6 +171,51 @@ impl ServerConfiguration {
     pub fn active_custom_jar(&self) -> Option<&str> {
         self.custom_jar.as_ref().filter(|jar| jar.enabled).map(|jar| &*jar.file)
     }
+
+    /// The software name to display in the UI: the name reported by the running server when it
+    /// differs from `platform`, otherwise `platform`'s own name.
+    pub fn display_platform(&self) -> &str {
+        self.detected_platform.as_deref().unwrap_or_else(|| self.platform.pretty_name())
+    }
+}
+
+/// Replaces `$p` with `platform` and `$v` with `version` in an instance/server name.
+/// Returns the expanded string and whether any placeholder was substituted.
+pub fn expand_name_placeholders(name: &str, platform: &str, version: &str) -> (String, bool) {
+    if !name.contains('$') {
+        return (name.to_string(), false);
+    }
+    let bytes = name.as_bytes();
+    let mut out = String::with_capacity(name.len() + 16);
+    let mut i = 0;
+    let mut replaced = false;
+    while i < bytes.len() {
+        if bytes[i] == b'$' && i + 1 < bytes.len() {
+            let token = bytes[i + 1];
+            let followed_by_letter = bytes.get(i + 2).is_some_and(u8::is_ascii_alphabetic);
+            if !followed_by_letter {
+                match token {
+                    b'p' => {
+                        out.push_str(platform);
+                        replaced = true;
+                        i += 2;
+                        continue;
+                    },
+                    b'v' => {
+                        out.push_str(version);
+                        replaced = true;
+                        i += 2;
+                        continue;
+                    },
+                    _ => {},
+                }
+            }
+        }
+        let ch = name[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    (out, replaced)
 }
 
 /// Kept when switched off, so going back to the custom jar doesn't mean picking it again.
@@ -476,5 +531,20 @@ mod tests {
         let file = "server-port=25565\nplugin-key=custom\n";
         let merged = merge_server_properties(file);
         assert!(merged.iter().any(|property| &*property.key == "plugin-key"));
+    }
+
+    #[test]
+    fn expands_platform_and_version_placeholders() {
+        assert_eq!(
+            expand_name_placeholders("Allium ($p $v)", "Canvas", "26.3"),
+            ("Allium (Canvas 26.3)".to_string(), true)
+        );
+        assert_eq!(expand_name_placeholders("$p-$v", "Paper", "1.21.6"), ("Paper-1.21.6".to_string(), true));
+        assert_eq!(expand_name_placeholders("Allium $v", "Canvas", "26.3"), ("Allium 26.3".to_string(), true));
+        assert_eq!(expand_name_placeholders("Allium", "Canvas", "26.3"), ("Allium".to_string(), false));
+        assert_eq!(
+            expand_name_placeholders("Server $price $version", "Canvas", "26.3"),
+            ("Server $price $version".to_string(), false)
+        );
     }
 }

@@ -434,47 +434,13 @@ impl BackendState {
         let installer_path = server_dir.join(&installer_name);
         self.download_server_file(&installer_url, &installer_path, None, tracker).await?;
 
-        let library_dir = match platform {
-            ServerPlatform::Forge => format!("libraries/net/minecraftforge/forge/{loader_version}"),
-            _ => format!("libraries/net/neoforged/neoforge/{loader_version}"),
-        };
-        let artifact = match platform {
-            ServerPlatform::Forge => "forge",
-            _ => "neoforge",
-        };
-        // The arg file's classpath uses the platform separator, so only the native one will do
-        let args_file = format!("{library_dir}/{}", if cfg!(windows) { "win_args.txt" } else { "unix_args.txt" });
-        // Written by the installer's last step. The arg file appears near the start, so on its own it
-        // can't tell a finished install from one that was interrupted
-        let patched_server_jar = format!("{library_dir}/{artifact}-{loader_version}-server.jar");
-        // Before 1.17 the installer produced a runnable jar instead
-        let legacy_jar = format!("forge-{loader_version}.jar");
-
-        let installed = |server_dir: &Path| -> Option<ProvisionedServer> {
-            if server_dir.join(&args_file).is_file() && server_dir.join(&patched_server_jar).is_file() {
-                Some(ProvisionedServer {
-                    jar: "".into(),
-                    extra_args: vec![format!("@{args_file}").into()],
-                    build: Some(loader_version.as_str().into()),
-                })
-            } else if server_dir.join(&legacy_jar).is_file() {
-                Some(ProvisionedServer {
-                    jar: legacy_jar.as_str().into(),
-                    extra_args: Vec::new(),
-                    build: Some(loader_version.as_str().into()),
-                })
-            } else {
-                None
-            }
-        };
-
-        if let Some(provisioned) = installed(server_dir) {
+        if let Some(provisioned) = find_installed_forge_like(platform, server_dir, &loader_version) {
             return Ok(provisioned);
         }
 
         self.run_forge_installer(server_dir, &installer_path, configuration, tracker).await?;
 
-        installed(server_dir).ok_or_else(|| {
+        find_installed_forge_like(platform, server_dir, &loader_version).ok_or_else(|| {
             format!(
                 "The {} installer didn't finish setting up the server. Its log is at {}",
                 platform.pretty_name(),
@@ -509,10 +475,7 @@ impl BackendState {
     ) -> Result<(), ProvisionError> {
         tracker.set_title("Running the server installer".into());
 
-        let java = self
-            .resolve_server_java_binary(configuration)
-            .await
-            .ok_or("Unable to find a Java runtime to run the server installer")?;
+        let java = self.resolve_server_java_binary(configuration, None, None).await?;
 
         let mut command = command::PandoraCommand::new(java.into_os_string());
         command.current_dir(server_dir);
@@ -605,6 +568,51 @@ impl BackendState {
     }
 }
 
+/// Checks whether a Forge or NeoForge server installer has finished laying out `server_dir`.
+///
+/// The arg file appears early during installation, so we also verify the final patched server jar:
+/// Forge and NeoForge 1.20-1.21 write `{artifact}-{version}-server.jar` next to the arg file, while
+/// NeoForge 26.x+ writes `libraries/net/neoforged/minecraft-server-patched/{version}/minecraft-server-patched-{version}.jar`.
+fn find_installed_forge_like(
+    platform: ServerPlatform,
+    server_dir: &Path,
+    loader_version: &str,
+) -> Option<ProvisionedServer> {
+    let library_dir = match platform {
+        ServerPlatform::Forge => format!("libraries/net/minecraftforge/forge/{loader_version}"),
+        _ => format!("libraries/net/neoforged/neoforge/{loader_version}"),
+    };
+    // The arg file's classpath uses the platform separator, so only the native one will do
+    let args_file = format!("{library_dir}/{}", if cfg!(windows) { "win_args.txt" } else { "unix_args.txt" });
+    let patched_server_jars: Vec<String> = match platform {
+        ServerPlatform::Forge => vec![format!("{library_dir}/forge-{loader_version}-server.jar")],
+        _ => vec![
+            format!("{library_dir}/neoforge-{loader_version}-server.jar"),
+            format!(
+                "libraries/net/neoforged/minecraft-server-patched/{loader_version}/minecraft-server-patched-{loader_version}.jar"
+            ),
+        ],
+    };
+    // Before 1.17 the installer produced a runnable jar instead
+    let legacy_jar = format!("forge-{loader_version}.jar");
+
+    if server_dir.join(&args_file).is_file() && patched_server_jars.iter().any(|jar| server_dir.join(jar).is_file()) {
+        Some(ProvisionedServer {
+            jar: "".into(),
+            extra_args: vec![format!("@{args_file}").into()],
+            build: Some(loader_version.into()),
+        })
+    } else if server_dir.join(&legacy_jar).is_file() {
+        Some(ProvisionedServer {
+            jar: legacy_jar.as_str().into(),
+            extra_args: Vec::new(),
+            build: Some(loader_version.into()),
+        })
+    } else {
+        None
+    }
+}
+
 /// Which Minecraft versions a platform has servers for.
 enum PlatformVersions {
     All,
@@ -663,5 +671,36 @@ mod tests {
         assert!(versions.supports(&"1.20.4".into()));
         assert!(!versions.supports(&"1.20.1".into()));
         assert!(!versions.supports(&"1.21.4".into()));
+    }
+
+    #[test]
+    fn recognizes_neoforge_26_patched_server_jar_layout() {
+        use schema::server::ServerPlatform;
+
+        use super::find_installed_forge_like;
+
+        let dir = std::env::temp_dir().join(format!("pandora_neoforge26_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let args_name = if cfg!(windows) { "win_args.txt" } else { "unix_args.txt" };
+        let args_path = dir.join("libraries/net/neoforged/neoforge/26.1.2.130").join(args_name);
+        std::fs::create_dir_all(args_path.parent().unwrap()).unwrap();
+        std::fs::write(&args_path, "").unwrap();
+
+        // Arg file alone isn't enough until the patched server jar exists
+        assert!(find_installed_forge_like(ServerPlatform::NeoForge, &dir, "26.1.2.130").is_none());
+
+        let patched_jar = dir.join(
+            "libraries/net/neoforged/minecraft-server-patched/26.1.2.130/minecraft-server-patched-26.1.2.130.jar",
+        );
+        std::fs::create_dir_all(patched_jar.parent().unwrap()).unwrap();
+        std::fs::write(&patched_jar, "").unwrap();
+
+        let provisioned = find_installed_forge_like(ServerPlatform::NeoForge, &dir, "26.1.2.130")
+            .expect("NeoForge 26.x layout should be recognized");
+        assert_eq!(&*provisioned.jar, "");
+        assert_eq!(provisioned.extra_args.len(), 1);
+        assert!(provisioned.extra_args[0].starts_with("@libraries/net/neoforged/neoforge/26.1.2.130/"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1087,23 +1087,62 @@ impl Launcher {
             .exists()
     }
 
-    /// Resolves the Java runtime for a server, downloading the managed runtime if needed.
-    ///
-    /// Servers have no modal to report progress into, so this takes none; the caller surfaces
-    /// failures instead.
+    /// Resolves the Java runtime for a server, downloading Mojang's managed runtime if needed and
+    /// falling back to a matching Java installation on the PC if the managed runtime cannot be
+    /// obtained.
     pub(crate) async fn load_java_binary_for_server(
         &self,
         meta: &MetadataManager,
         http_client: &reqwest::Client,
         configuration: &InstanceConfiguration,
-        version_info: &MinecraftVersion,
-    ) -> Option<PathBuf> {
-        let modal_action = ModalAction::default();
-        let tracker = modal_action.push_tracker("Preparing Java".into());
-        self.load_mojang_java_binary(meta, http_client, configuration, version_info, &modal_action, &tracker)
-            .await
-            .inspect_err(|err| log::error!("Unable to resolve a Java runtime for the server: {err:?}"))
-            .ok()
+        default_component: Ustr,
+        default_major: u32,
+        modal_action: Option<&ModalAction>,
+    ) -> Result<PathBuf, String> {
+        let fallback_action;
+        let action = match modal_action {
+            Some(action) => action,
+            None => {
+                fallback_action = ModalAction::default();
+                &fallback_action
+            },
+        };
+        let tracker = action.push_tracker("Preparing Java".into());
+        tracker.set_total(1);
+
+        let result = self
+            .load_mojang_java_binary_for_requirement(
+                meta,
+                http_client,
+                configuration,
+                default_component,
+                default_major,
+                action,
+                &tracker,
+            )
+            .await;
+
+        match result {
+            Ok(binary) => {
+                tracker.set_finished(ProgressTrackerFinishType::Normal);
+                Ok(binary)
+            },
+            Err(err) => {
+                log::warn!(
+                    "Unable to resolve managed Java {default_major} ({default_component}) for server ({err:?}); checking system Java installations"
+                );
+                if let Some(binary) = self.find_system_java_binary(default_major) {
+                    tracker.set_finished(ProgressTrackerFinishType::Normal);
+                    return Ok(binary);
+                }
+                tracker.set_finished(ProgressTrackerFinishType::Error);
+                Err(format!(
+                    "Java {default_major} is required for this server, but no compatible Java runtime could be \
+                     downloaded or found on this PC ({err}). Install Java {default_major} or select one in Server \
+                     Settings -> Java."
+                ))
+            },
+        }
     }
 
     async fn load_mojang_java_binary(
@@ -1112,6 +1151,38 @@ impl Launcher {
         http_client: &reqwest::Client,
         configuration: &InstanceConfiguration,
         version_info: &MinecraftVersion,
+        modal_action: &ModalAction,
+        launch_tracker: &ProgressTracker,
+    ) -> Result<PathBuf, LoadJavaRuntimeError> {
+        let default_component = version_info
+            .java_version
+            .as_ref()
+            .map(|java_version| java_version.component)
+            .unwrap_or_else(|| "jre-legacy".into());
+        let default_major = version_info
+            .java_version
+            .as_ref()
+            .map(|java_version| java_version.major_version)
+            .unwrap_or(8);
+        self.load_mojang_java_binary_for_requirement(
+            meta,
+            http_client,
+            configuration,
+            default_component,
+            default_major,
+            modal_action,
+            launch_tracker,
+        )
+        .await
+    }
+
+    async fn load_mojang_java_binary_for_requirement(
+        &self,
+        meta: &MetadataManager,
+        http_client: &reqwest::Client,
+        configuration: &InstanceConfiguration,
+        default_component: Ustr,
+        default_major: u32,
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
     ) -> Result<PathBuf, LoadJavaRuntimeError> {
@@ -1129,12 +1200,7 @@ impl Launcher {
             let paths = std::env::split_paths(&force_external_java);
 
             let mut found_versions = BTreeSet::new();
-
-            let needed_version = if let Some(java_version) = &version_info.java_version {
-                java_version.major_version
-            } else {
-                8
-            };
+            let needed_version = default_major;
 
             for path in paths {
                 let Some(binary) = Self::search_for_java_binary(&path) else {
@@ -1168,8 +1234,7 @@ impl Launcher {
             .as_ref()
             .filter(|java_runtime| java_runtime.enabled)
             .and_then(|java_runtime| java_runtime.component)
-            .or_else(|| version_info.java_version.as_ref().map(|java_version| java_version.component))
-            .unwrap_or_else(|| "jre-legacy".into());
+            .unwrap_or(default_component);
 
         let runtimes = meta.fetch(MojangJavaRuntimesMetadataItem).await?;
 
@@ -1197,12 +1262,11 @@ impl Launcher {
         }
 
         let runtime_component_dir = self.directories.runtime_base_dir.join(jre_component).join(platform);
+        let fresh_install = !runtime_component_dir.join("manifest.json").exists();
         let _ = std::fs::create_dir_all(&runtime_component_dir);
         let Ok(runtime_component_dir) = runtime_component_dir.canonicalize() else {
             return Err(LoadJavaRuntimeError::InvalidComponentPath);
         };
-
-        let fresh_install = !runtime_component_dir.exists();
 
         let runtime = meta
             .fetch(MojangJavaRuntimeComponentMetadataItem {
@@ -1511,6 +1575,95 @@ impl Launcher {
             }
             false
         }
+    }
+
+    /// Scans common Java installation locations on the host PC (`JAVA_HOME`, `PATH`, and standard
+    /// OS JDK directories) for a runtime matching `needed_major` (preferring an exact match, or
+    /// the lowest installed version >= `needed_major` for modern Java 17+ servers).
+    pub(crate) fn find_system_java_binary(&self, needed_major: u32) -> Option<PathBuf> {
+        let mut candidate_roots: Vec<PathBuf> = Vec::new();
+        if let Some(java_home) = std::env::var_os("JAVA_HOME") {
+            candidate_roots.push(PathBuf::from(java_home));
+        }
+        if let Some(path_env) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_env) {
+                candidate_roots.push(dir);
+            }
+        }
+        let scan_subdirs = |parent: PathBuf, out: &mut Vec<PathBuf>| {
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        out.push(path);
+                    }
+                }
+            }
+        };
+        #[cfg(target_os = "linux")]
+        {
+            scan_subdirs(PathBuf::from("/usr/lib/jvm"), &mut candidate_roots);
+            scan_subdirs(PathBuf::from("/usr/java"), &mut candidate_roots);
+            if let Some(home) = std::env::var_os("HOME") {
+                let home = PathBuf::from(home);
+                scan_subdirs(home.join(".sdkman/candidates/java"), &mut candidate_roots);
+                scan_subdirs(home.join(".jdks"), &mut candidate_roots);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            for root in [
+                PathBuf::from("/Library/Java/JavaVirtualMachines"),
+                std::env::var_os("HOME")
+                    .map(|h| PathBuf::from(h).join("Library/Java/JavaVirtualMachines"))
+                    .unwrap_or_default(),
+            ] {
+                if let Ok(entries) = std::fs::read_dir(root) {
+                    for entry in entries.flatten() {
+                        candidate_roots.push(entry.path().join("Contents/Home"));
+                    }
+                }
+            }
+            scan_subdirs(PathBuf::from("/opt/homebrew/opt"), &mut candidate_roots);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            for root in [
+                r"C:\Program Files\Java",
+                r"C:\Program Files\Eclipse Adoptium",
+                r"C:\Program Files\AdoptOpenJDK",
+                r"C:\Program Files\Microsoft",
+                r"C:\Program Files\Zulu",
+                r"C:\Program Files\BellSoft",
+                r"C:\Program Files\Amazon Corretto",
+            ] {
+                scan_subdirs(PathBuf::from(root), &mut candidate_roots);
+            }
+        }
+
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut best_newer: Option<(u32, PathBuf)> = None;
+        for root in candidate_roots {
+            let Some(binary) = Self::search_for_java_binary(&root) else {
+                continue;
+            };
+            let canonical = binary.canonicalize().unwrap_or_else(|_| binary.clone());
+            if !seen.insert(canonical) {
+                continue;
+            }
+            let Some(major) = self.get_major_java_version(&binary) else {
+                continue;
+            };
+            if major == needed_major {
+                return Some(binary);
+            }
+            if needed_major >= 17 && major > needed_major {
+                if best_newer.as_ref().is_none_or(|(best_major, _)| major < *best_major) {
+                    best_newer = Some((major, binary));
+                }
+            }
+        }
+        best_newer.map(|(_, binary)| binary)
     }
 
     pub(crate) fn search_for_java_binary(path: &Path) -> Option<PathBuf> {

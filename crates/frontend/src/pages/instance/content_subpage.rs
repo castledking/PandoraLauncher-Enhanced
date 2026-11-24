@@ -664,9 +664,17 @@ impl Render for InstanceContentSubpage {
                 .child(List::new(&self.content_list).search_placeholder(t::common::search()))
                 .child(filter_bar_controls)
                 .when(self.file_drag_over, |this| {
+                    let title = self
+                        .data
+                        .instances
+                        .read(cx)
+                        .entries
+                        .get(&self.instance)
+                        .map(|entry| entry.read(cx).title())
+                        .unwrap_or_else(|| self.instance_title.clone());
                     let hint: SharedString = match &self.file_drag_replace {
-                        Some(file) => t::instance::content::drop::replace(file, &self.instance_title).into(),
-                        None => t::instance::content::drop::into(&self.instance_title).into(),
+                        Some(file) => t::instance::content::drop::replace(file, &title).into(),
+                        None => t::instance::content::drop::into(&title).into(),
                     };
                     this.child(crate::component::file_drop::drop_overlay("file-drop-here", hint, cx))
                 })

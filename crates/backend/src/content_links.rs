@@ -10,7 +10,7 @@ use std::{path::Path, sync::Arc};
 
 use bridge::instance::{ContentFolder, ContentSummary, InstanceContentSummary, InstanceID};
 use futures::StreamExt;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use schema::{
     content::ContentSource,
     curseforge::CurseforgeFingerprintRequest,
@@ -35,10 +35,11 @@ struct Unlinked {
     paths: Vec<Arc<Path>>,
 }
 
-/// A project whose icon is missing, with the files that should show it
+/// A project whose icon is missing or stale, with the files that should show it
 struct MissingIcon {
     source: ContentSource,
     paths: Vec<Arc<Path>>,
+    force_reload: bool,
 }
 
 /// Called after a content folder loads. Every file and icon is only looked up once a session, and
@@ -59,7 +60,7 @@ pub(crate) fn after_content_loaded(
             continue;
         }
         let hash = summary.content_summary.hash;
-        let has_icon = summary.content_summary.png_icon.is_some();
+        let has_embedded_icon = manager.has_embedded_icon(&hash);
 
         match &summary.content_source {
             ContentSource::Manual | ContentSource::ModrinthUnknown => {
@@ -71,14 +72,14 @@ pub(crate) fn after_content_loaded(
                         Unlinked {
                             hash,
                             source: summary.content_source.clone(),
-                            has_icon,
+                            has_icon: has_embedded_icon,
                             paths: vec![summary.path.clone()],
                         },
                     );
                 }
             },
             source => {
-                if has_icon {
+                if has_embedded_icon {
                     continue;
                 }
                 let Some(key) = remote_icon_key(source) else {
@@ -86,12 +87,13 @@ pub(crate) fn after_content_loaded(
                 };
                 if let Some(entry) = missing_icons.get_mut(&key) {
                     entry.paths.push(summary.path.clone());
-                } else if manager.claim_remote_icon_attempt(&key) {
+                } else if let Some(force_reload) = manager.claim_remote_icon_attempt(&key) {
                     missing_icons.insert(
                         key,
                         MissingIcon {
                             source: source.clone(),
                             paths: vec![summary.path.clone()],
+                            force_reload,
                         },
                     );
                 }
@@ -135,26 +137,67 @@ async fn link_content(
         };
         if let Some(entry) = missing_icons.get_mut(&key) {
             entry.paths.extend(file.paths);
-        } else if manager.claim_remote_icon_attempt(&key) {
+        } else if let Some(force_reload) = manager.claim_remote_icon_attempt(&key) {
             missing_icons.insert(
                 key,
                 MissingIcon {
                     source,
                     paths: file.paths,
+                    force_reload,
                 },
             );
         }
     }
 
-    for path in fetch_icons(&backend, missing_icons).await {
-        changes.dirty_path(path);
+    let mut updated_icon_keys: FxHashSet<Arc<str>> = FxHashSet::default();
+    for (key, paths) in fetch_icons(&backend, missing_icons).await {
+        updated_icon_keys.insert(key);
+        for path in paths {
+            changes.dirty_path(path);
+        }
     }
 
-    if changes.is_empty() {
+    if changes.is_empty() && updated_icon_keys.is_empty() {
         return;
     }
-    if let Some(instance) = backend.instance_state.write().instances.get_mut(id) {
+    let mut instance_state = backend.instance_state.write();
+    if !changes.is_empty()
+        && let Some(instance) = instance_state.instances.get_mut(id)
+    {
         instance.mark_content_dirty(&backend, folder, changes, true);
+    }
+    if !updated_icon_keys.is_empty() {
+        for instance in instance_state.instances.iter_mut() {
+            let instance_id = instance.id;
+            let dirty_folders: Vec<(ContentFolder, FolderChanges)> = instance
+                .content_state
+                .iter()
+                .filter_map(|(other_folder, state)| {
+                    if instance_id == id && other_folder == folder {
+                        return None;
+                    }
+                    let summaries = state.summaries.as_ref()?;
+                    let mut other_changes = FolderChanges::no_changes();
+                    for summary in summaries.iter() {
+                        if !summary.can_toggle || ContentSummary::is_unknown(&summary.content_summary) {
+                            continue;
+                        }
+                        if manager.has_embedded_icon(&summary.content_summary.hash) {
+                            continue;
+                        }
+                        if remote_icon_key(&summary.content_source)
+                            .is_some_and(|key| updated_icon_keys.contains(&key))
+                        {
+                            other_changes.dirty_path(summary.path.clone());
+                        }
+                    }
+                    (!other_changes.is_empty()).then_some((other_folder, other_changes))
+                })
+                .collect();
+            for (other_folder, other_changes) in dirty_folders {
+                instance.mark_content_dirty(&backend, other_folder, other_changes, true);
+            }
+        }
     }
 }
 
@@ -238,8 +281,11 @@ async fn identify(backend: &BackendState, unlinked: Vec<Unlinked>) -> Vec<(Unlin
     linked
 }
 
-/// Downloads project icons, returning the files whose icon is now available
-async fn fetch_icons(backend: &BackendState, missing_icons: FxHashMap<Arc<str>, MissingIcon>) -> Vec<Arc<Path>> {
+/// Downloads project icons, returning the keys and files whose stored icon changed
+async fn fetch_icons(
+    backend: &BackendState,
+    missing_icons: FxHashMap<Arc<str>, MissingIcon>,
+) -> Vec<(Arc<str>, Vec<Arc<Path>>)> {
     if missing_icons.is_empty() {
         return Vec::new();
     }
@@ -252,10 +298,18 @@ async fn fetch_icons(backend: &BackendState, missing_icons: FxHashMap<Arc<str>, 
             _ => None,
         })
         .collect();
+    let force_reload_modrinth = missing_icons
+        .values()
+        .any(|missing| matches!(missing.source, ContentSource::ModrinthProject { .. }) && missing.force_reload);
     let mut modrinth_icon_urls: FxHashMap<Arc<str>, Arc<str>> = FxHashMap::default();
     if !modrinth_ids.is_empty() {
         let request = ModrinthProjectsRequest { ids: modrinth_ids };
-        match backend.meta.fetch(ModrinthProjectsMetadataItem(&request)).await {
+        match backend
+            .meta
+            .fetch_with_keepalive(ModrinthProjectsMetadataItem(&request), force_reload_modrinth)
+            .await
+            .0
+        {
             Ok(projects) => {
                 for project in projects.0.iter() {
                     if let Some(icon_url) = &project.icon_url {
@@ -285,10 +339,14 @@ async fn fetch_icons(backend: &BackendState, missing_icons: FxHashMap<Arc<str>, 
                     ContentSource::CurseforgeProject { project_id } => {
                         match backend
                             .meta
-                            .fetch(CurseforgeProjectItem {
-                                project_id: *project_id,
-                            })
+                            .fetch_with_keepalive(
+                                CurseforgeProjectItem {
+                                    project_id: *project_id,
+                                },
+                                missing.force_reload,
+                            )
                             .await
+                            .0
                         {
                             Ok(project) => project.logo.as_ref().map(|logo| logo.thumbnail_url.clone()),
                             Err(error) => {
@@ -317,15 +375,15 @@ async fn fetch_icons(backend: &BackendState, missing_icons: FxHashMap<Arc<str>, 
                 };
 
                 let manager = manager.clone();
-                let stored = tokio::task::spawn_blocking(move || manager.store_remote_icon(key, &bytes))
+                let key_for_store = key.clone();
+                let changed = tokio::task::spawn_blocking(move || manager.store_remote_icon(key_for_store, &bytes))
                     .await
                     .unwrap_or(false);
-                stored.then_some(missing.paths)
+                changed.then_some((key, missing.paths))
             }
         })
         .buffer_unordered(4)
         .filter_map(std::future::ready)
-        .flat_map(futures::stream::iter)
         .collect()
         .await
 }

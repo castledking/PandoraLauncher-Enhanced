@@ -581,6 +581,7 @@ impl BackendState {
         for hash in hashes {
             self.mod_metadata_manager.set_content_source(*hash, source.clone());
         }
+        self.mod_metadata_manager.invalidate_remote_icon(&source);
         if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             instance.mark_content_dirty(self, content_folder, FolderChanges::all_dirty(), true);
         }

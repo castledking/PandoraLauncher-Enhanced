@@ -7,6 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, SystemTime},
 };
 
 use bridge::{
@@ -150,6 +151,34 @@ pub struct ContentUpdateKey {
     pub version: Ustr,
 }
 
+/// Revalidate cached project icons after this long so icon updates on Modrinth or CurseForge
+/// eventually show up in installed content lists.
+const REMOTE_ICON_MAX_AGE: Duration = Duration::from_secs(6 * 60 * 60);
+
+#[derive(Clone)]
+struct CachedRemoteIcon {
+    bytes: Option<UniqueBytes>,
+    cached_at: Option<SystemTime>,
+    /// True after an explicit invalidation (such as Set Project) so the next fetch also bypasses
+    /// in-memory project metadata caches.
+    force_reload: bool,
+}
+
+impl CachedRemoteIcon {
+    fn is_fresh(&self) -> bool {
+        if self.force_reload || self.bytes.is_none() {
+            return false;
+        }
+        let Some(cached_at) = self.cached_at else {
+            return false;
+        };
+        match SystemTime::now().duration_since(cached_at) {
+            Ok(age) => age < REMOTE_ICON_MAX_AGE,
+            Err(_) => false,
+        }
+    }
+}
+
 pub struct ModMetadataManager {
     content_library_dir: Arc<Path>,
     sources_dir: PathBuf,
@@ -162,9 +191,8 @@ pub struct ModMetadataManager {
     curseforge_info_dirty: AtomicBool,
     pub updates: RwLock<FxHashMap<ContentUpdateKey, ContentUpdateAction>>,
     remote_icons_dir: PathBuf,
-    /// Project icons for content that doesn't ship one, by [`remote_icon_key`]. `None` means
-    /// there's no icon on disk.
-    remote_icons: RwLock<FxHashMap<Arc<str>, Option<UniqueBytes>>>,
+    /// Project icons for content that doesn't ship one, by [`remote_icon_key`].
+    remote_icons: RwLock<FxHashMap<Arc<str>, CachedRemoteIcon>>,
     /// Hashes looked up on Modrinth and CurseForge this session, so a lookup isn't repeated every
     /// time a folder reloads
     identify_attempts: Mutex<FxHashSet<[u8; 20]>>,
@@ -315,39 +343,107 @@ impl ModMetadataManager {
         }
     }
 
-    /// Returns true if the icon for this key isn't available and hasn't been requested this session
-    pub fn claim_remote_icon_attempt(&self, key: &Arc<str>) -> bool {
-        if self.remote_icon(key).is_some() {
-            return false;
+    /// Whether the content file itself ships an icon, before any remote project icon is applied.
+    pub fn has_embedded_icon(&self, hash: &[u8; 20]) -> bool {
+        self.by_hash
+            .read()
+            .get(hash)
+            .is_some_and(|summary| summary.png_icon.is_some())
+    }
+
+    /// Returns `Some(force_reload)` if the icon for this key is missing or stale and hasn't been
+    /// requested this session.
+    pub fn claim_remote_icon_attempt(&self, key: &Arc<str>) -> Option<bool> {
+        let entry = self.remote_icon_entry(key);
+        if entry.is_fresh() {
+            return None;
         }
-        self.remote_icon_attempts.lock().insert(key.clone())
+        self.remote_icon_attempts
+            .lock()
+            .insert(key.clone())
+            .then_some(entry.force_reload)
     }
 
     pub fn release_remote_icon_attempt(&self, key: &str) {
         self.remote_icon_attempts.lock().remove(key);
     }
 
-    fn remote_icon(&self, key: &Arc<str>) -> Option<UniqueBytes> {
-        if let Some(icon) = self.remote_icons.read().get(key) {
-            return icon.clone();
+    /// Marks a project's cached remote icon stale so the next folder load re-fetches it from
+    /// Modrinth or CurseForge while keeping any existing icon visible until the update arrives.
+    pub fn invalidate_remote_icon(&self, source: &ContentSource) {
+        let Some(key) = remote_icon_key(source) else {
+            return;
+        };
+        self.remote_icon_attempts.lock().remove(&key);
+        let mut icons = self.remote_icons.write();
+        if let Some(entry) = icons.get_mut(&key) {
+            entry.cached_at = None;
+            entry.force_reload = true;
+        } else {
+            let path = self.remote_icons_dir.join(format!("{key}.png"));
+            let bytes = std::fs::read(&path).ok().map(UniqueBytes::from);
+            icons.insert(
+                key,
+                CachedRemoteIcon {
+                    bytes,
+                    cached_at: None,
+                    force_reload: true,
+                },
+            );
         }
-
-        let icon = std::fs::read(self.remote_icons_dir.join(format!("{key}.png")))
-            .ok()
-            .map(UniqueBytes::from);
-        self.remote_icons.write().insert(key.clone(), icon.clone());
-        icon
     }
 
-    /// Decodes a downloaded project icon and saves it, returning false if it isn't a usable image
+    fn remote_icon_entry(&self, key: &Arc<str>) -> CachedRemoteIcon {
+        if let Some(entry) = self.remote_icons.read().get(key) {
+            return entry.clone();
+        }
+
+        let path = self.remote_icons_dir.join(format!("{key}.png"));
+        let entry = match std::fs::read(&path) {
+            Ok(bytes) => {
+                let cached_at = std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+                CachedRemoteIcon {
+                    bytes: Some(UniqueBytes::from(bytes)),
+                    cached_at,
+                    force_reload: false,
+                }
+            },
+            Err(_) => CachedRemoteIcon {
+                bytes: None,
+                cached_at: None,
+                force_reload: false,
+            },
+        };
+        self.remote_icons.write().insert(key.clone(), entry.clone());
+        entry
+    }
+
+    fn remote_icon(&self, key: &Arc<str>) -> Option<UniqueBytes> {
+        self.remote_icon_entry(key).bytes
+    }
+
+    /// Decodes a downloaded project icon and saves it, returning true if the stored icon changed
+    /// (including when no icon was cached before).
     pub fn store_remote_icon(&self, key: Arc<str>, image_bytes: &[u8]) -> bool {
         let Some(icon) = load_icon_bytes_as_png(image_bytes) else {
             return false;
         };
 
         _ = crate::fs::write_safe(&self.remote_icons_dir.join(format!("{key}.png")), &icon);
-        self.remote_icons.write().insert(key, Some(icon));
-        true
+        let mut icons = self.remote_icons.write();
+        let changed = icons
+            .get(&key)
+            .and_then(|prev| prev.bytes.as_ref())
+            .is_none_or(|prev| prev != &icon);
+        icons.insert(
+            key,
+            CachedRemoteIcon {
+                bytes: Some(icon),
+                cached_at: Some(SystemTime::now()),
+                force_reload: false,
+            },
+        );
+        changed
     }
 
     /// Content that doesn't ship an icon gets the icon of the project it came from, once it has
@@ -1698,12 +1794,15 @@ mod tests {
     use std::{
         ffi::OsStr,
         io::{Cursor, Write},
+        path::PathBuf,
         sync::Arc,
+        time::{Duration, SystemTime},
     };
 
     use bridge::instance::{ContentSummary, ContentType};
+    use schema::content::ContentSource;
 
-    use super::ModMetadataManager;
+    use super::{ModMetadataManager, REMOTE_ICON_MAX_AGE, remote_icon_key};
 
     const PLUGIN_YML: &[u8] =
         b"name: Allium\nversion: '1.4.0'\nmain: codes.castled.allium.Allium\nauthors: [castledking, Moulberry]\n";
@@ -1788,5 +1887,99 @@ mod tests {
             .unwrap();
         let png = super::load_icon_bytes_as_png(&webp).unwrap();
         assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+    }
+
+    fn png_icon_color(rgba: [u8; 4]) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(16, 16, image::Rgba(rgba));
+        let mut bytes = Vec::new();
+        image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+        bytes
+    }
+
+    fn temp_meta_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pandora-mod-metadata-{name}-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn remote_icon_refresh_respects_ttl_and_invalidation() {
+        let dir = temp_meta_dir("remote-icon-refresh");
+        let manager = Arc::new(ModMetadataManager::load(dir.clone().into(), dir.clone().into()));
+        let source = ContentSource::ModrinthProject {
+            project_id: "ygnk0YMD".into(),
+        };
+        let key = remote_icon_key(&source).unwrap();
+
+        let first = png_icon_color([200, 80, 40, 255]);
+        let second = png_icon_color([40, 180, 220, 255]);
+
+        assert_eq!(manager.claim_remote_icon_attempt(&key), Some(false));
+        assert_eq!(manager.claim_remote_icon_attempt(&key), None);
+
+        assert!(manager.store_remote_icon(key.clone(), &first));
+        assert!(!manager.store_remote_icon(key.clone(), &first));
+
+        // Fresh cached icon shouldn't trigger another fetch even if attempts are cleared
+        manager.release_remote_icon_attempt(&key);
+        assert_eq!(manager.claim_remote_icon_attempt(&key), None);
+
+        // Explicit invalidation (e.g. Set Project) keeps the old icon visible while forcing a refresh
+        let old_bytes = manager.remote_icon(&key).unwrap();
+        manager.invalidate_remote_icon(&source);
+        assert_eq!(manager.remote_icon(&key).as_ref(), Some(&old_bytes));
+        assert_eq!(manager.claim_remote_icon_attempt(&key), Some(true));
+        assert_eq!(manager.claim_remote_icon_attempt(&key), None);
+
+        assert!(manager.store_remote_icon(key.clone(), &second));
+        let new_bytes = manager.remote_icon(&key).unwrap();
+        assert_ne!(old_bytes, new_bytes);
+
+        // Expired cached icon still renders while claiming a background refresh
+        manager.release_remote_icon_attempt(&key);
+        manager.remote_icons.write().get_mut(&key).unwrap().cached_at =
+            Some(SystemTime::now() - REMOTE_ICON_MAX_AGE - Duration::from_secs(60));
+        assert_eq!(manager.remote_icon(&key).as_ref(), Some(&new_bytes));
+        assert_eq!(manager.claim_remote_icon_attempt(&key), Some(false));
+
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn has_embedded_icon_distinguishes_jar_vs_remote_icon() {
+        let dir = temp_meta_dir("embedded-icon");
+        let manager = Arc::new(ModMetadataManager::load(dir.clone().into(), dir.clone().into()));
+        let source = ContentSource::ModrinthProject {
+            project_id: "ygnk0YMD".into(),
+        };
+        let key = remote_icon_key(&source).unwrap();
+        let icon = png_icon();
+        assert!(manager.store_remote_icon(key, &icon));
+
+        let build_jar = |entries: &[(&str, &[u8])]| {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, content) in entries {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(content).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+
+        let no_icon_jar = build_jar(&[("plugin.yml", PLUGIN_YML)]);
+        let no_icon_summary = manager.get_bytes(&no_icon_jar, Some(OsStr::new("jar")));
+        let with_remote = manager.with_remote_icon(no_icon_summary.clone(), &source);
+        assert!(with_remote.png_icon.is_some());
+        assert!(!manager.has_embedded_icon(&with_remote.hash));
+
+        let embedded_jar = build_jar(&[("plugin.yml", PLUGIN_YML), ("plugin.png", &icon)]);
+        let embedded_summary = manager.get_bytes(&embedded_jar, Some(OsStr::new("jar")));
+        assert!(manager.has_embedded_icon(&embedded_summary.hash));
+
+        _ = std::fs::remove_dir_all(&dir);
     }
 }

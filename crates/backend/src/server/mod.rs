@@ -1311,7 +1311,11 @@ fn split_server_log_prefix(line: &str) -> Option<(bridge::game_output::GameOutpu
     if let Some((time, level)) = head.split_once(' ')
         && is_clock(time)
     {
-        let rest = rest.strip_prefix(": ").or_else(|| rest.strip_prefix(':')).unwrap_or(rest).trim_start();
+        let rest = rest
+            .strip_prefix(": ")
+            .or_else(|| rest.strip_prefix(':'))
+            .or_else(|| rest.strip_prefix(' '))
+            .unwrap_or(rest);
         return Some((parse_log_level(level)?, rest));
     }
 
@@ -1320,7 +1324,11 @@ fn split_server_log_prefix(line: &str) -> Option<(bridge::game_output::GameOutpu
         let rest = rest.trim_start().strip_prefix('[')?;
         let (thread_and_level, rest) = rest.split_once(']')?;
         let level = thread_and_level.rsplit_once('/').map_or(thread_and_level, |(_, level)| level);
-        let rest = rest.strip_prefix(": ").or_else(|| rest.strip_prefix(':')).unwrap_or(rest).trim_start();
+        let rest = rest
+            .strip_prefix(": ")
+            .or_else(|| rest.strip_prefix(':'))
+            .or_else(|| rest.strip_prefix(' '))
+            .unwrap_or(rest);
         return Some((parse_log_level(level)?, rest));
     }
 
@@ -1538,6 +1546,11 @@ mod tests {
         assert_eq!(
             split_server_log_prefix("[13:19:31 WARN]: **** FAILED TO BIND TO PORT!"),
             Some((GameOutputLogLevel::Warn, "**** FAILED TO BIND TO PORT!"))
+        );
+        // Leading indentation inside ASCII/block banners must stay intact
+        assert_eq!(
+            split_server_log_prefix("[13:25:06 INFO]:  ▄▄▄▄▄"),
+            Some((GameOutputLogLevel::Info, " ▄▄▄▄▄"))
         );
     }
 

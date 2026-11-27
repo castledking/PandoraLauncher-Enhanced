@@ -46,21 +46,46 @@ const SECTION: char = '§';
 
 /// Takes the codes out of a message's lines. A colour runs on from one line to the next, as it
 /// would in a terminal, but not into the next message.
+#[cfg(test)]
 pub fn format_lines(lines: &Arc<[Arc<str>]>) -> Formatted {
-    if !lines.iter().any(|line| line.contains([ESC, SECTION])) {
+    let mut carry = SpanStyle::default();
+    format_lines_carrying(lines, &mut carry)
+}
+
+/// Takes the codes out of a message's lines while carrying unclosed ANSI SGR state across
+/// consecutive messages from the same output stream.
+///
+/// Server consoles (Paper/Canvas/Folia) serialize a multi-line component with a single ANSI
+/// escape sequence and omit redundant colour codes after `\n`, while the stdout reader delivers
+/// each newline as its own message. Carrying ANSI style until an explicit reset (`ESC [ m` /
+/// `ESC [ 0 m`) preserves multi-line banner colours, while Minecraft `§` codes remain scoped to a
+/// single message.
+pub fn format_lines_carrying(lines: &Arc<[Arc<str>]>, carry_style: &mut SpanStyle) -> Formatted {
+    let has_esc = lines.iter().any(|line| line.contains(ESC));
+    let has_section = lines.iter().any(|line| line.contains(SECTION));
+
+    if !has_esc && !has_section && *carry_style == SpanStyle::default() {
         return Formatted {
             text: lines.clone(),
             spans: Box::new([]),
         };
     }
 
-    let mut style = SpanStyle::default();
+    let mut style = *carry_style;
     let mut text = Vec::with_capacity(lines.len());
     let mut spans = Vec::with_capacity(lines.len());
     for line in lines.iter() {
         let (stripped, line_spans) = format_line(line, &mut style);
         text.push(stripped);
         spans.push(line_spans);
+    }
+
+    // Only ANSI escapes persist across separate messages; if a message used raw § codes without
+    // ANSI escapes, keep the style scoped to that message.
+    if has_esc || !has_section {
+        *carry_style = style;
+    } else {
+        *carry_style = SpanStyle::default();
     }
 
     Formatted {
@@ -409,6 +434,29 @@ mod tests {
         let formatted = format_lines(&lines);
         assert_eq!(&*formatted.text[1], "second third");
         assert_eq!(formatted.spans[1].to_vec(), vec![colored(0..6, 0xAA0000)]);
+    }
+
+    #[test]
+    fn ansi_colour_carries_across_split_messages_until_reset() {
+        let mut carry = SpanStyle::default();
+
+        let line1: Arc<[Arc<str>]> = Arc::from([Arc::from("\x1b[38;2;255;85;255m▄████▄")]);
+        let f1 = super::format_lines_carrying(&line1, &mut carry);
+        assert_eq!(f1.spans[0].to_vec(), vec![colored(0..f1.text[0].len(), 0xFF55FF)]);
+        assert_eq!(carry.color, Some(rgb(0xFF55FF)));
+
+        // Continuation line with no ANSI code inherits the active colour
+        let line2: Arc<[Arc<str>]> = Arc::from([Arc::from("██▄▄██")]);
+        let f2 = super::format_lines_carrying(&line2, &mut carry);
+        assert_eq!(f2.spans[0].to_vec(), vec![colored(0..f2.text[0].len(), 0xFF55FF)]);
+        assert_eq!(carry.color, Some(rgb(0xFF55FF)));
+
+        // Final line resets ANSI state
+        let line3: Arc<[Arc<str>]> = Arc::from([Arc::from("██  ██\x1b[m plain")]);
+        let f3 = super::format_lines_carrying(&line3, &mut carry);
+        assert_eq!(&*f3.text[0], "██  ██ plain");
+        assert_eq!(f3.spans[0].to_vec(), vec![colored(0.."██  ██".len(), 0xFF55FF)]);
+        assert_eq!(carry, SpanStyle::default());
     }
 
     #[test]

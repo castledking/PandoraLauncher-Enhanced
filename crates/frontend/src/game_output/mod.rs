@@ -24,9 +24,11 @@ use bridge::{
 
 use crate::{CloseWindow, entity::instance::InstanceEntry, icon::PandoraIcon};
 
+mod box_chars;
 mod formatting;
 
-use formatting::{Formatted, Span};
+use box_chars::BoxCell;
+use formatting::{Formatted, Span, SpanStyle};
 
 struct CachedShapedLogLevels {
     fatal: Arc<ShapedLine>,
@@ -64,6 +66,7 @@ pub struct GameOutput {
     shaped_log_levels: Option<CachedShapedLogLevels>,
     selection: Option<LogSelection>,
     visible_lines: Vec<VisibleLine>,
+    ansi_carry: Option<(GameOutputLogLevel, SpanStyle)>,
     _receive_lines_task: Task<()>,
 }
 
@@ -75,7 +78,14 @@ impl GameOutput {
             font: Font {
                 family: SharedString::new_static("Roboto Mono"),
                 features: FontFeatures::default(),
-                fallbacks: None,
+                fallbacks: Some(FontFallbacks::from_fonts(vec![
+                    "Noto Sans Mono".to_string(),
+                    "DejaVu Sans Mono".to_string(),
+                    "Liberation Mono".to_string(),
+                    "Consolas".to_string(),
+                    "Menlo".to_string(),
+                    "monospace".to_string(),
+                ])),
                 weight: FontWeight::NORMAL,
                 style: FontStyle::Normal,
             },
@@ -98,6 +108,7 @@ impl GameOutput {
             shaped_log_levels: None,
             selection: None,
             visible_lines: Default::default(),
+            ansi_carry: None,
             _receive_lines_task: task,
         }
     }
@@ -128,6 +139,7 @@ impl GameOutput {
     /// shown. The previous run's receiver is dropped, so anything it still had queued goes.
     pub fn attach(&mut self, receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>, cx: &mut Context<Self>) {
         self._receive_lines_task = Self::receive_lines(receiver, cx);
+        self.ansi_carry = None;
         self.scroll_state.borrow_mut().scrolling = GameOutputScrolling::Bottom;
         cx.notify();
     }
@@ -256,7 +268,7 @@ impl GameOutput {
                 cached_shaped_lines,
             );
 
-            for (line_ix, shaped) in lines.iter().enumerate() {
+            for (line_ix, wrapped) in lines.iter().enumerate() {
                 let line_position = LogPosition {
                     item: item_ix,
                     line: line_ix,
@@ -285,7 +297,7 @@ impl GameOutput {
                     usize::MAX
                 };
 
-                let chars = shaped.text.chars().count();
+                let chars = wrapped.text.chars().count();
                 let from = from.min(chars);
                 let to = to.min(chars);
                 // A blank line the selection runs right across is still one of its lines, as
@@ -300,8 +312,8 @@ impl GameOutput {
                     out.push_str(&item.prefix);
                     out.push(' ');
                 }
-                let byte = |char: usize| shaped.text.char_indices().nth(char).map_or(shaped.text.len(), |(ix, _)| ix);
-                out.push_str(&shaped.text[byte(from)..byte(to)]);
+                let byte = |char: usize| wrapped.text.char_indices().nth(char).map_or(wrapped.text.len(), |(ix, _)| ix);
+                out.push_str(&wrapped.text[byte(from)..byte(to)]);
                 out.push('\n');
             }
         }
@@ -349,6 +361,7 @@ impl GameOutput {
             item_state.cached_shaped_lines.item_lines.clear();
         }
 
+        self.ansi_carry = None;
         let mut scroll_state = self.scroll_state.borrow_mut();
         scroll_state.lines = 0;
         scroll_state.active_drag = None;
@@ -459,8 +472,14 @@ impl GameOutput {
             };
 
             // The colour codes come out here, so everything from search to copying works on
-            // the text as it reads
-            let Formatted { text, spans } = formatting::format_lines(&msg.text);
+            // the text as it reads. Unclosed ANSI SGR state carries across consecutive lines of
+            // the same level (multi-line Paper banners split per newline).
+            let mut carry_style = match self.ansi_carry {
+                Some((level, style)) if level == msg.level => style,
+                _ => SpanStyle::default(),
+            };
+            let Formatted { text, spans } = formatting::format_lines_carrying(&msg.text, &mut carry_style);
+            self.ansi_carry = (carry_style != SpanStyle::default()).then_some((msg.level, carry_style));
 
             let mut highlighted_text = None;
 
@@ -558,12 +577,12 @@ impl GameOutputItem {
         text_style: &TextStyle,
         line_wrapper: &mut LineWrapperHandle,
         cache: &'a mut CachedShapedLines,
-    ) -> &'a [ShapedLine] {
+    ) -> &'a [WrappedLine] {
         let mut recompute = true;
 
         if let Some(last_wrapped) = cache.item_lines.get(&self.index)
             && (last_wrapped.wrap_width == wrap_width
-                || (last_wrapped.lines.len() == 1 && last_wrapped.lines.first().unwrap().width < wrap_width))
+                || (last_wrapped.lines.len() == 1 && last_wrapped.lines.first().unwrap().shaped.width < wrap_width))
         {
             recompute = false;
         }
@@ -571,9 +590,6 @@ impl GameOutputItem {
         if recompute {
             let mut wrapped = Vec::new();
             for (original_line_index, line) in self.text.iter().enumerate() {
-                let fragments = [LineFragment::Text { text: line }];
-                let boundaries = line_wrapper.wrap_line(&fragments, wrap_width);
-
                 let spans = self.spans.get(original_line_index).map_or(&[][..], |spans| &spans[..]);
                 let highlight = self
                     .highlighted_text
@@ -581,27 +597,82 @@ impl GameOutputItem {
                     .filter(|(highlight_line, _)| *highlight_line == original_line_index)
                     .map(|(_, range)| range);
 
-                let mut handle_segment = |wrapped_line: SharedString, from, to| {
-                    let runs = segment_runs(from, to, spans, highlight, font, text_style);
-                    let shaped = text_system.shape_line(wrapped_line, font_size, &runs, None);
-                    wrapped.push(shaped);
-                };
+                if !line.chars().any(box_chars::is_supported) {
+                    let fragments = [LineFragment::Text { text: line }];
+                    let boundaries = line_wrapper.wrap_line(&fragments, wrap_width);
 
-                let mut last_boundary_ix = 0;
-                for boundary in boundaries {
-                    let wrapped_line = &line[last_boundary_ix..boundary.ix];
-                    let wrapped_line = SharedString::new(wrapped_line);
-                    (handle_segment)(wrapped_line, last_boundary_ix, boundary.ix);
-                    last_boundary_ix = boundary.ix;
-                }
+                    let mut handle_segment = |wrapped_line: SharedString, from, to| {
+                        let runs = segment_runs(from, to, spans, highlight, font, text_style);
+                        let shaped = text_system.shape_line(wrapped_line.clone(), font_size, &runs, None);
+                        wrapped.push(WrappedLine {
+                            text: wrapped_line,
+                            shaped,
+                            box_cells: Box::new([]),
+                        });
+                    };
 
-                // Push last segment
-                let wrapped_line = if last_boundary_ix == 0 {
-                    line.into()
+                    let mut last_boundary_ix = 0;
+                    for boundary in boundaries {
+                        let wrapped_line = SharedString::new(&line[last_boundary_ix..boundary.ix]);
+                        (handle_segment)(wrapped_line, last_boundary_ix, boundary.ix);
+                        last_boundary_ix = boundary.ix;
+                    }
+
+                    // Push last segment
+                    let wrapped_line = if last_boundary_ix == 0 {
+                        line.into()
+                    } else {
+                        SharedString::new(&line[last_boundary_ix..])
+                    };
+                    (handle_segment)(wrapped_line, last_boundary_ix, line.len());
                 } else {
-                    SharedString::new(&line[last_boundary_ix..])
-                };
-                (handle_segment)(wrapped_line, last_boundary_ix, line.len());
+                    let prepared = PreparedLine::from_line(line);
+                    let mapped_spans: Vec<Span> = spans
+                        .iter()
+                        .map(|span| Span {
+                            range: prepared.display_byte(span.range.start)..prepared.display_byte(span.range.end),
+                            style: span.style,
+                        })
+                        .collect();
+                    let mapped_highlight = highlight
+                        .map(|range| prepared.display_byte(range.start)..prepared.display_byte(range.end));
+
+                    let fragments = [LineFragment::Text { text: &prepared.display }];
+                    let boundaries = line_wrapper.wrap_line(&fragments, wrap_width);
+
+                    let mut handle_segment = |disp_from: usize, disp_to: usize| {
+                        let orig_from = prepared.orig_byte(disp_from);
+                        let orig_to = prepared.orig_byte(disp_to);
+                        let runs = segment_runs(
+                            disp_from,
+                            disp_to,
+                            &mapped_spans,
+                            mapped_highlight.as_ref(),
+                            font,
+                            text_style,
+                        );
+                        let box_cells = collect_box_cells(&prepared.box_positions, disp_from, disp_to, &runs);
+                        let display_slice = SharedString::new(&prepared.display[disp_from..disp_to]);
+                        let shaped = text_system.shape_line(display_slice, font_size, &runs, None);
+                        let orig_slice = if orig_from == 0 && orig_to == line.len() {
+                            line.into()
+                        } else {
+                            SharedString::new(&line[orig_from..orig_to])
+                        };
+                        wrapped.push(WrappedLine {
+                            text: orig_slice,
+                            shaped,
+                            box_cells,
+                        });
+                    };
+
+                    let mut last_boundary_ix = 0;
+                    for boundary in boundaries {
+                        handle_segment(last_boundary_ix, boundary.ix);
+                        last_boundary_ix = boundary.ix;
+                    }
+                    handle_segment(last_boundary_ix, prepared.display.len());
+                }
             }
 
             cache.item_lines.put(
@@ -615,6 +686,91 @@ impl GameOutputItem {
 
         cache.item_lines.get(&self.index).unwrap().lines.as_slice()
     }
+}
+
+struct PreparedLine {
+    display: String,
+    /// `(display_byte, orig_byte)` at every character boundary in `display` / `line`.
+    char_map: Vec<(usize, usize)>,
+    /// `(display_byte, original_char)` for every custom-drawn box/block character.
+    box_positions: Vec<(usize, char)>,
+    orig_len: usize,
+}
+
+impl PreparedLine {
+    fn from_line(line: &str) -> Self {
+        let mut display = String::with_capacity(line.len());
+        let mut char_map = Vec::with_capacity(line.len());
+        let mut box_positions = Vec::new();
+        for (orig_ix, ch) in line.char_indices() {
+            let disp_ix = display.len();
+            char_map.push((disp_ix, orig_ix));
+            if box_chars::is_supported(ch) {
+                box_positions.push((disp_ix, ch));
+                display.push(' ');
+            } else {
+                display.push(ch);
+            }
+        }
+        Self {
+            display,
+            char_map,
+            box_positions,
+            orig_len: line.len(),
+        }
+    }
+
+    fn orig_byte(&self, disp_ix: usize) -> usize {
+        if disp_ix >= self.display.len() {
+            return self.orig_len;
+        }
+        match self.char_map.binary_search_by_key(&disp_ix, |&(d, _)| d) {
+            Ok(ix) => self.char_map[ix].1,
+            Err(ix) => self.char_map.get(ix).map_or(self.orig_len, |&(_, o)| o),
+        }
+    }
+
+    fn display_byte(&self, orig_ix: usize) -> usize {
+        if orig_ix >= self.orig_len {
+            return self.display.len();
+        }
+        match self.char_map.binary_search_by_key(&orig_ix, |&(_, o)| o) {
+            Ok(ix) => self.char_map[ix].0,
+            Err(ix) => self.char_map.get(ix).map_or(self.display.len(), |&(d, _)| d),
+        }
+    }
+}
+
+fn collect_box_cells(
+    box_positions: &[(usize, char)],
+    disp_from: usize,
+    disp_to: usize,
+    runs: &[TextRun],
+) -> Box<[BoxCell]> {
+    let start_ix = box_positions.partition_point(|&(pos, _)| pos < disp_from);
+    let end_ix = box_positions.partition_point(|&(pos, _)| pos < disp_to);
+    if start_ix >= end_ix || runs.is_empty() {
+        return Box::new([]);
+    }
+
+    let mut cells = Vec::with_capacity(end_ix - start_ix);
+    let mut run_ix = 0;
+    let mut run_end = runs[0].len;
+
+    for &(disp_pos, ch) in &box_positions[start_ix..end_ix] {
+        let rel_byte = disp_pos - disp_from;
+        while run_end <= rel_byte && run_ix + 1 < runs.len() {
+            run_ix += 1;
+            run_end += runs[run_ix].len;
+        }
+        cells.push(BoxCell {
+            byte_ix: rel_byte,
+            ch,
+            color: runs[run_ix].color,
+        });
+    }
+
+    cells.into()
 }
 
 /// The runs to shape the stretch `from..to` of a line with: the colours its codes asked for,
@@ -688,9 +844,18 @@ fn segment_runs(
 
 actions!([CopySelection, SelectAll]);
 
+struct WrappedLine {
+    /// Original Unicode text of this wrapped segment (used for selection and clipboard copy).
+    text: SharedString,
+    /// Shaped monospaced line where custom-drawn box/block characters use `' '` placeholders.
+    shaped: ShapedLine,
+    /// Custom-drawn block-element and box-drawing cells painted on top of the placeholders.
+    box_cells: Box<[BoxCell]>,
+}
+
 struct WrappedLines {
     wrap_width: Pixels,
-    lines: Vec<ShapedLine>,
+    lines: Vec<WrappedLine>,
 }
 
 /// A spot in the log: which message, which wrapped line of it, and a character offset in that
@@ -1172,6 +1337,48 @@ fn paint_selection_range(
     ));
 }
 
+/// Paints one wrapped line: search background, selection highlight, monospaced text, and any
+/// exact-cell block-element / box-drawing quads, then records its bounds for selection hit-testing.
+fn paint_wrapped_line(
+    item: &GameOutputItem,
+    line_ix: usize,
+    wrapped: &WrappedLine,
+    line_origin: Point<Pixels>,
+    line_height: Pixels,
+    has_highlighted_text: bool,
+    visible_lines: &mut Vec<VisibleLine>,
+    selection: Option<&LogSelection>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if has_highlighted_text {
+        _ = wrapped.shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
+    }
+    paint_selection_range(item, line_ix, &wrapped.shaped, line_origin, visible_lines, selection, window, cx);
+    _ = wrapped.shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
+    if !wrapped.box_cells.is_empty() {
+        let y0 = line_origin.y;
+        let y1 = line_origin.y + line_height;
+        for cell in wrapped.box_cells.iter() {
+            let x0 = line_origin.x + wrapped.shaped.x_for_index(cell.byte_ix);
+            let x1 = line_origin.x + wrapped.shaped.x_for_index(cell.byte_ix + 1);
+            box_chars::paint_cell(x0, x1, y0, y1, cell.ch, cell.color, window);
+        }
+    }
+
+    visible_lines.push(VisibleLine {
+        position: LogPosition {
+            item: item.index,
+            line: line_ix,
+            char: 0,
+        },
+        top: line_origin.y,
+        text_left: line_origin.x,
+        text_width: wrapped.shaped.width,
+        char_count: wrapped.shaped.text.chars().count(),
+    });
+}
+
 /// Paints the log, recording each line as it goes so a later mouse position can be turned
 /// back into a spot in the log.
 ///
@@ -1228,48 +1435,38 @@ fn paint_lines<'a, const REVERSE: bool>(
         let mut line_origin = text_origin;
         line_origin.x += *time_column_width + level_column_width;
         if REVERSE {
-            for (line_ix, shaped) in lines.iter().enumerate().rev() {
+            for (line_ix, wrapped) in lines.iter().enumerate().rev() {
                 if line_origin.y <= visible_bounds.origin.y + visible_bounds.size.height {
-                    if has_highlighted_text {
-                        _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
-                    }
-                    paint_selection_range(item, line_ix, shaped, line_origin, visible_lines, selection, window, cx);
-                    _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
-
-                    visible_lines.push(VisibleLine {
-                        position: LogPosition {
-                            item: item.index,
-                            line: line_ix,
-                            char: 0,
-                        },
-                        top: line_origin.y,
-                        text_left: line_origin.x,
-                        text_width: shaped.width,
-                        char_count: shaped.text.chars().count(),
-                    });
+                    paint_wrapped_line(
+                        item,
+                        line_ix,
+                        wrapped,
+                        line_origin,
+                        line_height,
+                        has_highlighted_text,
+                        visible_lines,
+                        selection,
+                        window,
+                        cx,
+                    );
                 }
                 line_origin.y -= line_height;
             }
         } else {
-            for (line_ix, shaped) in lines.iter().enumerate() {
+            for (line_ix, wrapped) in lines.iter().enumerate() {
                 if line_origin.y >= visible_bounds.origin.y - line_height {
-                    if has_highlighted_text {
-                        _ = shaped.paint_background(line_origin, line_height, TextAlign::Left, None, window, cx);
-                    }
-                    paint_selection_range(item, line_ix, shaped, line_origin, visible_lines, selection, window, cx);
-                    _ = shaped.paint(line_origin, line_height, TextAlign::Left, None, window, cx);
-
-                    visible_lines.push(VisibleLine {
-                        position: LogPosition {
-                            item: item.index,
-                            line: line_ix,
-                            char: 0,
-                        },
-                        top: line_origin.y,
-                        text_left: line_origin.x,
-                        text_width: shaped.width,
-                        char_count: shaped.text.chars().count(),
-                    });
+                    paint_wrapped_line(
+                        item,
+                        line_ix,
+                        wrapped,
+                        line_origin,
+                        line_height,
+                        has_highlighted_text,
+                        visible_lines,
+                        selection,
+                        window,
+                        cx,
+                    );
                 }
                 line_origin.y += line_height;
             }
@@ -1885,5 +2082,48 @@ impl Render for GameOutputRoot {
             .on_action(|_: &CloseWindow, window, _| {
                 window.remove_window();
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Font, Hsla, TextRun, hsla, rgb};
+
+    use super::{PreparedLine, collect_box_cells};
+
+    #[test]
+    fn prepared_line_replaces_box_chars_with_spaces_and_maps_offsets() {
+        let line = "▄██ (v1.0.2)";
+        let prepared = PreparedLine::from_line(line);
+        assert_eq!(prepared.display, "    (v1.0.2)");
+        assert_eq!(prepared.display.chars().count(), line.chars().count());
+        assert_eq!(prepared.box_positions, vec![(0, '▄'), (1, '█'), (2, '█')]);
+
+        // Byte offset of "(v1.0.2)" in original (3*3 + 1 = 10) maps to 4 in display
+        assert_eq!(prepared.display_byte(10), 4);
+        assert_eq!(prepared.orig_byte(4), 10);
+        assert_eq!(&line[prepared.orig_byte(4)..prepared.orig_byte(prepared.display.len())], "(v1.0.2)");
+    }
+
+    #[test]
+    fn collect_box_cells_assigns_run_colors_per_segment() {
+        let line = "▄██▀";
+        let prepared = PreparedLine::from_line(line);
+        let pink = hsla(0.83, 1.0, 0.67, 1.0);
+        let teal = Hsla::from(rgb(0x00AAAA));
+        let make_run = |len, color| TextRun {
+            len,
+            font: Font::default(),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let runs = [make_run(1, pink), make_run(2, teal)];
+        let cells = collect_box_cells(&prepared.box_positions, 1, 4, &runs);
+        assert_eq!(cells.len(), 3);
+        assert_eq!((cells[0].byte_ix, cells[0].ch, cells[0].color), (0, '█', pink));
+        assert_eq!((cells[1].byte_ix, cells[1].ch, cells[1].color), (1, '█', teal));
+        assert_eq!((cells[2].byte_ix, cells[2].ch, cells[2].color), (2, '▀', teal));
     }
 }
